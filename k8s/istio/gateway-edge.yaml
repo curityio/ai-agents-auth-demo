@@ -1,0 +1,265 @@
+# Edge gateway: replaces NGINX. Three listeners.
+#
+#  - 80 → 443 redirect
+#  - 443/app.localtest.me: SIMPLE termination, plaintext upstream to web:3000
+#  - 443/curity.localtest.me: SIMPLE termination, plaintext upstream to
+#    curity:8443 (Curity's runtime listens plain HTTP; TLS is terminated here,
+#    same pattern as web/grafana/agents). base-url stays https so iss/metadata
+#    are unaffected; istiod can also fetch the JWKS over cluster DNS this way.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingress
+  servers:
+    - port:
+        number: 80
+        name: http-redirect
+        protocol: HTTP
+      hosts:
+        - "*.localtest.me"
+      tls:
+        httpsRedirect: true
+    - port:
+        number: 443
+        name: https-app
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: web-tls
+      hosts:
+        - app.localtest.me
+    - port:
+        number: 443
+        name: https-curity
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: curity-tls
+      hosts:
+        - curity.localtest.me
+    # Curity admin UI (port 6749). Unlike the runtime listener (plain HTTP on
+    # 8443), the admin UI is HTTPS with Curity's own self-signed cert — so this
+    # listener SIMPLE-terminates the browser's TLS with the trusted mkcert cert
+    # and the DestinationRule below RE-ENCRYPTS upstream to :6749. Exposing this
+    # removes the need for `kubectl port-forward svc/curity 6749`.
+    - port:
+        number: 443
+        name: https-curity-admin
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: curity-admin-tls
+      hosts:
+        - curity-admin.localtest.me
+    - port:
+        number: 443
+        name: https-grafana
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: grafana-tls
+      hosts:
+        - grafana.localtest.me
+    # CIMD: each agent publishes its Client ID Metadata Document + JWKS at its own
+    # host so Curity can dereference the client_id URL. SIMPLE termination, plaintext
+    # upstream (the agents serve plain HTTP) — same pattern as grafana above.
+    - port:
+        number: 443
+        name: https-copilot
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: copilot-tls
+      hosts:
+        - copilot.localtest.me
+    - port:
+        number: 443
+        name: https-specialist
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: specialist-tls
+      hosts:
+        - specialist.localtest.me
+    # MCP servers: expose the RFC 9728 protected resource metadata endpoint
+    # so it can be browsed externally during demos.
+    - port:
+        number: 443
+        name: https-mcp-ops
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: mcp-ops-tls
+      hosts:
+        - mcp-ops.localtest.me
+    - port:
+        number: 443
+        name: https-mcp-observability
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: mcp-observability-tls
+      hosts:
+        - mcp-observability.localtest.me
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: web
+  namespace: istio-ingress
+spec:
+  hosts:
+    - app.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: web.web.svc.cluster.local
+            port:
+              number: 3000
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: curity
+  namespace: istio-ingress
+spec:
+  hosts:
+    - curity.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: curity.curity.svc.cluster.local
+            port:
+              number: 8443
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: curity-admin
+  namespace: istio-ingress
+spec:
+  hosts:
+    - curity-admin.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: curity.curity.svc.cluster.local
+            port:
+              number: 6749
+---
+# Re-encrypt the admin hop: the gateway originates fresh TLS to Curity's HTTPS
+# admin listener on :6749. Scoped to port 6749 ONLY via portLevelSettings — a
+# blanket policy would also try to speak TLS to the plaintext oauth listener on
+# :8443 and break it. insecureSkipVerify because the admin cert is self-signed.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: curity-admin-reencrypt
+  namespace: istio-ingress
+spec:
+  host: curity.curity.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+      - port:
+          number: 6749
+        tls:
+          mode: SIMPLE
+          insecureSkipVerify: true
+---
+# Grafana terminates plain HTTP on :80 inside the observability namespace, so
+# the gateway just SIMPLE-terminates TLS and proxies plaintext upstream — no
+# DestinationRule / re-encryption needed (unlike Curity above).
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: grafana
+  namespace: istio-ingress
+spec:
+  hosts:
+    - grafana.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: grafana.observability.svc.cluster.local
+            port:
+              number: 80
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: agent-copilot
+  namespace: istio-ingress
+spec:
+  hosts:
+    - copilot.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: agent-copilot.agents.svc.cluster.local
+            port:
+              number: 8081
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: agent-specialist
+  namespace: istio-ingress
+spec:
+  hosts:
+    - specialist.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: agent-specialist.agents.svc.cluster.local
+            port:
+              number: 8082
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: mcp-ops
+  namespace: istio-ingress
+spec:
+  hosts:
+    - mcp-ops.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: mcp-ops.mcp.svc.cluster.local
+            port:
+              number: 8080
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: mcp-observability
+  namespace: istio-ingress
+spec:
+  hosts:
+    - mcp-observability.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: mcp-observability.mcp.svc.cluster.local
+            port:
+              number: 8080

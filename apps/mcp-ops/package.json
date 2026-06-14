@@ -1,0 +1,33 @@
+{
+  "name": "@ai-agents-demo/mcp-ops",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Privileged ops MCP server (Phase 4b). One tool: restart_deployment(name, namespace), backed by the K8s API and scoped to the `prod` namespace via Role/RoleBinding.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ai-agents-demo/auth-curity": "workspace:*",
+    "@ai-agents-demo/otel-bootstrap": "workspace:*",
+    "@ai-agents-demo/spiffe": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.21.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

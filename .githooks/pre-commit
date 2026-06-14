@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Pre-commit guard for this demo: block accidental commits of the Curity license
+# or the LLM API key. Complements .gitignore — it also catches `git add -f` and
+# brand-new credential files no ignore rule covers yet.
+#
+# Intentional override (rare): git commit --no-verify
+# Shared via core.hooksPath -> .githooks (run `make hooks` once per clone).
+set -euo pipefail
+
+fail=0
+flag() { printf '  \033[31m\xe2\x9c\x97 %s\033[0m\n' "$1" >&2; fail=1; }
+
+# --- 1. Credential-shaped file paths -----------------------------------------
+while IFS= read -r -d '' f; do
+  base="${f##*/}"
+  # Allowlist intentionally-committed, safe files first.
+  case "$base" in
+    LICENSE) continue ;;                 # the Apache license text
+    *.example | *.example.*) continue ;; # committed templates (e.g. secret-license.example.yaml)
+  esac
+  case "$base" in
+    # Curity license
+    license.json | *.license) flag "Curity license staged: $f" ;;
+    *secret-license*.yaml | *secret-license*.yml) flag "license secret manifest staged: $f" ;;
+    # Files that carry the LLM API key
+    .demo.env | .env | .env.*) flag "env file (holds the API key) staged: $f" ;;
+  esac
+done < <(git diff --cached --name-only -z --diff-filter=AM)
+
+# --- 2. The LLM API key, inlined in ADDED lines ------------------------------
+# Only scan added lines (leading "+", not the "+++" header) so we don't trip on
+# context or on the bare env-var NAME used in manifests/code (no value after it).
+added_lines="$(git diff --cached -U0 --diff-filter=AM | grep -E '^\+[^+]' || true)"
+if printf '%s\n' "$added_lines" \
+  | grep -qE 'AZURE_OPENAI_API_KEY["'\'']?[[:space:]]*[:=][[:space:]]*["'\'']?[A-Za-z0-9_-]{24,}'; then
+  flag "Azure OpenAI API key value in staged content"
+fi
+
+if [[ "$fail" -ne 0 ]]; then
+  {
+    printf '\n\033[31mpre-commit blocked: possible license/API-key leak above.\033[0m\n'
+    printf 'These belong in gitignored files / `make seed-*` / .demo.env, never in git.\n'
+    printf 'Genuine false positive? Re-run with: git commit --no-verify\n\n'
+  } >&2
+  exit 1
+fi
+exit 0

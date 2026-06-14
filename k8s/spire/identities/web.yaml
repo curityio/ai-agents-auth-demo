@@ -1,0 +1,17 @@
+# The web BFF never makes a SPIFFE-bearing outbound call, so it doesn't strictly
+# need a SPIFFE identity. We register it anyway so the "every workload has a
+# verifiable identity" narrative holds at the demo.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: web
+spec:
+  className: spire-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}'
+  podSelector:
+    matchLabels:
+      app: web
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: web
+  jwtTtl: 5m

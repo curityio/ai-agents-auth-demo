@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-identity-flow
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  identity-flow.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "",
+          "gridPos": {
+            "h": 5,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "## \ud83d\udd10 Identity Flow \u2014 End-to-End Agent Authentication\n\nEach row below is a **single distributed trace** spanning multiple services. Click a **Trace ID** to open the waterfall view.\n\n**How to read the waterfall:**\n1. The tree shows the request path: `web \u2192 agent-copilot \u2192 mcp-observability` (read) or `web \u2192 agent-copilot \u2192 agent-specialist \u2192 mcp-ops` (privileged)\n2. Click any span (e.g. `mcp-observability: POST`) to see its **identity attributes** in the right panel:\n   - `auth.sub` = the human user (alice)\n   - `auth.act` = delegation chain (grows at each hop: `[]` \u2192 `[copilot]` \u2192 `[copilot, specialist]`)\n   - `auth.scope` = permissions for this hop\n   - `auth.acr` = authentication level (MFA for privileged ops)\n3. Click the **service name** (colored label) to see `spiffe.id` = the workload's cryptographic identity\n\n**Two scenarios to demo:**\n- Ask `list pods` \u2192 read-only flow through `mcp-observability` (2-hop chain)\n- Ask `restart the web deployment` \u2192 privileged flow through `agent-specialist` \u2192 `mcp-ops` (3-hop chain with step-up auth)"
+          }
+        },
+        {
+          "type": "table",
+          "title": "Distributed Traces (click Trace ID to explore)",
+          "description": "All user-driven agent requests. Each trace shows the full multi-service identity flow.",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 5
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "queryType": "traceql",
+              "query": "{ resource.service.name = \"web\" && name =~ \".*api/agent.*\" }",
+              "tableType": "traces",
+              "limit": 20
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": [
+        "identity",
+        "demo"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "title": "Identity Flow",
+      "uid": "identity-flow",
+      "version": 3,
+      "refresh": ""
+    }

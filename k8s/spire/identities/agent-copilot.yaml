@@ -1,0 +1,22 @@
+# Maps the agent-copilot pod to a SPIFFE ID. spire-controller-manager watches
+# this CR and creates the corresponding registration entry on spire-server.
+# JWT-SVID audiences are NOT set here — they're chosen at fetch time by the
+# spiffe-helper sidecar (one SVID per requested audience).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: agent-copilot
+spec:
+  # The controller-manager only handles CRs whose className matches its own.
+  # The hardened chart sets this to "spire-spire" by default.
+  className: spire-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}'
+  podSelector:
+    matchLabels:
+      app: agent-copilot
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: agents
+  # 5-minute ceiling on JWT-SVID lifetime — forces rotation visible in the
+  # demo without making it noisy.
+  jwtTtl: 5m

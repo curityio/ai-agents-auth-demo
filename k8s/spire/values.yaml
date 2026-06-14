@@ -1,0 +1,83 @@
+# Helm values for the spiffe/spire parent chart (hardened repo).
+#
+#   helm repo add spiffe https://spiffe.github.io/helm-charts-hardened/
+#   helm install spire spiffe/spire -n spire -f k8s/spire/values.yaml
+#
+# Delivers JWT-SVIDs to workload pods; they're used as the actor_token in
+# RFC 8693 token exchange.
+#
+# This file intentionally stays close to the chart's recommended defaults.
+# Only the trust domain, cluster name, and "do not auto-register identities
+# the chart's defaults would create" pieces are customized.
+
+global:
+  spire:
+    # Demo trust domain. Curity is configured to trust the JWKS published
+    # by this SPIRE server's bundle endpoint.
+    trustDomain: demo.curity.local
+
+    # Must match the KIND cluster name so the k8s_psat node attestor's selectors
+    # work. See: scripts/cluster-routing.sh + Makefile CLUSTER_NAME.
+    clusterName: ai-agents-demo
+
+    # Enables a curated set of chart defaults that the SPIFFE project recommends
+    # for production-style installs (rotation, conservative TTLs, etc.).
+    recommendations:
+      enabled: true
+
+    # The hardened chart requires an explicit CA subject. Demo values.
+    caSubject:
+      country: US
+      organization: ai-agents-demo
+      commonName: ai-agents-demo CA
+
+  # The chart ships pre/post install Helm hooks that try to clean up CRDs etc.
+  # On a demo KIND cluster they sometimes fail on namespace teardown ordering.
+  # Disable for the demo; revisit for any non-demo deployment.
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+
+spire-server:
+  # CA / JWT-signing-key lifetime left at the chart default (~24h). The Curity
+  # token-exchange procedure fetches SPIRE's JWKS at runtime and refetches on an
+  # unknown kid, so daily JWT-signing-key rotation is handled transparently with
+  # no snapshot to refresh. (SVID TTLs — jwtTtl 5m, x509 4h — stay well below it.)
+
+  controllerManager:
+    identities:
+      # Don't materialize the chart's default ClusterSPIFFEID CRs. We ship our
+      # own in k8s/spire/identities/ so the identity set is explicit and
+      # reviewable in git, not chart-generated.
+      defaults:
+        enabled: false
+
+  # Shared root CA. SPIRE's server CA is an INTERMEDIATE signed by the cluster's
+  # single root, via the `disk` UpstreamAuthority plugin. The cert/key (the SPIRE
+  # intermediate) + bundle (the root) live in the `spiffe-upstream-ca` Secret,
+  # seeded out-of-band by `make seed-spire-ca` (never committed — it holds a
+  # private key). This makes SPIRE's X.509 SVIDs chain to the SAME root as
+  # Istio's mTLS certs (istiod's `cacerts` intermediate). JWT-SVIDs keep their
+  # own signing key, but the published trust bundle is anchored on this root.
+  # NOTE: enabling/rotating this rotates the SPIRE CA and JWT signing key — the
+  # Curity token-exchange procedure fetches the JWKS at runtime (refetching on an
+  # unknown kid), so no manual snapshot/restart is needed.
+  upstreamAuthority:
+    disk:
+      enabled: true
+      secret:
+        # We create the Secret ourselves (out-of-band); the chart must not.
+        create: false
+        name: spiffe-upstream-ca
+        data:
+          # With create:false the chart writes nothing here, but it still reads
+          # `.bundle` to decide whether to render bundle_file_path. A non-empty
+          # value tells it to expect bundle.crt in the Secret (= the shared root).
+          bundle: "provided-via-secret"
+
+# CSI driver mounts the SPIRE agent's workload-API socket into pods that
+# request it via a `csi.spiffe.io` volume. spiffe-helper sidecars consume
+# that socket to fetch JWT-SVIDs.
+spiffe-csi-driver:
+  enabled: true

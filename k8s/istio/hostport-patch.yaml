@@ -1,0 +1,18 @@
+# Strategic-merge patch: add hostPort 80/443 to the Istio ingress pod so it
+# binds those ports on the KIND node (matching the cluster's extraPortMappings).
+# The chart doesn't render containerPorts 80/443 — Envoy listens dynamically
+# based on Gateway resources — so we add them here purely to drive hostPort.
+spec:
+  template:
+    spec:
+      containers:
+        - name: istio-proxy
+          ports:
+            - name: http
+              containerPort: 80
+              hostPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              hostPort: 443
+              protocol: TCP

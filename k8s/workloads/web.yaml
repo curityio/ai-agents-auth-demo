@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: web
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-spiffe-helper
+  namespace: web
+data:
+  spiffe-helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    daemon_mode = true
+    jwt_svids = [
+      {
+        jwt_audience = "https://curity.localtest.me/oauth/v2/oauth-token"
+        jwt_svid_file_name = "/run/spiffe/curity-actor.jwt"
+      }
+    ]
+---
+# NOTE: `web-secrets` (AUTH_SECRET + CURITY_CLIENT_SECRET) is NOT defined here.
+# It is created out-of-band so `make apply` cannot clobber real values with
+# placeholders. See `make seed-web-secret` and docs/curity-seed.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: web
+  labels:
+    app: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      serviceAccountName: web
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: spiffe-svids
+          emptyDir:
+            medium: Memory
+        - name: spiffe-helper-config
+          configMap:
+            name: web-spiffe-helper
+      containers:
+        - name: web
+          image: ai-agents-demo/web:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+              readOnly: true
+          env:
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: production
+            - name: AUTH_TRUST_HOST
+              value: "true"
+            - name: AUTH_URL
+              value: https://app.localtest.me
+            - name: CURITY_ISSUER
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            - name: CURITY_CLIENT_ID
+              value: web-app
+            - name: AGENT_COPILOT_URL
+              value: http://agent-copilot.agents.svc.cluster.local:8081
+            # Auth debugging verbosity — turn off for a clean demo.
+            - name: AUTH_DEBUG
+              value: "true"
+            # OTel: @vercel/otel exports OTLP/HTTP to the Collector. No
+            # SPIFFE_SVID_PATH — the BFF sets no spiffe.id resource attribute.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: web
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=web
+          envFrom:
+            - secretRef:
+                name: web-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/spiffe-helper.conf"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+          # See agent-copilot.yaml for the UID-1000 rationale.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

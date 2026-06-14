@@ -1,0 +1,14 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: mcp-ops
+spec:
+  className: spire-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}'
+  podSelector:
+    matchLabels:
+      app: mcp-ops
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp
+  jwtTtl: 5m

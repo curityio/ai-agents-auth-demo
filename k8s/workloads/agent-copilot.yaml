@@ -1,0 +1,173 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-copilot
+  namespace: agents
+---
+# spiffe-helper config (HCL). One JWT-SVID is minted per (audience, file) row.
+# This SVID is presented as the `actor_token` in the RFC 8693 token exchange.
+# Add more rows if other SVID audiences come into play.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-copilot-spiffe-helper
+  namespace: agents
+data:
+  spiffe-helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    daemon_mode = true
+    jwt_svids = [
+      {
+        jwt_audience = "https://curity.localtest.me/oauth/v2/oauth-token"
+        jwt_svid_file_name = "/run/spiffe/curity-actor.jwt"
+      }
+    ]
+---
+# NOTE: `agent-copilot-llm` is NOT defined here. Create it out-of-band so
+# `make apply` cannot clobber real values. The Secret holds both the API key
+# AND the endpoint URL (the endpoint identifies the Foundry resource and is
+# treated as private):
+#   kubectl -n agents create secret generic agent-copilot-llm \
+#     --from-literal=AZURE_OPENAI_API_KEY=<key-from-azure-foundry> \
+#     --from-literal=AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+# (or use `make seed-llm-secret`)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-copilot
+  namespace: agents
+  labels:
+    app: agent-copilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-copilot
+  template:
+    metadata:
+      labels:
+        app: agent-copilot
+    spec:
+      serviceAccountName: agent-copilot
+      volumes:
+        # CSI mount exposing the SPIRE agent's workload-API socket.
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        # In-memory tmpfs shared between the helper (writer) and the main
+        # container (reader). SVIDs never touch disk.
+        - name: spiffe-svids
+          emptyDir:
+            medium: Memory
+        - name: spiffe-helper-config
+          configMap:
+            name: agent-copilot-spiffe-helper
+      containers:
+        - name: agent
+          image: ai-agents-demo/agent-copilot:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          volumeMounts:
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+              readOnly: true
+          env:
+            - name: PORT
+              value: "8081"
+            - name: CURITY_ISSUER
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            - name: CURITY_JWKS_URI
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
+            - name: AGENT_AUDIENCE
+              value: agent-copilot
+            - name: MCP_OBSERVABILITY_URL
+              # The Istio ambient waypoint (k8s/istio/mcp-l7-authz.yaml) intercepts
+              # this transparently for a coarse early-deny; the authoritative JWT +
+              # act-chain enforcement lives in the MCP middleware
+              # (apps/mcp-observability/src/auth-middleware.ts).
+              value: http://mcp-observability.mcp.svc.cluster.local:8080/mcp
+            - name: CURITY_TOKEN_ENDPOINT
+              value: https://curity.localtest.me/oauth/v2/oauth-token
+            # CIMD client_id — the HTTPS URL Curity dereferences for this agent's
+            # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
+            - name: AGENT_CLIENT_ID
+              value: https://copilot.localtest.me/.well-known/oauth-client
+            - name: MCP_OBSERVABILITY_AUDIENCE
+              value: mcp-observability
+            - name: MCP_OBSERVABILITY_SCOPE
+              value: obs:read
+            # A2A privileged-path target.
+            - name: SPECIALIST_A2A_URL
+              value: http://agent-specialist.agents.svc.cluster.local:8082/a2a
+            - name: SPECIALIST_AUDIENCE
+              value: agent-specialist
+            - name: SPECIALIST_SCOPE
+              value: obs:read ops:write
+            - name: LLM_PROVIDER
+              value: azure
+            - name: LLM_MODEL
+              value: gpt-4.1
+            - name: AZURE_OPENAI_API_VERSION
+              value: 2024-04-01-preview
+            # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
+            # SVID file at SPIFFE_SVID_PATH by otel-bootstrap at SDK init.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: agent-copilot
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=agents
+            - name: SPIFFE_SVID_PATH
+              value: /run/spiffe/curity-actor.jwt
+            # AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT come from the
+            # `agent-copilot-llm` Secret via envFrom below.
+          envFrom:
+            - secretRef:
+                name: agent-copilot-llm
+            - secretRef:
+                name: agent-copilot-curity
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 3
+            periodSeconds: 5
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/spiffe-helper.conf"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+          # Run as UID 1000 to match the `node` user in the main container's
+          # node:20-bookworm-slim base image. spiffe-helper's older releases
+          # write SVID files with mode 0600 (owner-only) and lack a file-mode
+          # config knob, so matching UIDs is the simplest path to letting the
+          # main container read its own SVID.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-copilot
+  namespace: agents
+spec:
+  selector:
+    app: agent-copilot
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

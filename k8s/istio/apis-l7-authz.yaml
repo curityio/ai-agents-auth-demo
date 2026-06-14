@@ -1,0 +1,126 @@
+# Istio-native L7 authorization for the backend resource servers (apis tier).
+#
+# Mirrors k8s/istio/mcp-l7-authz.yaml: a RequestAuthentication validates the Curity
+# JWT at the waypoint, and per-Service AuthorizationPolicies do a coarse, default-deny
+# early-deny on caller identity + audience + scope. Two complementary checks:
+#
+#  1. CALLER-IDENTITY PINNING (the unique part). Each API only accepts connections
+#     whose mTLS peer identity (cluster.local SPIFFE, established by ztunnel) is the
+#     one legitimate MCP server that fronts it. The app only ever sees the Bearer
+#     token, never the mTLS peer, so this is ONLY enforceable at the waypoint — it
+#     adds proof-of-possession of the ACTING WORKLOAD.
+#  2. TOKEN VALIDITY + AUDIENCE + SCOPE (defense-in-depth). Duplicates what
+#     {obs,ops}-api/src/auth-middleware.ts already verifies authoritatively, but
+#     stops a bad/mis-scoped/wrong-audience token at the waypoint before it reaches
+#     the API.
+#
+# Scope/limits:
+#  - Coarse early-deny only. The act-chain (nested act.act.sub) and RFC 9470 step-up
+#    (acr=mfa for ops-api) stay in auth-middleware.ts — Istio's 403 can't carry the
+#    WWW-Authenticate step-up challenge, nor match the nested actor chain. Those
+#    remain authoritative.
+#  - It does NOT bind the token to the channel (RFC 8705 / DPoP).
+#  - Source identity uses the ISTIO trust domain (cluster.local/ns/mcp/sa/...),
+#    distinct from the SPIRE demo.curity.local act chain. See
+#    docs/explainers/mcp-l7-authz.md (the principals-vs-SVID FAQ).
+#
+# istiod fetches the JWKS via the in-cluster jwksUri (Curity runs plain HTTP behind
+# the TLS-terminating edge) and inlines it into the waypoint Envoy, refreshing
+# automatically — no snapshot step.
+#
+# Prereqs: the k8s Gateway API CRDs (already installed for the mcp waypoint — see
+# CLAUDE.md #21) and the apis namespace enrolled in ambient (k8s/namespaces.yaml).
+# The obs-api / ops-api Services opt in via `istio.io/use-waypoint: apis-waypoint`
+# (added to k8s/workloads/{obs,ops}-api.yaml).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: apis-waypoint
+  namespace: apis
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+---
+# Validate the Curity-issued JWT at the apis waypoint. Same model as the mcp tier:
+# istiod fetches jwksUri over cluster DNS; `issuer` is the public URL the token's
+# `iss` carries; `forwardOriginalToken: true` keeps the Bearer for the resource
+# server's authoritative act-chain + step-up checks. Validates only when a token is
+# present — the AuthorizationPolicies below are what default-deny.
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: curity-jwt
+  namespace: apis
+spec:
+  targetRefs:
+    - kind: Gateway
+      group: gateway.networking.k8s.io
+      name: apis-waypoint
+  jwtRules:
+    - issuer: "https://curity.localtest.me/oauth/v2/oauth-anonymous"
+      forwardOriginalToken: true
+      jwksUri: "http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks"
+---
+# obs-api (read tier): allow only the mcp-observability workload identity, presenting
+# an obs-api-audience token carrying obs:read. The unauthenticated GET /healthz
+# carve-out keeps the probe from being 403'd once `action: ALLOW` flips this Service
+# to default-deny.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: obs-api-authz
+  namespace: apis
+spec:
+  targetRefs:
+    - kind: Service
+      group: ""
+      name: obs-api
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/healthz"]
+    - from:
+        - source:
+            principals: ["cluster.local/ns/mcp/sa/mcp-observability"]
+      when:
+        - key: request.auth.audiences
+          values: ["obs-api"]
+        # The exchange narrows the token to a single scope per audience, so this
+        # exact-match is safe (no space-delimited multi-value to trip over).
+        - key: request.auth.claims[scope]
+          values: ["obs:read"]
+---
+# ops-api (write tier): allow only the mcp-ops workload identity, presenting an
+# ops-api-audience token carrying ops:write. The acr=mfa step-up stays in
+# auth-middleware.ts (the waypoint can't issue the RFC 9470 challenge).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ops-api-authz
+  namespace: apis
+spec:
+  targetRefs:
+    - kind: Service
+      group: ""
+      name: ops-api
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/healthz"]
+    - from:
+        - source:
+            principals: ["cluster.local/ns/mcp/sa/mcp-ops"]
+      when:
+        - key: request.auth.audiences
+          values: ["ops-api"]
+        - key: request.auth.claims[scope]
+          values: ["ops:write"]

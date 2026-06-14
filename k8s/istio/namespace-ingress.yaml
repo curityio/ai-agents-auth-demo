@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-ingress
+  labels:
+    # Ingress gateway sits at the edge; don't put it in the ambient data plane
+    # (it terminates external TLS and originates HBONE inward).
+    pod-security.kubernetes.io/enforce: privileged

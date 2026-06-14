@@ -1,0 +1,73 @@
+# Sample Deployments in the prod namespace. Their job is to be observable
+# (logs, pod status) and remediable (restart / set-image / scale) via mcp-ops.
+# Named to resemble real production microservices: order-service + checkout-service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: prod
+  labels:
+    app: order-service
+    demo.curity.local/restartable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: order-service }
+  template:
+    metadata:
+      labels: { app: order-service }
+    spec:
+      containers:
+        - name: order-service
+          image: busybox:1.37
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              i=0
+              echo "$(date -u +%FT%TZ) INFO  [order-service] server started on :8080"
+              while true; do
+                i=$((i+1))
+                status=$((200 + (i % 5 == 0) * 300))
+                latency=$((10 + i % 90))
+                echo "$(date -u +%FT%TZ) INFO  [order-service] GET /api/v1/orders ${status} ${latency}ms"
+                if [ $((i % 7)) -eq 0 ]; then
+                  echo "$(date -u +%FT%TZ) WARN  [order-service] order processing latency spike: ${latency}ms exceeds 50ms threshold"
+                fi
+                if [ $((i % 13)) -eq 0 ]; then
+                  echo "$(date -u +%FT%TZ) ERROR [order-service] order DB connection pool exhausted, retrying in 2s"
+                fi
+                sleep 5
+              done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-service
+  namespace: prod
+  labels:
+    app: checkout-service
+    demo.curity.local/restartable: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: checkout-service }
+  template:
+    metadata:
+      labels: { app: checkout-service }
+    spec:
+      containers:
+        - name: checkout-service
+          image: busybox:1.37
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              i=0
+              echo "$(date -u +%FT%TZ) INFO  [checkout-service] service started, listening on :8081"
+              while true; do
+                i=$((i+1))
+                echo "$(date -u +%FT%TZ) INFO  [checkout-service] POST /api/v1/checkout 201 $((20 + i % 60))ms"
+                if [ $((i % 10)) -eq 0 ]; then
+                  echo "$(date -u +%FT%TZ) WARN  [checkout-service] payment gateway timeout, order_id=ORD-$(printf '%04d' $i)"
+                fi
+                sleep 8
+              done

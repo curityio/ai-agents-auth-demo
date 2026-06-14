@@ -1,0 +1,21 @@
+# Istio ingress gateway (the edge pod).
+#
+# KIND constraint: extraPortMappings forward host 80/443 to node 80/443, so
+# our gateway pod must bind hostPort 80/443. The chart doesn't expose hostPort
+# directly — we patch the Deployment after install (see Makefile).
+service:
+  type: ClusterIP
+  ports:
+    - name: status-port
+      port: 15021
+      targetPort: 15021
+    - name: http2
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+
+# Single replica matches NGINX's per-node footprint and avoids hostPort
+# collisions on multi-node clusters (which we don't have on KIND anyway).
+replicaCount: 1

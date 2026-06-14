@@ -1,0 +1,141 @@
+# NOTE: `mcp-ops-curity` Secret is created out-of-band via `make seed-mcp-ops-secret`.
+# Holds CURITY_CLIENT_SECRET for client_secret_basic on the token-exchange endpoint.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-ops
+  namespace: mcp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-ops-spiffe-helper
+  namespace: mcp
+data:
+  # mcp-ops presents this SVID as the `actor_token` when it re-exchanges the
+  # caller's token for an ops-api-scoped token (the third OBO hop).
+  spiffe-helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    daemon_mode = true
+    jwt_svids = [
+      {
+        jwt_audience = "https://curity.localtest.me/oauth/v2/oauth-token"
+        jwt_svid_file_name = "/run/spiffe/curity-actor.jwt"
+      }
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-ops
+  namespace: mcp
+  labels:
+    app: mcp-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mcp-ops }
+  template:
+    metadata:
+      labels: { app: mcp-ops }
+    spec:
+      serviceAccountName: mcp-ops
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: spiffe-svids
+          emptyDir:
+            medium: Memory
+        - name: spiffe-helper-config
+          configMap:
+            name: mcp-ops-spiffe-helper
+      containers:
+        - name: mcp
+          image: ai-agents-demo/mcp-ops:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+              readOnly: true
+          env:
+            - name: PORT
+              value: "8080"
+            - name: CURITY_ISSUER
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            - name: CURITY_JWKS_URI
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
+            - name: MCP_AUDIENCE
+              value: mcp-ops
+            - name: REQUIRED_SCOPES
+              value: ops:write
+            - name: TARGET_NAMESPACE
+              value: prod
+            # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
+            # SVID file at SPIFFE_SVID_PATH by otel-bootstrap at SDK init.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: mcp-ops
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=mcp
+            - name: SPIFFE_SVID_PATH
+              value: /run/spiffe/curity-actor.jwt
+            - name: CURITY_TOKEN_ENDPOINT
+              value: https://curity.localtest.me/oauth/v2/oauth-token
+            - name: MCP_CLIENT_ID
+              value: mcp-ops
+            - name: OPS_API_URL
+              value: http://ops-api.apis.svc.cluster.local:8083/restart
+            - name: OPS_API_AUDIENCE
+              value: ops-api
+            - name: OPS_API_SCOPE
+              value: ops:write
+          envFrom:
+            - secretRef:
+                name: mcp-ops-curity
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/spiffe-helper.conf"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+          # See agent-copilot.yaml for the UID-1000 rationale.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-ops
+  namespace: mcp
+  labels:
+    # Route this Service's inbound traffic through the L7 waypoint (k8s/istio/mcp-l7-authz.yaml)
+    # so the Curity JWT + caller-identity authz runs before requests reach the pod.
+    istio.io/use-waypoint: mcp-waypoint
+spec:
+  selector:
+    app: mcp-ops
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

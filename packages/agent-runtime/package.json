@@ -1,0 +1,37 @@
+{
+  "name": "@ai-agents-demo/agent-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared agent runtime: LLM provider wiring and MCP→AI-SDK toolset adapter.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ai-agents-demo/auth-curity": "workspace:*",
+    "@ai-sdk/anthropic": "^1.0.6",
+    "@ai-sdk/azure": "^1.0.10",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ai": "^4.0.21",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

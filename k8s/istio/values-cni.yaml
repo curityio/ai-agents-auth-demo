@@ -1,0 +1,12 @@
+# Istio CNI for ambient mode.
+# KIND nodes use kindnet as their primary CNI; Istio CNI runs in chained mode
+# alongside it. The cni-bin/conf dirs below are KIND's default.
+profile: ambient
+
+cni:
+  ambient:
+    enabled: true
+  # chained mode = let kindnet stay primary, attach Istio as a chained plugin
+  chained: true
+  cniBinDir: /opt/cni/bin
+  cniConfDir: /etc/cni/net.d

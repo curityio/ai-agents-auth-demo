@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: curity
+  namespace: curity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curity
+  namespace: curity
+  labels:
+    app: curity
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curity
+  template:
+    metadata:
+      labels:
+        app: curity
+    spec:
+      serviceAccountName: curity
+      containers:
+        - name: idsvr
+          # Pin to a known-good Curity Identity Server image in your seed step.
+          # Public images are not freely pullable; check Curity's docs for access.
+          image: curity.azurecr.io/curity/idsvr:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: admin
+              containerPort: 6749
+            - name: oauth
+              containerPort: 8443
+          env:
+            - name: ADMIN
+              value: "true"
+            - name: LOGGING_LEVEL
+              value: DEBUG
+          volumeMounts:
+            - name: config
+              mountPath: /opt/idsvr/etc/init/curity-config.xml
+              subPath: curity-config.xml
+              readOnly: true
+            - name: license
+              mountPath: /opt/idsvr/etc/init/license/license.json
+              subPath: license.json
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: curity-config
+        - name: license
+          secret:
+            secretName: curity-license
+            optional: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: curity
+  namespace: curity
+spec:
+  selector:
+    app: curity
+  ports:
+    - name: oauth
+      port: 8443
+      targetPort: 8443
+    - name: admin
+      port: 6749
+      targetPort: 6749

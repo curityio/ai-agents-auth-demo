@@ -1,0 +1,32 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# secrets — never commit
+*.license
+.env
+.env.local
+.env.*.local
+k8s/curity/license/
+k8s/curity/secret-license.yaml
+k8s/secrets-local/
+certs/
+license.json
+.demo.env
+
+# editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# build artifacts
+/tmp/

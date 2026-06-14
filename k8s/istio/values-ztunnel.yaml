@@ -1,0 +1,2 @@
+# ztunnel — the per-node L4 dataplane for ambient mode. No sidecars.
+profile: ambient

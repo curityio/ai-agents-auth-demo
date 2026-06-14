@@ -1,0 +1,75 @@
+import type { Request, Response, NextFunction } from 'express';
+import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
+import type { Config } from './config.js';
+import { peekLastExchange } from './ops-api-client.js';
+
+/** Decode a JWT segment (0 = header, 1 = payload) without verifying. */
+function decodePart(token: string, idx: number): Record<string, unknown> | null {
+  const part = token.split('.')[idx];
+  if (!part) return null;
+  try {
+    return JSON.parse(Buffer.from(part, 'base64url').toString()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Demo-only OBO-chain endpoint. Returns the mcp-ops → ops-api hop (the 3rd
+ * RFC 8693 exchange) so the chain visualization can show the final
+ * MCP-to-resource-server leg. Mirrors agent-specialist's /last-token, but
+ * returns a uniform `{ chain }` shape so callers can simply concatenate.
+ *
+ * Authenticated by the same mcp-ops-bound token the caller used for /mcp —
+ * verifying issuer + aud is enough here (this is a read-only debug view).
+ */
+function lastTokenAuth(cfg: Config) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const authz = req.header('authorization');
+    if (!authz || !authz.toLowerCase().startsWith('bearer ')) {
+      res.status(401).json({ error: 'invalid_token' });
+      return;
+    }
+    const token = authz.slice('bearer '.length).trim();
+    try {
+      await verifyJwt(token, {
+        issuer: cfg.curityIssuer,
+        audience: cfg.expectedAudience,
+        jwksUri: cfg.curityJwksUri,
+      });
+      next();
+    } catch (e) {
+      if (e instanceof CurityAuthError) {
+        res.status(401).json({ error: e.code, error_description: e.message });
+        return;
+      }
+      console.error('[mcp-ops/last-token] verify error', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  };
+}
+
+export function buildLastTokenHandlers(cfg: Config): {
+  authn: ReturnType<typeof lastTokenAuth>;
+  handler: (req: Request, res: Response) => void;
+} {
+  return {
+    authn: lastTokenAuth(cfg),
+    handler(req: Request, res: Response) {
+      const includeRaw = req.query.raw === '1';
+      const last = peekLastExchange();
+      const chain = last
+        ? [
+            {
+              hop: 'mcp-ops → ops-api',
+              header: decodePart(last.accessToken, 0),
+              payload: decodePart(last.accessToken, 1),
+              // Raw JWT only when explicitly requested (debug inspect).
+              ...(includeRaw ? { token: last.accessToken } : {}),
+            },
+          ]
+        : [];
+      res.json({ chain });
+    },
+  };
+}

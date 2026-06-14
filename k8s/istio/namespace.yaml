@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    # istio-system itself stays out of the ambient data plane so istiod /
+    # ztunnel pods aren't subject to their own mesh policies.
+    pod-security.kubernetes.io/enforce: privileged

@@ -1,0 +1,24 @@
+# grafana/tempo (single-binary) chart. Ephemeral filesystem storage — fine for
+# a demo. Enable OTLP receivers so the Collector can forward to :4317.
+tempo:
+  retention: 30m
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  resources:
+    requests:
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  memBallastSizeMbs: 64
+persistence:
+  enabled: false

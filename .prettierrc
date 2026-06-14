@@ -1,0 +1,15 @@
+{
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "arrowParens": "always",
+  "overrides": [
+    {
+      "comment": "Curity token procedures run in Nashorn (ES5.1), which rejects ES2017 trailing commas in function calls/args. Force 'none' so a format pass can't reintroduce them and break config validation on deploy.",
+      "files": "k8s/curity/procedures/*.js",
+      "options": { "trailingComma": "none" }
+    }
+  ]
+}

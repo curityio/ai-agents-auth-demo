@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-specialist
+  namespace: agents
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-specialist-spiffe-helper
+  namespace: agents
+data:
+  spiffe-helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    daemon_mode = true
+    jwt_svids = [
+      {
+        jwt_audience = "https://curity.localtest.me/oauth/v2/oauth-token"
+        jwt_svid_file_name = "/run/spiffe/curity-actor.jwt"
+      }
+    ]
+---
+# NOTE: `agent-specialist-curity` Secret is created out-of-band via
+# `make seed-specialist-key`. Holds `CURITY_AGENT_PRIVATE_KEY_PEM` — the PKCS8
+# private key this agent uses to sign its private_key_jwt client assertion when
+# authenticating to Curity's /token endpoint as a CIMD ephemeral client.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-specialist
+  namespace: agents
+  labels:
+    app: agent-specialist
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-specialist }
+  template:
+    metadata:
+      labels: { app: agent-specialist }
+    spec:
+      serviceAccountName: agent-specialist
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: spiffe-svids
+          emptyDir:
+            medium: Memory
+        - name: spiffe-helper-config
+          configMap:
+            name: agent-specialist-spiffe-helper
+      containers:
+        - name: agent
+          image: ai-agents-demo/agent-specialist:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          volumeMounts:
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+              readOnly: true
+          env:
+            - name: PORT
+              value: "8082"
+            - name: CURITY_ISSUER
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            - name: CURITY_JWKS_URI
+              value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
+            - name: AGENT_AUDIENCE
+              value: agent-specialist
+            - name: CURITY_TOKEN_ENDPOINT
+              value: https://curity.localtest.me/oauth/v2/oauth-token
+            # CIMD client_id — the HTTPS URL Curity dereferences for this agent's
+            # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
+            - name: AGENT_CLIENT_ID
+              value: https://specialist.localtest.me/.well-known/oauth-client
+            - name: MCP_OPS_URL
+              value: http://mcp-ops.mcp.svc.cluster.local:8080/mcp
+            - name: MCP_OPS_AUDIENCE
+              value: mcp-ops
+            - name: MCP_OPS_SCOPE
+              value: ops:write
+            - name: MCP_OBSERVABILITY_URL
+              value: http://mcp-observability.mcp.svc.cluster.local:8080/mcp
+            - name: MCP_OBSERVABILITY_AUDIENCE
+              value: mcp-observability
+            - name: MCP_OBSERVABILITY_SCOPE
+              value: obs:read
+            - name: REQUIRED_ACR
+              value: mfa
+            - name: LLM_PROVIDER
+              value: azure
+            - name: LLM_MODEL
+              value: gpt-4.1
+            - name: AZURE_OPENAI_API_VERSION
+              value: 2024-04-01-preview
+            - name: PUBLIC_BASE_URL
+              value: https://specialist.localtest.me
+            # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
+            # SVID file at SPIFFE_SVID_PATH by otel-bootstrap at SDK init.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: agent-specialist
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=agents
+            - name: SPIFFE_SVID_PATH
+              value: /run/spiffe/curity-actor.jwt
+          envFrom:
+            - secretRef:
+                name: agent-specialist-llm
+            - secretRef:
+                name: agent-specialist-curity
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8082
+            initialDelaySeconds: 3
+            periodSeconds: 5
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/spiffe-helper.conf"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+          # UID-1000 rationale: matches the `node` user in the main container's
+          # base image so the SVID file (mode 0600 from spiffe-helper) is
+          # readable. See agent-copilot.yaml for the longer story.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-specialist
+  namespace: agents
+spec:
+  selector:
+    app: agent-specialist
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

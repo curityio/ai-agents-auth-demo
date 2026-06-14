@@ -1,0 +1,41 @@
+{
+  "name": "@ai-agents-demo/otel-bootstrap",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenTelemetry SDK bootstrap (side-effect import) for the AI-agents demo Node services — auto-instrumentation, OTLP export, and the spiffe.id resource attribute.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ai-agents-demo/spiffe": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.52.0",
+    "@opentelemetry/core": "^1.27.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0",
+    "@opentelemetry/propagator-b3": "^1.27.0",
+    "@opentelemetry/resources": "^1.27.0",
+    "@opentelemetry/sdk-node": "^0.54.0",
+    "@opentelemetry/sdk-trace-base": "^1.27.0",
+    "@opentelemetry/semantic-conventions": "^1.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

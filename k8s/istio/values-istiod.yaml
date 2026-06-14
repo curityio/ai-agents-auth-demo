@@ -1,0 +1,10 @@
+# istiod for ambient — no sidecar injection by default, ztunnel handles L4.
+profile: ambient
+
+# Trust domain stays Kubernetes-default (`cluster.local`) — distinct from SPIRE's
+# `demo.curity.local`. The two trust domains are deliberately separate, but they
+# now chain to ONE shared root: istiod signs workload certs with a plug-in
+# intermediate from the `cacerts` Secret (seeded by `make seed-istio-ca`), and
+# that intermediate is signed by the same root as SPIRE's CA. So Istio mTLS certs
+# and SPIRE SVIDs share a single trust anchor. istiod auto-detects `cacerts` at
+# boot and uses it instead of self-signing; the Secret must exist before install.

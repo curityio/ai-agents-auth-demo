@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+      filter/health:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["http.target"] == "/healthz"'
+            - 'attributes["http.target"] == "/api/health"'
+            - 'attributes["url.path"] == "/healthz"'
+            - 'attributes["url.path"] == "/api/health"'
+            - 'attributes["http.route"] == "/healthz"'
+            # Probe server spans are named just "GET" (instrumentation-http names
+            # by method; the route lives on a separate express span). Scope the
+            # drop to health PATHS only — a blanket `name == "GET"` also discarded
+            # obs-api's legitimate `GET /pods` / `GET /pods/:name/logs` read spans,
+            # erasing the OBS-path identity chain from Tempo.
+            - 'name == "GET" and (attributes["url.path"] == "/healthz" or attributes["url.path"] == "/api/health")'
+            - 'name == "GET" and (attributes["http.target"] == "/healthz" or attributes["http.target"] == "/api/health")'
+      # NOTE: a production deployment would add an attributes/redaction
+      # processor HERE to drop or hash auth.sub before export. Intentionally
+      # omitted — this demo shows real alice/bob identity on purpose.
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.observability.svc.cluster.local:4317
+        tls:
+          insecure: true
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [filter/health, batch]
+          exporters: [otlp/tempo]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.1
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: health, containerPort: 13133 }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+          # The otel/opentelemetry-collector image runs as non-root UID 10001
+          # by default, so we keep runAsNonRoot but OMIT runAsUser (pinning
+          # 1000 like the sibling workloads would conflict with the image UID).
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+    - { name: otlp-http, port: 4318, targetPort: 4318 }

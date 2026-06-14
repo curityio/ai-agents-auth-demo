@@ -1,0 +1,27 @@
+# SPIRE's hardened chart (with recommendations.enabled) splits components
+# across three namespaces for blast-radius isolation:
+#   - spire        : the Helm release lives here; CRDs + global config
+#   - spire-server : server StatefulSet + controller-manager
+#   - spire-system : agent DaemonSet + CSI driver
+# All three are privileged because SPIRE components need host mounts.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire-server
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

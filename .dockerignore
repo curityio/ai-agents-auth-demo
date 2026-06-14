@@ -1,0 +1,39 @@
+# Anything that isn't source should not be sent to the docker daemon.
+# Especially important: never copy host node_modules into an image — pnpm
+# symlinks point at absolute paths and break across host/container boundaries.
+
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/coverage
+**/*.tsbuildinfo
+
+# git / editor / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# local secrets and certs
+.env
+.env.*
+certs/
+k8s/curity/secret-license.yaml
+k8s/curity/license/
+k8s/secrets-local/
+
+# infra / docs we never need inside images
+k8s/
+docs/
+implementation-plan.md
+ai-demo-requirements.md
+README.md
+LICENSE
+Makefile
+scripts/
+
+# Don't include Dockerfiles inside images
+**/Dockerfile
+.dockerignore

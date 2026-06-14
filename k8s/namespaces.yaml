@@ -1,0 +1,47 @@
+# Istio Ambient: web/agents/mcp join the ambient mesh.
+# `curity` deliberately stays OUT of the mesh — it terminates external TLS at
+# its own ingress and exposing the OIDC endpoints via Istio adds complexity
+# (Auth.js needs the discovery URL to match the iss claim exactly). The SPIRE
+# namespaces also stay out; their workloads need host mounts and a SPIRE-side
+# trust boundary, not Istio's.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: curity
+  labels:
+    purpose: identity-provider
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web
+  labels:
+    purpose: user-facing
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  labels:
+    purpose: ai-agents
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp
+  labels:
+    purpose: mcp-servers
+    istio.io/dataplane-mode: ambient
+---
+# Backend resource servers (obs-api/ops-api). Separated from the thin MCP
+# clients in `mcp`: only these hold Kubernetes credentials (minimal RBAC in
+# `prod`). In the ambient mesh for mTLS.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apis
+  labels:
+    purpose: resource-servers
+    istio.io/dataplane-mode: ambient
