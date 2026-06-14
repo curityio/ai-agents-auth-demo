@@ -136,7 +136,7 @@ packages/
   a2a-helpers/          # A2A client/server + step-up error carrier
 k8s/
   curity/ spire/ istio/ observability/ workloads/ prod/ kind/
-docs/                   # architecture, design, demo, curity-seed, spiffe, archive/
+docs/                   # architecture, design, demo, curity-seed
 scripts/                # bootstrap + smoke-test shell scripts
 Makefile
 ```
