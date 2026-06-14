@@ -147,7 +147,7 @@ Makefile
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System overview, topology, the two OBO chains, trust model, security boundaries. |
 | [`docs/design.md`](docs/design.md) | Module breakdown, interfaces, workflows, configuration & deployment model, decisions. |
-| [`docs/demo.md`](docs/demo.md) | **Start here to run/present** — storyline, step-by-step execution, observability walkthrough, troubleshooting. |
+| [`docs/demo.md`](docs/demo.md) | storyline, step-by-step execution, observability walkthrough, troubleshooting. |
 | [`docs/curity-seed.md`](docs/curity-seed.md) | Offline Curity setup checklist (clients, scopes, users, procedure). |
 
 ## Troubleshooting
