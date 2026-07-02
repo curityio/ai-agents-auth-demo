@@ -57,7 +57,7 @@ export function IntentBadges({ intent }: { intent?: RestartIntent }) {
 const STATUS_CONFIG: Record<string, { variant: BadgeProps['variant']; Icon: typeof Clock }> = {
   completed: { variant: 'success', Icon: CheckCircle2 },
   failed: { variant: 'destructive', Icon: XCircle },
-  'step-up': { variant: 'secondary', Icon: Lock },
+  'step-up': { variant: 'warning', Icon: Lock },
 };
 
 export function SpecialistStatusBadge({ status, ok }: { status?: string; ok?: boolean }) {
