@@ -30,7 +30,7 @@ interface AppShellProps {
 export function AppShell({ signedIn, displayName, email, children }: AppShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-40 border-b border-border bg-white/80 backdrop-blur-xl supports-[backdrop-filter]:bg-white/70">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-3">
             <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
@@ -74,7 +74,7 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
                 Secure AI agent
                 <br />
                 authorization,{' '}
-                <span className="bg-gradient-to-r from-pink-200 via-fuchsia-200 to-purple-200 bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-[#C9A8FF] to-[#E9DEFF] bg-clip-text text-transparent">
                   demonstrated.
                 </span>
               </h1>
