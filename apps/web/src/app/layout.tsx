@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { Roboto, Roboto_Mono } from 'next/font/google';
+import { Figtree, Roboto_Mono } from 'next/font/google';
 import './globals.css';
 
-const sans = Roboto({
+const sans = Figtree({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '700'],
+  weight: ['300', '400', '500', '600', '700'],
   display: 'swap',
   variable: '--font-sans',
 });
