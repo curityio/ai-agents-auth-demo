@@ -101,7 +101,7 @@ export function InspectView() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-start gap-2">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
           <p className="text-sm text-muted-foreground">
             Every token available to this session right now — the Curity-issued user access token and
             each RFC&nbsp;8693 exchanged token. Raw JWTs are copyable. <strong>Debug-only.</strong>
