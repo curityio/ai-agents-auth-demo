@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
+import {
+  ShieldCheck,
+  Fingerprint,
+  KeyRound,
+  ShieldAlert,
+  Radar,
+  ArrowUpRight,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { SignInButton } from '@/components/sign-in-button';
@@ -33,6 +40,9 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
               className="h-7 w-auto"
             />
             <span aria-hidden className="h-6 w-px bg-border" />
+            <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
             <div className="leading-tight">
               <div className="text-sm font-bold tracking-tight">SRE Copilot</div>
               <div className="text-xs text-muted-foreground">Secure AI agent operations</div>
