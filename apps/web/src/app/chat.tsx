@@ -343,7 +343,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       )}
 
       {stepUp && (
-        <Alert variant="info">
+        <Alert variant="warning">
           <Lock className="h-4 w-4" />
           <AlertTitle>Step-up authentication required</AlertTitle>
           <AlertDescription className="space-y-3">

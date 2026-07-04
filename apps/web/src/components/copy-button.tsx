@@ -22,7 +22,7 @@ export function CopyButton({ value, label = 'Copy' }: { value: string; label?: s
 
   return (
     <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs" onClick={onCopy}>
-      {copied ? <Check className="text-emerald-600" /> : <Copy />}
+      {copied ? <Check className="text-success" /> : <Copy />}
       {copied ? 'Copied' : label}
     </Button>
   );

@@ -2,47 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Curity brand palette: white pages, navy headings, magenta-pink spot accent,
-   deep-purple hover, teal + grey supporting tones. (curity.io) */
+/* Curity 2026 brand palette (v2.1): dark-first — deep-navy base, purple-mid
+   surfaces, single purple accent with lilac highlight, amber warm accent for
+   step-up. Light text. Replaces the 2023 light theme. (curity.io / styleguide-2026) */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 23% 19%; /* navy #262c3d */
+    --background: 248 41% 7%; /* deep navy #0D0B1A */
+    --foreground: 0 0% 100%; /* white headings; body uses /70–/80 */
 
-    --card: 0 0% 100%;
-    --card-foreground: 224 23% 19%;
+    --card: 250 51% 11%; /* midnight #130E2B */
+    --card-foreground: 0 0% 100%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 224 23% 19%;
+    --popover: 251 53% 13%; /* card fill #1C1440 */
+    --popover-foreground: 0 0% 100%;
 
-    --primary: 326 62% 60%; /* spot pink #d859a1 */
-    --primary-foreground: 0 0% 100%;
+    --primary: 270 80% 66%; /* spot purple, deepened from #C084FC so white text clears AA */
+    --primary-foreground: 0 0% 100%; /* white */
 
-    /* Accents that drive the brand gradient */
-    --accent-violet: 176 72% 42%; /* teal (pairs with the pink spot) */
-    --accent-cyan: 175 38% 47%; /* teal #4aa69e */
-    --accent-fuchsia: 298 75% 40%; /* deep magenta #87148b-ish */
+    /* Brand accents — collapsed to the purple/lilac family (teal/magenta gone) */
+    --accent-violet: 263 100% 83%; /* lilac #C9A8FF */
+    --accent-cyan: 260 61% 57%; /* purple */
+    --accent-fuchsia: 270 95% 75%; /* bright purple #C084FC */
 
-    --secondary: 0 0% 96%; /* grey-subtle #f6f6f6 */
-    --secondary-foreground: 224 23% 25%;
+    --secondary: 250 40% 16%; /* dark purple surface */
+    --secondary-foreground: 231 30% 90%;
 
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%; /* #737373 */
+    --muted: 250 40% 16%;
+    --muted-foreground: 231 20% 72%; /* readable lavender-grey */
 
-    --accent: 326 62% 96%; /* pink tint */
-    --accent-foreground: 298 60% 36%;
+    --accent: 254 45% 22%; /* purple tint for hover/active states (matches spot purple) */
+    --accent-foreground: 263 100% 83%; /* lilac */
 
-    --destructive: 1 65% 48%; /* #ca2e2b */
+    --destructive: 0 72% 62%; /* bright red, legible on dark */
     --destructive-foreground: 0 0% 100%;
 
-    --success: 123 50% 56%; /* #57c75c */
-    --success-foreground: 0 0% 100%;
+    --success: 142 60% 58%; /* green, legible on dark */
+    --success-foreground: 240 30% 8%;
 
-    --border: 210 22% 86%; /* #cfd7df-ish */
-    --input: 210 22% 86%;
-    --ring: 326 62% 60%;
+    --warn: 32 90% 59%; /* amber #F59E3A — step-up */
+    --warn-foreground: 240 30% 8%;
 
-    --radius: 0.55rem;
+    --border: 254 35% 22%; /* purple-tinted */
+    --input: 254 35% 22%;
+    --ring: 270 80% 66%;
+
+    --radius: 0.5rem;
   }
 }
 
@@ -61,54 +65,78 @@
 }
 
 @layer utilities {
-  /* Page backdrop: near-white with very faint brand tint. */
+  /* Page backdrop: deep-navy base with a purple radial aurora that brightens
+     toward the top-right (per the 2026 guide). */
   .bg-app {
-    background-color: hsl(210 24% 99%);
+    background-color: hsl(248 41% 7%);
     background-image:
-      radial-gradient(60rem 60rem at 8% -10%, hsl(var(--accent-violet) / 0.06), transparent 60%),
-      radial-gradient(50rem 50rem at 100% 0%, hsl(var(--primary) / 0.06), transparent 55%),
-      radial-gradient(45rem 45rem at 50% 120%, hsl(var(--accent-fuchsia) / 0.04), transparent 60%);
+      radial-gradient(60rem 60rem at 100% -10%, hsl(260 61% 57% / 0.22), transparent 60%),
+      radial-gradient(52rem 52rem at 0% 0%, hsl(254 59% 26% / 0.2), transparent 55%),
+      radial-gradient(45rem 45rem at 50% 120%, hsl(270 95% 75% / 0.08), transparent 60%);
     background-attachment: fixed;
   }
 
-  /* Subtle dotted grid overlay. */
+  /* Subtle dotted grid overlay (low-alpha white reads on dark). */
   .bg-grid {
-    background-image: radial-gradient(hsl(0 0% 100% / 0.12) 1px, transparent 1px);
+    background-image: radial-gradient(hsl(0 0% 100% / 0.08) 1px, transparent 1px);
     background-size: 26px 26px;
   }
 
-  /* Brand hero — deep navy base with a magenta/purple aurora; white text. */
+  /* Brand icon surface — magenta-pink aurora, aligned with the Enterprise hero
+     (badges, sign-in icon, chat/OBO nodes). Corner-weighted so it stays vibrant
+     at small sizes. */
   .mesh-hero {
-    background-color: hsl(225 30% 28%); /* lighter navy */
+    background-color: hsl(320 50% 28%);
     background-image:
-      radial-gradient(40rem 30rem at -2% -10%, hsl(var(--accent-violet) / 0.78), transparent 58%),
-      radial-gradient(36rem 30rem at 104% 4%, hsl(var(--primary) / 0.72), transparent 54%),
-      radial-gradient(42rem 36rem at 86% 116%, hsl(var(--accent-fuchsia) / 0.7), transparent 62%),
-      radial-gradient(34rem 30rem at 4% 122%, hsl(225 32% 38%), transparent 55%);
+      radial-gradient(40rem 30rem at -2% -10%, hsl(328 100% 85% / 0.35), transparent 58%),
+      radial-gradient(36rem 30rem at 104% 4%, hsl(322 85% 68% / 0.55), transparent 54%),
+      radial-gradient(42rem 36rem at 86% 116%, hsl(328 72% 56% / 0.78), transparent 62%),
+      radial-gradient(34rem 30rem at 4% 122%, hsl(260 40% 16%), transparent 55%);
   }
 
-  /* Clean white cards (Curity uses flat white surfaces, thin border, soft shadow). */
+  /* Hero banner in the "Enterprise" flavor — echoes curity.io/pricing's
+     Enterprise card: magenta-pink (#E0529D ≈ hsl(328 70% 60%)) over a deep
+     purple-navy base, strongest toward the bottom (the card's 6%→24% wash). */
+  .mesh-hero-enterprise {
+    background-color: hsl(252 44% 14%);
+    background-image:
+      radial-gradient(58rem 42rem at 50% 128%, hsl(328 72% 58% / 0.55), transparent 68%),
+      radial-gradient(42rem 32rem at 104% 2%, hsl(320 72% 60% / 0.34), transparent 58%),
+      radial-gradient(38rem 30rem at -2% -8%, hsl(284 58% 56% / 0.24), transparent 60%),
+      linear-gradient(180deg, hsl(252 44% 11% / 0), hsl(328 60% 46% / 0.24));
+  }
+
+  /* Frosted dark-purple cards: 1px purple-tinted border, soft shadow,
+     hairline lilac top-light, and a subtle inner glow on hover. */
   .glass {
-    background-color: hsl(0 0% 100%);
-    border: 1px solid hsl(var(--border));
+    background-color: hsl(251 53% 13% / 0.72);
+    backdrop-filter: blur(12px);
+    border: 1px solid hsl(254 40% 34% / 0.55);
     box-shadow:
-      0 1px 2px hsl(224 23% 19% / 0.05),
-      0 10px 30px -16px hsl(224 23% 19% / 0.14);
+      0 1px 2px hsl(248 60% 3% / 0.4),
+      0 10px 30px -16px hsl(248 60% 3% / 0.7),
+      inset 0 1px 0 hsl(263 100% 83% / 0.06);
+    transition: box-shadow 0.2s ease;
   }
-
+  .glass:hover {
+    box-shadow:
+      0 1px 2px hsl(248 60% 3% / 0.4),
+      0 12px 34px -14px hsl(248 60% 3% / 0.75),
+      inset 0 0 34px hsl(270 95% 75% / 0.08),
+      inset 0 1px 0 hsl(263 100% 83% / 0.08);
+  }
   .glass-strong {
-    background-color: hsl(0 0% 100%);
-    border: 1px solid hsl(var(--border));
-    box-shadow: 0 12px 36px -16px hsl(224 23% 19% / 0.18);
+    background-color: hsl(251 53% 13% / 0.85);
+    backdrop-filter: blur(14px);
+    border: 1px solid hsl(254 40% 38% / 0.6);
+    box-shadow:
+      0 14px 40px -16px hsl(248 60% 3% / 0.8),
+      inset 0 1px 0 hsl(263 100% 83% / 0.08);
   }
 
-  /* Gradient text for emphasis spans (pink → purple). */
+  /* Gradient text for emphasis spans (lilac → bright purple). */
   .text-gradient {
-    background-image: linear-gradient(
-      100deg,
-      hsl(var(--primary)),
-      hsl(var(--accent-violet))
-    );
+    background-image: linear-gradient(100deg, hsl(263 100% 83%), hsl(270 95% 75%));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -120,7 +148,7 @@
     width: 6px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(var(--foreground) / 0.18);
+    background: hsl(0 0% 100% / 0.18);
     border-radius: 9999px;
   }
 }
