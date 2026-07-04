@@ -1,13 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  ShieldCheck,
-  Fingerprint,
-  KeyRound,
-  ShieldAlert,
-  Radar,
-  ArrowUpRight,
-} from 'lucide-react';
+import { Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { SignInButton } from '@/components/sign-in-button';
@@ -33,9 +26,13 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-3">
-            <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/curity-logo-landscape-white.svg"
+              alt="Curity"
+              className="h-7 w-auto"
+            />
+            <span aria-hidden className="h-6 w-px bg-border" />
             <div className="leading-tight">
               <div className="text-sm font-bold tracking-tight">SRE Copilot</div>
               <div className="text-xs text-muted-foreground">Secure AI agent operations</div>
@@ -106,8 +103,14 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
 
       <footer className="mt-4 border-t border-border">
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-2 px-6 py-6 text-xs text-muted-foreground">
-          <span>
-            Curity · SPIFFE · Istio Ambient — AI agent authentication &amp; authorization demo
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/curity-logo-landscape-white.svg"
+              alt="Curity"
+              className="h-4 w-auto opacity-80"
+            />
+            <span>· SPIFFE · Istio Ambient — AI agent authentication &amp; authorization demo</span>
           </span>
           {signedIn && (
             <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
