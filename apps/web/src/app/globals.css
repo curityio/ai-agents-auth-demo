@@ -16,8 +16,8 @@
     --popover: 251 53% 13%; /* card fill #1C1440 */
     --popover-foreground: 0 0% 100%;
 
-    --primary: 260 61% 57%; /* purple #7B4FD4 */
-    --primary-foreground: 0 0% 100%;
+    --primary: 270 80% 66%; /* spot purple, deepened from #C084FC so white text clears AA */
+    --primary-foreground: 0 0% 100%; /* white */
 
     /* Brand accents — collapsed to the purple/lilac family (teal/magenta gone) */
     --accent-violet: 263 100% 83%; /* lilac #C9A8FF */
@@ -30,7 +30,7 @@
     --muted: 250 40% 16%;
     --muted-foreground: 231 20% 72%; /* readable lavender-grey */
 
-    --accent: 254 45% 22%; /* purple tint for hover states */
+    --accent: 254 45% 22%; /* purple tint for hover/active states (matches spot purple) */
     --accent-foreground: 263 100% 83%; /* lilac */
 
     --destructive: 0 72% 62%; /* bright red, legible on dark */
@@ -44,7 +44,7 @@
 
     --border: 254 35% 22%; /* purple-tinted */
     --input: 254 35% 22%;
-    --ring: 260 61% 57%;
+    --ring: 270 80% 66%;
 
     --radius: 0.5rem;
   }
@@ -82,14 +82,28 @@
     background-size: 26px 26px;
   }
 
-  /* Brand icon/hero surface — purple-mid base with a lilac→purple aurora. */
+  /* Brand icon surface — magenta-pink aurora, aligned with the Enterprise hero
+     (badges, sign-in icon, chat/OBO nodes). Corner-weighted so it stays vibrant
+     at small sizes. */
   .mesh-hero {
-    background-color: hsl(254 59% 26%);
+    background-color: hsl(320 50% 28%);
     background-image:
-      radial-gradient(40rem 30rem at -2% -10%, hsl(263 100% 83% / 0.35), transparent 58%),
-      radial-gradient(36rem 30rem at 104% 4%, hsl(270 95% 75% / 0.55), transparent 54%),
-      radial-gradient(42rem 36rem at 86% 116%, hsl(260 61% 57% / 0.75), transparent 62%),
-      radial-gradient(34rem 30rem at 4% 122%, hsl(248 41% 12%), transparent 55%);
+      radial-gradient(40rem 30rem at -2% -10%, hsl(328 100% 85% / 0.35), transparent 58%),
+      radial-gradient(36rem 30rem at 104% 4%, hsl(322 85% 68% / 0.55), transparent 54%),
+      radial-gradient(42rem 36rem at 86% 116%, hsl(328 72% 56% / 0.78), transparent 62%),
+      radial-gradient(34rem 30rem at 4% 122%, hsl(260 40% 16%), transparent 55%);
+  }
+
+  /* Hero banner in the "Enterprise" flavor — echoes curity.io/pricing's
+     Enterprise card: magenta-pink (#E0529D ≈ hsl(328 70% 60%)) over a deep
+     purple-navy base, strongest toward the bottom (the card's 6%→24% wash). */
+  .mesh-hero-enterprise {
+    background-color: hsl(252 44% 14%);
+    background-image:
+      radial-gradient(58rem 42rem at 50% 128%, hsl(328 72% 58% / 0.55), transparent 68%),
+      radial-gradient(42rem 32rem at 104% 2%, hsl(320 72% 60% / 0.34), transparent 58%),
+      radial-gradient(38rem 30rem at -2% -8%, hsl(284 58% 56% / 0.24), transparent 60%),
+      linear-gradient(180deg, hsl(252 44% 11% / 0), hsl(328 60% 46% / 0.24));
   }
 
   /* Frosted dark-purple cards: 1px purple-tinted border, soft shadow,

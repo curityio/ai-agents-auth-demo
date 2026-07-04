@@ -65,7 +65,7 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
         {/* Hero */}
         <section className="relative animate-fade-in-up overflow-hidden rounded-3xl">
-          <div className="mesh-hero animate-gradient-pan bg-[length:200%_200%] px-7 py-12 sm:px-10 sm:py-14">
+          <div className="mesh-hero-enterprise animate-gradient-pan bg-[length:200%_200%] px-7 py-12 sm:px-10 sm:py-14">
             {/* dotted texture + sheen */}
             <div className="bg-grid pointer-events-none absolute inset-0 opacity-30 [mask-image:radial-gradient(80%_80%_at_50%_0%,black,transparent)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/15 to-transparent" />
@@ -83,7 +83,7 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
                 Secure AI agent
                 <br />
                 authorization,{' '}
-                <span className="bg-gradient-to-r from-[#C9A8FF] to-[#E9DEFF] bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-[#F7B9DE] to-[#FFEAF5] bg-clip-text text-transparent">
                   demonstrated.
                 </span>
               </h1>
