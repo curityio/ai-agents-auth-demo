@@ -32,20 +32,22 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4 sm:gap-6">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/curity-logo-landscape-white.svg"
               alt="Curity"
               className="h-7 w-auto"
             />
-            <span aria-hidden className="h-6 w-px bg-border" />
-            <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <div className="leading-tight">
-              <div className="text-sm font-bold tracking-tight">SRE Copilot</div>
-              <div className="text-xs text-muted-foreground">Secure AI agent operations</div>
+            <span aria-hidden className="h-7 w-px bg-border" />
+            <div className="flex items-center gap-3">
+              <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div className="leading-tight">
+                <div className="text-sm font-bold tracking-tight">SRE Copilot</div>
+                <div className="text-xs text-muted-foreground">Secure AI agent operations</div>
+              </div>
             </div>
           </div>
           {signedIn ? (
