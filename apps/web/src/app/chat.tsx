@@ -515,7 +515,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="font-mono text-sm font-semibold">{s.workload}</span>
                       {!s.error && typeof s.ttl_seconds === 'number' && (
-                        <Badge variant="muted" className="font-mono">
+                        <Badge variant="muted" className="gap-1 font-mono">
+                          <Clock className="h-3 w-3" />
                           ttl {s.ttl_seconds}s
                         </Badge>
                       )}

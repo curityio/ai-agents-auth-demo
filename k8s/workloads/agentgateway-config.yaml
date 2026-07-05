@@ -276,3 +276,21 @@ binds:
             full: /last-token
       backends:
       - host: mcp-ops.mcp.svc.cluster.local:8080
+
+    # ------------------------------------------------------------------ #
+    # Workload-identity readout for the web "Workload identities" panel.
+    # Unlike the agents/MCP servers, agentgateway is a Rust binary with no
+    # /spiffe-id of its own — but the co-located exchange-shim reads the SAME
+    # rotating SVID the gateway presents as its actor_token, so the shim's
+    # /spiffe-id IS agentgateway's workload identity. Plain read-only proxy:
+    # NO jwtAuth / extAuthz / rewrite (identity claims aren't secret, same as
+    # the other /spiffe-id endpoints). This route deliberately exposes ONLY
+    # /spiffe-id from the shim — the token-exchange /exchange endpoint has no
+    # route and therefore never reaches the Service.
+    # ------------------------------------------------------------------ #
+    - name: gateway-spiffe-id
+      matches:
+      - path:
+          pathPrefix: /spiffe-id
+      backends:
+      - host: localhost:8090
