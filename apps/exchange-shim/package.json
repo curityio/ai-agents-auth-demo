@@ -1,0 +1,19 @@
+{
+  "name": "@ai-agents-demo/exchange-shim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@ai-agents-demo/auth-curity": "workspace:*",
+    "@ai-agents-demo/spiffe": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
