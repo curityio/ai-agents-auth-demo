@@ -449,7 +449,7 @@ status: ## Show pod health across every demo namespace
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-obo smoke-a2a smoke-stepup ## Run all auth/authz smoke tests
+smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
 
 .PHONY: smoke-obo
@@ -463,6 +463,10 @@ smoke-a2a: ## Smoke: A2A delegation + privileged restart (… → specialist →
 .PHONY: smoke-stepup
 smoke-stepup: ## Smoke: RFC 9470 step-up (MFA for ops:write) + role-based denial (Bob)
 	bash scripts/smoke-stepup.sh
+
+.PHONY: smoke-llm
+smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm → Azure). Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-llm.sh
 
 # ============================================================================
 # MCP Inspector (tool tour) — see docs/mcp-inspector.md
