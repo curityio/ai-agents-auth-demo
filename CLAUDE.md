@@ -30,9 +30,10 @@ current spec. The canonical docs above supersede them. Don't reintroduce
 Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
                                                                 └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
                                                                   (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+        agent-copilot / agent-specialist ─ LLM ─▶ agentgateway (/llm; aud=llm-gateway, require llm:invoke; backendAuth.key=Azure key) ─▶ Azure OpenAI
         agentgateway = MCP front door (aud=mcp-gateway; coarse per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
         (the set_deployment_image=sre role split is enforced downstream at mcp-ops, NOT the gateway)
-                          every agent/MCP hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
+                          every agent/MCP/LLM hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
 
 - **Curity is the sole token issuer.** Every token — user and exchanged — comes
@@ -60,7 +61,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   (`runRemediation`). Shared LLM plumbing lives in `packages/agent-runtime`
   (`buildLlm` provider wiring + `openMcpToolset`/`jsonSchemaToZod` MCP→AI-SDK
   adapter); both agents depend on it (copilot's `llm.ts`/`mcp-client.ts` are thin
-  re-exports).
+  re-exports). Every model call is now routed through agentgateway's `/llm`
+  route rather than called directly — see hard-won fact #22; the old
+  direct-to-Azure path (`@ai-sdk/azure` in `buildLlm`) is gone.
 - **MCP servers are thin clients.** `mcp-observability`/`mcp-ops` (in the `mcp`
   namespace) validate the caller then re-exchange to a backend resource server
   (`obs-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
@@ -286,6 +289,15 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       gateway. Source identity at the gateway is the JWT audience (`aud=mcp-gateway`),
       NOT mTLS SPIFFE identity. The Kubernetes Gateway API CRDs / `istio-waypoint`
       GatewayClass are no longer needed for MCP authz.
+
+22. **The LLM egress is a governed hop through agentgateway.** Both agents
+    exchange the user token → `aud=llm-gateway`, `scope=llm:invoke` (one exchange,
+    no shim — Azure is outside the trust domain) and call the gateway's
+    OpenAI-compatible `/llm` route. The gateway holds the ONLY Azure key
+    (`backendAuth.key: $AZURE_OPENAI_API_KEY`, header `api-key`), validates the JWT,
+    and requires `llm:invoke`. `resourceType` is `openAI` (lowercase-o). The AI SDK
+    client (`buildLlm` gateway mode) points `baseURL` at `.../llm` and passes the
+    exchanged JWT as the OpenAI bearer. Agents no longer hold `AZURE_OPENAI_API_KEY`.
 
 ## Commands
 

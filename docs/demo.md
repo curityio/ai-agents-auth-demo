@@ -35,6 +35,9 @@ trace**.
 - **Role-based denial**: strong authentication ≠ authorization.
 - **Istio Ambient mTLS** + Kubernetes RBAC as independent defense layers.
 - **One trace** in Grafana showing user + workload identity at every span.
+- **Governed LLM egress**: every model call is exchanged to `aud=llm-gateway`/
+  `scope=llm:invoke` and routed through agentgateway's `/llm` route, which is
+  the only place the Azure OpenAI credential lives.
 
 ---
 
@@ -221,7 +224,11 @@ in as **bob** for the role denial (Act 3), and **carol** for the per-tool split
 ### 5.4 (Optional) Verify auth behavior headlessly
 
 ```bash
-make smoke             # OBO + A2A + step-up/role-denial smoke tests
+make smoke             # OBO + A2A + step-up/role-denial + LLM-gateway smoke tests
+make smoke-llm         # LLM egress only: positive chat completion via /llm, a
+                        # negative aud=mcp-gateway denial at the gateway, and a
+                        # check that no agent pod holds AZURE_OPENAI_API_KEY
+                        # (needs SMOKE_SUBJECT_TOKEN — a fresh access token for alice)
 ```
 
 ---
@@ -249,6 +256,24 @@ What to point at in a single remediation trace:
   specialist's step-up challenge *before* any LLM tool call.
 - **`mcp.tool`** = `get_deployment` (read) interleaved with
   `set_deployment_image` / `restart_deployment` (write) — the inspect→act→verify loop.
+- **The `/llm` span** — expand the trace for either agent's model call and find
+  the `POST /llm/chat/completions` hop against `agentgateway`: agentgateway
+  natively recognizes the LLM protocol and stamps the span with OTel GenAI
+  semantic-convention attributes (`gen_ai.operation.name=chat`,
+  `gen_ai.provider.name=azure`, `gen_ai.request.model=gpt-4.1`,
+  `gen_ai.usage.*`) *and* the same `auth.sub=alice`/`auth.scope=llm:invoke` as
+  every other hop — the model call is attributed to the user, not an anonymous
+  service credential. The `auth.token_exchange` span right before it shows
+  `audience=llm-gateway` with **no `act`-chain growth** — Azure sits outside the
+  trust domain, so there's nothing to nest.
+
+**Try it: deny a non-`llm:invoke` caller.** Run `make smoke-llm` (needs
+`SMOKE_SUBJECT_TOKEN` — a fresh access token for alice, see the script's usage
+banner) to watch the gateway's `/llm` route reject a validly-signed
+`aud=mcp-gateway` token — good enough for MCP, but missing `llm:invoke` — with
+a 401/403 **before it ever reaches Azure**. The same run confirms
+`AZURE_OPENAI_API_KEY` is absent from `agent-copilot`'s pod env, i.e. the
+credential genuinely lives only at the gateway.
 
 > Tempo retention is **30 minutes**. Query within ~25 minutes of driving the
 > demo, or re-drive it — empty results are usually expiry, not a broken pipeline.
@@ -270,6 +295,7 @@ make reset             # delete cluster + reclaim docker build cache
 | Symptom | Likely cause / fix |
 |---|---|
 | 502 from `/api/agent` | Agent pod not ready or a wrong `*_URL`. `kubectl -n agents logs deploy/agent-copilot`. |
+| `502 llm_unavailable` | The `aud=llm-gateway` exchange failed, or `agentgateway-llm` isn't seeded. Re-run `make seed-llm-secret`; check `kubectl -n mcp logs deploy/agentgateway`. |
 | 401 at an MCP/API with `invalid_actor` | Curity can't reach the SPIRE OIDC Discovery Provider (`spire-spiffe-oidc-discovery-provider.spire-server`). Check the provider pod is Ready and the curity→spire-server hop is open. |
 | Agent token exchange fails `invalid_client` | Curity can't dereference/verify the agent's CIMD doc. Check the Curity pod has a hostAlias for `copilot`/`specialist.localtest.me` (`make routing`) and that the mkcert CA is in its truststore (`make curity-truststore`); confirm `kubectl -n curity exec deploy/curity -- curl -s -o /dev/null -w '%{http_code}' https://copilot.localtest.me/.well-known/oauth-client` returns `200`. |
 | 401 `insufficient_user_authentication` that never resolves | Step-up loop — check the web app's challenge handling and that TOTP is enrolled for the user. |

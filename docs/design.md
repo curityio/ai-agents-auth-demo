@@ -76,7 +76,7 @@ from this package); `agent-specialist` depends on it directly.
 
 | File | Exports | Responsibility |
 |---|---|---|
-| `llm.ts` | `buildLlm(cfg)` | Provider wiring — selects the Vercel AI SDK model by `LLM_PROVIDER` (`azure` default → Azure AI Foundry; `anthropic` alternative). |
+| `llm.ts` | `buildLlm(cfg, opts?)` | Provider wiring — selects the Vercel AI SDK model by `LLM_PROVIDER` (`gateway` **default**: an OpenAI-compatible client pointed at agentgateway's `/llm` route, requires a per-request `opts.accessToken`; `anthropic`/`ollama` alternatives). The old `azure` provider (direct `@ai-sdk/azure`) is gone — see §3.6. |
 | `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `jsonSchemaToZod` | Connects to an MCP server over Streamable HTTP with a Bearer token, converts each MCP tool's JSON-Schema input into a Zod schema, and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
 
 ---
@@ -89,18 +89,23 @@ from this package); `agent-specialist` depends on it directly.
 web (BFF)  →  agent-copilot  ─┬─ MCP ─→ agentgateway ─→ mcp-observability ─→ obs-api ─→ K8s
                               └─ A2A ─→ agent-specialist ─→ agentgateway ─┬─→ mcp-ops ─→ ops-api ─→ K8s
                                                                           └─→ mcp-observability ─→ obs-api ─→ K8s
+
+agent-copilot / agent-specialist ─ LLM ─→ agentgateway (/llm) ─→ Azure OpenAI
 ```
 
 `agentgateway` (ns `mcp`) is the MCP front door for both MCP servers — the agents
 target `aud=mcp-gateway` and pick a path (`/observability/mcp`, `/ops/mcp`); its
 co-located `exchange-shim` sidecar performs the per-backend OBO exchange (§2, §3.5).
+It is also the **LLM egress gateway**: both agents exchange for
+`aud=llm-gateway`/`scope=llm:invoke` and call its OpenAI-compatible `/llm` route,
+which holds the only Azure OpenAI credential in the system (§3.6).
 
 | App | Stack | Inbound | Outbound | Auth role |
 |---|---|---|---|---|
 | **web** | Next.js App Router, Auth.js | Browser (session cookie) | `agent-copilot` (Bearer user token) | BFF; OIDC client `web-app`. No SPIFFE ID (not a workload actor). |
-| **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`; `LLM_PROVIDER` `azure` default, also `anthropic`) | Bearer user token | `agentgateway` (`aud=mcp-gateway`), `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Reaches `mcp-observability` **through the agentgateway** (no longer directly). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. |
-| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires one `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens both toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. |
-| **agentgateway** | agentgateway v1.3.1 (OSS) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp` | `mcp-observability`, `mcp-ops` | MCP front door. Validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. |
+| **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`; `LLM_PROVIDER` `gateway` default, also `anthropic`/`ollama`) | Bearer user token | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`), `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Reaches `mcp-observability` **through the agentgateway** (no longer directly). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. Also exchanges a token to `aud=llm-gateway`/`scope=llm:invoke` (single exchange, no shim/act-chain) and drives its tool-calling loop against agentgateway's `/llm` route rather than Azure directly (§3.6). |
+| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires one `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens both toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route (§3.6). |
+| **agentgateway** | agentgateway v1.3.1 (OSS) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp`; Bearer (`aud=llm-gateway`) on `/llm` | `mcp-observability`, `mcp-ops`, Azure OpenAI | MCP front door **and** LLM egress gateway. For MCP: validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. For `/llm`: validates `aud=llm-gateway` + `llm:invoke`, then injects the Azure API key upstream — no shim, no `act`-chain (§3.6). |
 | **exchange-shim** | Node/TypeScript (Express); `@ai-agents-demo/auth-curity` + `@ai-agents-demo/spiffe` | `extAuthz` from agentgateway (`:8090`, same pod) | Curity token endpoint | Performs the RFC 8693 exchange: reads the gateway's rotating SPIFFE JWT-SVID (`/run/spiffe/curity-actor.jwt`) as `actor_token`, subject = the caller's `aud=mcp-gateway` token, audience/scope derived **server-side** from an audience→scope allow-list (never caller-supplied). Returns a token-endpoint-shaped JSON body. Exists because agentgateway's CEL cannot read the rotating SVID file. |
 | **mcp-observability** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
 | **mcp-ops** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't: denies `set_deployment_image` for callers whose `roles` lack `sre` (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`), returning a legible role-denial before the ops-api hop. |
@@ -135,6 +140,9 @@ Expected chain(s) per service (outer = most recent actor):
 | `obs-api` | `[mcp-observability, agentgateway, agent-copilot]` **or** `[mcp-observability, agentgateway, agent-specialist, agent-copilot]` |
 | `mcp-ops` | `[agentgateway, agent-specialist, agent-copilot]` |
 | `ops-api` | `[mcp-ops, agentgateway, agent-specialist, agent-copilot]` |
+
+agentgateway's `/llm` route is not in this table — it enforces `aud=llm-gateway` +
+`llm:invoke` but no `act`-chain at all (see §3.6).
 
 ### The specialist's remediation loop (`runRemediation`)
 
@@ -231,8 +239,8 @@ The per-client policy as configured:
 
 | Client (`CLIENT_POLICY` key) | Audience → scopes | Allowed actor SPIFFE ID |
 |---|---|---|
-| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write` | `…/ns/agents/sa/agent-copilot` |
-| `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read ops:write` | `…/ns/agents/sa/agent-specialist` |
+| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-copilot` |
+| `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read ops:write`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-specialist` |
 | `mcp-gateway` | `mcp-observability`→`obs:read`; `mcp-ops`→`ops:write` | `…/ns/mcp/sa/agentgateway` |
 | `mcp-ops` | `ops-api`→`ops:write` | `…/ns/mcp/sa/mcp-ops` |
 | `mcp-observability` | `obs-api`→`obs:read` | `…/ns/mcp/sa/mcp-observability` |
@@ -308,6 +316,55 @@ MCP servers, replacing the former Istio ambient waypoint.
   mcp-ops/ops-api and passes back through the gateway. Source identity at the gateway
   is the JWT audience (`aud=mcp-gateway`), not mTLS SPIFFE identity.
 
+### 3.6 LLM egress via agentgateway (`/llm`)
+
+Both agents route every Azure OpenAI call through agentgateway's OpenAI-compatible
+`/llm` route (`/llm/chat/completions`) instead of calling Azure directly.
+
+- **One exchange, no shim, no `act`-chain.** Each agent exchanges the user's
+  access token (subject) + its SPIFFE JWT-SVID (actor) for `aud=llm-gateway`,
+  `scope=llm:invoke` — a single RFC 8693 call, the same shape as any other hop.
+  Unlike the MCP routes, there is **no `extAuthz`/`exchange-shim` call and no
+  `act`-chain match** on `/llm`: Azure sits outside the Curity/SPIFFE trust
+  domain, so there is no downstream workload identity to nest into `act` — it's
+  a one-hop credential swap (a user-authorized JWT in, an Azure api-key out),
+  not a delegation chain.
+- **Gateway route config** (`k8s/workloads/agentgateway-config.yaml`): `jwtAuth`
+  validates `aud=llm-gateway` (same issuer/JWKS as the MCP routes — issuer
+  `https://curity.localtest.me/oauth/v2/oauth-anonymous`, JWKS from the
+  in-cluster plain-HTTP `.../oauth-anonymous/jwks`); an `authorization` rule
+  (`'"llm:invoke" in (jwt.scope.split(" "))'`) gates the scope; `backendAuth.key`
+  injects the Azure credential as header `api-key` (prefix `""`, **not**
+  `Authorization: Bearer`); the backend is `ai:` provider `azure` with
+  `resourceType: openAI` (lowercase-o), `resourceName: $AZURE_RESOURCE_NAME`,
+  `model: gpt-4.1`, `apiVersion: "2024-04-01-preview"`.
+- **The gateway holds the only Azure key.** `AZURE_OPENAI_API_KEY` +
+  `AZURE_RESOURCE_NAME` come from the `agentgateway-llm` Secret (ns `mcp`),
+  seeded out-of-band by `make seed-llm-secret` (which derives
+  `AZURE_RESOURCE_NAME` from the endpoint host). The agents no longer hold
+  `AZURE_OPENAI_API_KEY` — it was removed from `agent-copilot.yaml` /
+  `agent-specialist.yaml`, and the old per-agent `agent-*-llm` secrets are gone.
+- **`buildLlm` gateway mode** (`packages/agent-runtime/src/llm.ts`):
+  `buildLlm(cfg, { accessToken })` builds an OpenAI-compatible client
+  (`@ai-sdk/openai`) with `baseURL` pointed at the `/llm` route and `apiKey` set
+  to the exchanged `aud=llm-gateway` JWT — sent as the OpenAI
+  `Authorization: Bearer`, which the gateway validates and swaps for the Azure
+  api-key upstream. `LLM_PROVIDER` is now `gateway | anthropic | ollama`
+  (`azure` removed); default `LLM_PROVIDER=gateway`, model `gpt-4.1`.
+- **`obtainLlmToken`** (per-app `apps/agent-{copilot,specialist}/src/llm-token.ts`,
+  mirrors `obtainMcpToken`, TTL-cached 60 s keyed on sub/scope/audience/acr):
+  `agent-copilot` obtains the token per-request in `server.ts` **before**
+  opening the MCP toolset, so a token failure returns `502 llm_unavailable`
+  without leaking a toolset connection. `agent-specialist` threads the token
+  through its `runLlm` dependency (a new `accessToken` param) — obtained inside
+  `runRemediation`, within the same try/finally that closes the MCP toolsets.
+  Both build the model per-request (no client cached across requests).
+- **Curity.** New `llm:invoke` scope; both agents' `perAudience` policy in
+  `token-exchange.js` gained `'llm-gateway': { scopes: ['llm:invoke'] }` (see the
+  policy table in §3.2). There is **no new Curity client** for this hop —
+  `llm-gateway` is just an audience the gateway validates; since the route does
+  no re-exchange, it needs no client secret or shim.
+
 ---
 
 ## 4. Configuration model
@@ -328,13 +385,16 @@ Representative variables (see `k8s/workloads/*.yaml` for the authoritative set):
 | `<DOWNSTREAM>_URL` / `_AUDIENCE` / `_SCOPE` | exchange clients | the next hop's address, exchange audience, requested scope |
 | `AGENT_CLIENT_ID` + `CURITY_AGENT_PRIVATE_KEY_PEM` | the two agents | CIMD client_id URL + RSA key for `private_key_jwt` |
 | `*_CLIENT_ID` + secret | MCP exchange clients | `client_secret_basic` credentials |
-| `LLM_PROVIDER` / `LLM_MODEL` + `AZURE_OPENAI_ENDPOINT` / `_API_KEY` | the two agents | LLM backend selection (`azure` default → Azure AI Foundry; `anthropic`/`ollama` alternatives) |
+| `LLM_PROVIDER` / `LLM_MODEL` + `LLM_GATEWAY_URL` / `_AUDIENCE` / `_SCOPE` | the two agents | LLM backend selection (`gateway` default → agentgateway's `/llm` route, `aud=llm-gateway`, `scope=llm:invoke`; `anthropic`/`ollama` alternatives). The agents hold no Azure credential. |
+| `AZURE_OPENAI_API_KEY` / `AZURE_RESOURCE_NAME` | agentgateway only (`agentgateway-llm` Secret, ns `mcp`) | the only Azure OpenAI credential in the system — never present on the agent pods |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `SPIFFE_SVID_PATH` | all | tracing + workload-identity attribute |
 
 **Secrets are never inline in workload manifests.** `kubectl apply` is idempotent
 by desired state, so re-applying a Deployment that embeds a Secret would clobber
 real values. All credentials are seeded out-of-band via `make seed-*`
-(see [`demo.md`](demo.md)).
+(see [`demo.md`](demo.md)) — including the Azure OpenAI key, which lives solely
+in the `agentgateway-llm` Secret (`make seed-llm-secret`, folded into
+`make seed-secrets`).
 
 ---
 
@@ -445,7 +505,11 @@ real values. All credentials are seeded out-of-band via `make seed-*`
   swamp the trace view.
 - **Testing.** Each package/app ships vitest unit tests (`*.test.ts`); the
   end-to-end auth behavior is covered by `make smoke` (OBO, A2A, step-up +
-  role-denial). `pnpm turbo run build typecheck test` runs the full check.
+  role-denial, and — via `make smoke-llm`, folded into the `smoke` aggregate —
+  the LLM egress: a positive `aud=llm-gateway` chat completion, a negative
+  denial of an `aud=mcp-gateway` caller at the gateway, and an assertion that
+  `AZURE_OPENAI_API_KEY` is absent from the agent pods). `pnpm turbo run build
+  typecheck test` runs the full check.
 
 ---
 
