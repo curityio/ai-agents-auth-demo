@@ -252,7 +252,13 @@ fi
 # ===========================================================================
 # [4/4] per-tool ROLE SPLIT at the gateway (sre ⊇ oncall)
 # ===========================================================================
-note "[4/4] per-tool role split: set_deployment_image is sre-only at the gateway"
+# NOTE on where the split is enforced: the gateway lists+allows ALL ops tools for
+# any ops:write caller (it can't hide a tool without also making it uncallable,
+# which turns a denial into a silent no-op). The set_deployment_image = sre split
+# is enforced at MCP-OPS, which denies the CALL for non-sre with a legible error.
+# So BOTH alice and carol SEE set_deployment_image in tools/list; only the CALL
+# differs (alice may, carol may not).
+note "[4/4] per-tool role split: set_deployment_image call is sre-only (enforced at mcp-ops)"
 
 # alice (sre): tools/list on /ops/mcp must INCLUDE set_deployment_image.
 note "  [4/4-alice] tools/list as alice (sre) → expect set_deployment_image present"
@@ -266,29 +272,33 @@ esac
 if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
   yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set — seed carol (oncall) per docs/curity-seed.md and sign in to obtain."
 else
-  note "  [4/4-carol] carol (oncall): tools/list OMITS set_deployment_image; call is denied; restart allowed"
+  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied by mcp-ops; restart allowed"
   CAROL_GW=$(build_gateway_ops_token "$SMOKE_TOKEN_CAROL") \
     || { red "  failed to build aud=mcp-gateway token for carol (does carol have the oncall role?)"; exit 1; }
 
+  # Visibility: the gateway lists all ops tools for any ops:write caller, so carol
+  # SEES set_deployment_image (the split is enforced downstream at mcp-ops, not by
+  # hiding the tool). She should see both it and restart_deployment.
   LIST=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/list" '{}')
   case "$LIST" in
-    200*set_deployment_image*) red "  carol (oncall) should NOT see set_deployment_image: ${LIST:0:300}"; exit 1 ;;
-    200*restart_deployment*) green "    OK (tools/list omits set_deployment_image, shows restart_deployment)" ;;
-    200*) red "  carol tools/list unexpected (no restart_deployment?): ${LIST:0:300}"; exit 1 ;;
+    200*set_deployment_image*restart_deployment*|200*restart_deployment*set_deployment_image*)
+      green "    OK (tools/list shows set_deployment_image AND restart_deployment)" ;;
+    200*) red "  carol tools/list missing expected ops tools: ${LIST:0:300}"; exit 1 ;;
     *) red "  tools/list failed for carol: $LIST"; exit 1 ;;
   esac
 
-  note "    call set_deployment_image as carol → expect gateway RBAC denial"
+  note "    call set_deployment_image as carol → expect mcp-ops role denial (requires sre)"
   CALL=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/call" \
     '{"name":"set_deployment_image","arguments":{"name":"order-service","namespace":"prod","image":"nginx:1.27"}}')
-  # A gateway RBAC denial surfaces as HTTP 403 OR a JSON-RPC error mentioning the
-  # tool is not permitted / unknown (filtered tools are not callable).
+  # mcp-ops denies BEFORE the ops-api hop and returns an isError tool result; the
+  # gateway relays it as HTTP 200 with a JSON-RPC body of {"error":"forbidden",
+  # "message":"...requires one of these roles: sre; you have: oncall"}.
   case "$CALL" in
-    403*|INIT_403*) green "    OK (gateway denied set_deployment_image for oncall: ${CALL:0:120})" ;;
-    *[Dd]enied*|*forbidden*|*not\ allowed*|*Method\ not\ found*|*Unknown\ tool*|*-32601*|*"error"*)
-      green "    OK (gateway rejected the call: ${CALL:0:160})" ;;
-    200*) red "  carol (oncall) was allowed to call set_deployment_image — role split not enforced: ${CALL:0:200}"; exit 1 ;;
-    *) red "  unexpected response calling set_deployment_image as carol: $CALL"; exit 1 ;;
+    *forbidden*|*"requires one of these roles"*|*requires*sre*)
+      green "    OK (mcp-ops denied set_deployment_image for oncall: ${CALL:0:200})" ;;
+    200*busybox*|200*replicas*|200*restartedAt*|200*updatedReplicas*)
+      red "  carol (oncall) appears to have UPDATED the image — role split not enforced: ${CALL:0:220}"; exit 1 ;;
+    *) red "  unexpected response calling set_deployment_image as carol: ${CALL:0:240}"; exit 1 ;;
   esac
 
   note "    call restart_deployment as carol → expect allowed (200)"

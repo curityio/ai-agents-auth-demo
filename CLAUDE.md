@@ -30,7 +30,8 @@ current spec. The canonical docs above supersede them. Don't reintroduce
 Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
                                                                 └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
                                                                   (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
-        agentgateway = MCP front door (aud=mcp-gateway; per-tool RBAC; extAuthz→exchange-shim OBO hop)
+        agentgateway = MCP front door (aud=mcp-gateway; coarse per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
+        (the set_deployment_image=sre role split is enforced downstream at mcp-ops, NOT the gateway)
                           every agent/MCP hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
 
@@ -235,16 +236,29 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       OSS) does **not** expose `mcp.tool.target` inside its `extAuthz` CEL scope — so
       per-backend audience narrowing can't be done on a single federated endpoint.
       Callers pick the path.
-    - **JWT validation + per-tool RBAC.** The gateway validates the caller's
+    - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
+      gateway validates the caller's
       `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
       JWKS fetched from the in-cluster plain-HTTP URL
       `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`,
-      same loopback foot-gun as #5). It then applies **per-tool CEL RBAC**
-      (`mcpAuthorization`) and filters `tools/list` accordingly. The `ops:write` role
-      gate in Curity widened `sre` → `(sre OR oncall)`; the gateway then splits ops
-      tools per-role, hierarchical (sre ⊇ oncall): `restart_deployment`/`scale_deployment`
-      require role `oncall` OR `sre`; `set_deployment_image` requires role `sre` ONLY;
-      read tools require `obs:read` (no role gate).
+      same loopback foot-gun as #5). `mcpAuthorization` then does **coarse tier authz**:
+      the `/ops/mcp` route requires `ops:write`, `/observability/mcp` requires `obs:read`,
+      and `tools/list` is filtered by that tier scope. The gateway **lists and allows
+      ALL ops tools** (`restart_deployment`/`scale_deployment`/`set_deployment_image`) for
+      any `ops:write` caller — it does NOT split ops tools by role. It can't: agentgateway
+      couples `tools/list` visibility to call-authorization, so a tool it won't let you
+      CALL is also HIDDEN from `tools/list`; gating `set_deployment_image` here would hide
+      it from an `oncall` caller and the specialist LLM (never seeing the tool) would loop
+      silently instead of surfacing a denial. So the fine-grained
+      `set_deployment_image`=`sre` split is enforced DOWNSTREAM at **mcp-ops**
+      (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`;
+      logic in `apps/mcp-ops/src/mcp.ts` `imageRoleDenial`), which checks the caller's
+      `roles` claim before the ops-api hop and returns a legible error the specialist
+      LLM relays. The `ops:write` Curity role gate (widened `sre` → `sre OR oncall`) is
+      what effectively gates `restart_deployment`/`scale_deployment` — that is the Curity
+      gate, not a separate gateway rule. So carol (`[oncall]`) can restart/scale and SEES
+      `set_deployment_image` in `tools/list` but the CALL is denied by mcp-ops; alice
+      (`[sre]`) may call it; bob (`[developer]`) is denied `ops:write` at the exchange.
     - **extAuthz → co-located `exchange-shim` = the OBO hop.** For each tool-call the
       gateway makes an `extAuthz` call to `exchange-shim` (`apps/exchange-shim`,
       Node/TS, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693

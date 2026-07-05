@@ -48,7 +48,7 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **SPIRE** (server/agent/CSI) | `spire*` | — | Issues and rotates SPIFFE JWT-SVIDs (5-minute TTL) to every workload via a `spiffe-helper` sidecar. |
 | **Istio Ambient** (ztunnel/cni/istiod) | `istio-system` | — | Transparent ztunnel L4 mTLS for all in-mesh traffic. |
 | **Istio edge gateway** | `istio-ingress` | 80/443 | Terminates TLS for `app`/`curity`/`grafana`, the two agents' CIMD hosts (`copilot`/`specialist`), and the two MCP hosts (`mcp-ops`/`mcp-observability`, so their RFC 9728 metadata is browsable); the single ingress into the cluster. |
-| **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers. One listener with two path-scoped routes (`/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops). Validates the caller's `aud=mcp-gateway` JWT, applies **per-tool CEL RBAC** and filters `tools/list`, and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). |
+| **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers. One listener with two path-scoped routes (`/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops). Validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope — it does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced downstream at mcp-ops) — and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). |
 | **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | The deployments the copilot observes and restarts (e.g. a CrashLoopBackOff target). |
 
@@ -246,9 +246,9 @@ sequenceDiagram
     M1-->>GW: tool result
     GW-->>A2: tool result (current image)
     A2->>GW: MCP set_deployment_image / restart_deployment /ops/mcp (aud=mcp-gateway)
-    Note over GW: per-tool role RBAC (sre / oncall) + shim OBO<br/>exchange → aud=mcp-ops, act +gateway
+    Note over GW: coarse ops:write tier gate + shim OBO<br/>(lists ALL ops tools) exchange → aud=mcp-ops, act +gateway
     GW->>M2: MCP set_deployment_image / restart_deployment (narrowed token)
-    Note over M2: enforces scope + act-chain + acr=mfa
+    Note over M2: enforces scope + act-chain + acr=mfa;<br/>set_deployment_image requires role sre (denies non-sre)
     M2->>Cu: exchange → aud=ops-api, scope=ops:write
     Cu-->>M2: token act=[ops-mcp, gateway, specialist, copilot]
     M2->>B2: POST /set-image then POST /restart (re-exchanged)
@@ -271,10 +271,13 @@ an MFA step-up at Curity, and the retried request carries `acr=mfa`. If
 **Bob** (`[developer]`, no `ops:write` role) attempts the same, Curity's procedure
 denies the very first exchange with `access_denied` — strong authentication (he
 can MFA) is not the same as authorization (he lacks the role). The `ops:write`
-role gate accepts `sre` **or** `oncall`; the agentgateway then splits the ops
-tools per-role (`restart_deployment`/`scale_deployment` for `oncall` or `sre`;
-`set_deployment_image` for `sre` only). So **Carol** (`[oncall]`, forced login-MFA)
-can restart or scale but is denied `set_deployment_image` at the gateway.
+role gate accepts `sre` **or** `oncall`; that gate makes
+`restart_deployment`/`scale_deployment` available to any `ops:write` caller
+(`oncall` or `sre`). The finer `set_deployment_image` = `sre`-only split is
+enforced **downstream at `mcp-ops`**, not at the gateway — the gateway lists all
+ops tools for any `ops:write` caller. So **Carol** (`[oncall]`, forced login-MFA)
+can restart or scale, and *sees* `set_deployment_image` in `tools/list`, but the
+call is refused at `mcp-ops` (a legible role-denial the specialist relays).
 
 ---
 
@@ -320,7 +323,7 @@ the same middleware shape (`apps/{mcp-ops,ops-api,…}/src/auth-middleware.ts`):
 | **`act` chain present** | ✅ (no direct user call) | ✅ |
 | **Exact chain length + order** | `[obs-mcp, agentgateway, copilot]` **or** `[obs-mcp, agentgateway, specialist, copilot]` (obs-api — multi-chain) | `[ops-mcp, agentgateway, specialist, copilot]` (ops-api) |
 | **RFC 9470 step-up** (`acr=mfa`) | — (read is unprivileged) | ✅ at **both** hops (defense in depth) |
-| **Role gate** (`sre`/`oncall` for `ops:write`) | — | ✅ Curity gates `ops:write` on `sre` OR `oncall` at exchange time; the agentgateway then splits ops tools per-role (`set_deployment_image` = `sre` only) |
+| **Role gate** (`sre`/`oncall` for `ops:write`) | — | ✅ Curity gates `ops:write` on `sre` OR `oncall` at exchange time; the finer `set_deployment_image` = `sre`-only split is enforced at **mcp-ops** (denies non-`sre`), not the gateway |
 | **Kubernetes RBAC** | `get`/`list` pods + pods/log **and** `get`/`list` deployments in `prod` | `patch` deployments in `prod` |
 
 Boundary properties worth calling out:
@@ -329,8 +332,15 @@ Boundary properties worth calling out:
   `mcp-ops`/`mcp-observability` pods, the standalone **agentgateway** in the `mcp`
   namespace (`k8s/workloads/agentgateway-config.yaml`) validates the caller's
   `aud=mcp-gateway` JWT (keys fetched live from Curity's in-cluster JWKS URL) and
-  applies **per-tool CEL RBAC**, filtering `tools/list` and denying unauthorized
-  tool-calls up front (e.g. `set_deployment_image` for a non-`sre` caller). It is
+  does **coarse tier authorization** — the `/ops/mcp` route requires `ops:write`,
+  the `/observability/mcp` route requires `obs:read` — filtering `tools/list` by
+  that tier scope and denying calls that fall outside the caller's scope/identity.
+  It deliberately does **not** split ops tools by role: it lists and allows *all*
+  ops tools (`restart_deployment`/`scale_deployment`/`set_deployment_image`) for
+  any `ops:write` caller. (agentgateway couples `tools/list` visibility to
+  call-authorization, so gating `set_deployment_image` here would *hide* it from an
+  `oncall` caller and the specialist LLM would loop silently rather than surface a
+  denial; that finer split is therefore enforced downstream at `mcp-ops`.) It is
   path-routed — `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops —
   because agentgateway v1.3.1 does not expose `mcp.tool.target` in its `extAuthz`
   CEL scope, so per-backend audience narrowing can't be done on a single federated
