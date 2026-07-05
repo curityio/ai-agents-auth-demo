@@ -151,7 +151,7 @@ export async function runRemediation(args: {
 
   try {
     const tools: ToolSet = { ...readSet.tools, ...writeSet.tools };
-    const llmToken = await deps.obtainLlmToken({ cfg, subjectToken: bearer, subjectSub: sub, subjectAcr: '' });
+    const llmToken = await deps.obtainLlmToken({ cfg, subjectToken: bearer, subjectSub: sub, subjectAcr: acr });
     const { text, steps } = await deps.runLlm({
       system: SPECIALIST_SYSTEM_PROMPT,
       goal,

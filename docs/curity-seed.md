@@ -111,13 +111,12 @@ kubectl -n web create secret generic web-secrets \
   --from-literal=AUTH_SECRET=$(openssl rand -hex 32) \
   --from-literal=CURITY_CLIENT_SECRET=Password1
 
-# LLM API key (Azure OpenAI / AI Foundry) — both agents share one key
-kubectl -n agents create secret generic agent-copilot-llm \
-  --from-literal=AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com \
-  --from-literal=AZURE_OPENAI_API_KEY=<key>
-kubectl -n agents create secret generic agent-specialist-llm \
-  --from-literal=AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com \
-  --from-literal=AZURE_OPENAI_API_KEY=<key>
+# Azure OpenAI key — the gateway holds the ONLY key. Both agents reach Azure
+# through agentgateway's /llm route (aud=llm-gateway) and no longer hold the key.
+# AZURE_RESOURCE_NAME is the <resource> in https://<resource>.openai.azure.com.
+kubectl -n mcp create secret generic agentgateway-llm \
+  --from-literal=AZURE_OPENAI_API_KEY=<key> \
+  --from-literal=AZURE_RESOURCE_NAME=<resource>
 ```
 
 The full set of token-exchange clients (`agent-copilot`, `agent-specialist`,

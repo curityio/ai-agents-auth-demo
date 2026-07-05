@@ -148,6 +148,11 @@ case "$STATUS" in
 esac
 
 # ----- [3/3] Negative: aud=mcp-gateway (no llm:invoke) denied AT the gateway -----
+# This proves AUDIENCE confinement, not scope enforcement: jwtAuth on the /llm
+# route rejects this token because its aud is mcp-gateway, not llm-gateway —
+# it never gets far enough to evaluate the llm:invoke scope rule. A scopeless
+# aud=llm-gateway token isn't mintable to test the scope rule in isolation:
+# Curity caps the llm-gateway audience to exactly ['llm:invoke'].
 note "[3/3] Negative: exchange aud=mcp-gateway / scope=obs:read → expect denied at gateway"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
