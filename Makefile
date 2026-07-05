@@ -367,7 +367,7 @@ seed-web-secret: ## Create web-secrets (autogen AUTH_SECRET + web-app client sec
 	  $(call restart_if_exists,$(NS_WEB),web)
 
 .PHONY: seed-llm-secret
-seed-llm-secret: ## Create the Azure OpenAI secret (from .demo.env if present, else prompt)
+seed-llm-secret: ## Create the agentgateway Azure OpenAI secret (from .demo.env if present, else prompt)
 	@if [ -f .demo.env ]; then . ./.demo.env; e="$$AZURE_OPENAI_ENDPOINT"; k="$$AZURE_OPENAI_API_KEY"; \
 	  else \
 	    read -r -p "AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com): " e; \
@@ -375,17 +375,14 @@ seed-llm-secret: ## Create the Azure OpenAI secret (from .demo.env if present, e
 	  fi; \
 	  test -n "$$e" || { echo "AZURE_OPENAI_ENDPOINT empty — abort"; exit 1; }; \
 	  test -n "$$k" || { echo "AZURE_OPENAI_API_KEY empty — abort"; exit 1; }; \
-	  kubectl create namespace $(NS_AGENTS) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
-	  kubectl -n $(NS_AGENTS) create secret generic agent-copilot-llm \
-	    --from-literal=AZURE_OPENAI_ENDPOINT="$$e" \
+	  res=$$(printf '%s' "$$e" | sed -E 's#https?://([^.]+)\..*#\1#'); \
+	  test -n "$$res" || { echo "could not derive AZURE_RESOURCE_NAME from endpoint — abort"; exit 1; }; \
+	  kubectl create namespace $(NS_MCP) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
+	  kubectl -n $(NS_MCP) create secret generic agentgateway-llm \
 	    --from-literal=AZURE_OPENAI_API_KEY="$$k" \
+	    --from-literal=AZURE_RESOURCE_NAME="$$res" \
 	    --dry-run=client -o yaml | kubectl apply -f -; \
-	  kubectl -n $(NS_AGENTS) create secret generic agent-specialist-llm \
-	    --from-literal=AZURE_OPENAI_ENDPOINT="$$e" \
-	    --from-literal=AZURE_OPENAI_API_KEY="$$k" \
-	    --dry-run=client -o yaml | kubectl apply -f -; \
-	  $(call restart_if_exists,$(NS_AGENTS),agent-copilot); \
-	  $(call restart_if_exists,$(NS_AGENTS),agent-specialist)
+	  $(call restart_if_exists,$(NS_MCP),agentgateway)
 
 # CIMD ephemeral clients authenticate with private_key_jwt — no shared secret.
 # We generate an RSA-2048 keypair and store only the PKCS8 PEM private key; the
