@@ -8,6 +8,7 @@ import {
   obtainSpecialistToken,
   invalidateSpecialistTokenCache,
   callSpecialist,
+  buildPrivilegedAnswer,
 } from './specialist-client.js';
 import { detectIntent } from './intent.js';
 import { CurityAuthError, oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
@@ -63,6 +64,12 @@ async function main(): Promise<void> {
     // cache must be keyed on it — otherwise a post-step-up (acr=mfa) request
     // reuses the stale pre-step-up token and the step-up loops.
     const userAcr = authed.caller?.payload.acr ?? '';
+    const rawRoles = (authed.caller?.payload as { roles?: unknown } | undefined)?.roles;
+    const userRoles = Array.isArray(rawRoles)
+      ? rawRoles.map(String)
+      : typeof rawRoles === 'string'
+        ? rawRoles.split(/\s+/).filter(Boolean)
+        : [];
     const message = (req.body as { message?: unknown }).message;
     if (typeof message !== 'string' || message.trim() === '') {
       res.status(400).json({ error: 'bad_request', error_description: 'message: string required' });
@@ -151,14 +158,15 @@ async function main(): Promise<void> {
         const specialistResult = specialistResp.result as { steps?: unknown } | undefined;
         const steps = Array.isArray(specialistResult?.steps) ? specialistResult.steps : undefined;
         res.json({
-          answer: specialistResp.ok
-            ? `Restart of '${intent.deployment}' completed.`
-            : `Restart of '${intent.deployment}' failed: ${specialistResp.text ?? 'unknown error'}`,
+          // Surface the specialist LLM's actual summary (what it did, or why it
+          // was denied) — not a hardcoded "Restart completed" that would misreport
+          // the action and claim success on a denied/unmet goal.
+          answer: buildPrivilegedAnswer(specialistResp, intent.deployment),
           route: 'privileged-a2a',
           intent: { ...intent },
           ...(steps ? { steps } : {}),
           specialist: specialistResp,
-          identity: { sub: userSub, scopes: [...authed.caller!.scopes] },
+          identity: { sub: userSub, scopes: [...authed.caller!.scopes], roles: userRoles, acr: userAcr },
         });
         return;
       } catch (e) {
@@ -233,6 +241,8 @@ async function main(): Promise<void> {
         identity: {
           sub: userSub,
           scopes: [...authed.caller!.scopes],
+          roles: userRoles,
+          acr: userAcr,
         },
       });
     } catch (e) {

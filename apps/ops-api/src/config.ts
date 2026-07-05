@@ -6,9 +6,10 @@ export interface Config {
   requiredScopes: string[];
   /**
    * Required ordering of the `act` chain, OUTER → INNER (most recent first):
-   *   outer  = mcp-ops          (exchanged the token last)
-   *   middle = agent-specialist
-   *   inner  = agent-copilot    (oldest)
+   *   outer   = mcp-ops          (exchanged the token last)
+   *   next    = agentgateway
+   *   next    = agent-specialist
+   *   inner   = agent-copilot    (oldest)
    * Each entry is a RegExp tested against that hop's `act.sub`.
    */
   expectedActorChain: RegExp[];
@@ -38,6 +39,7 @@ export function loadConfig(): Config {
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'ops:write').split(/\s+/).filter(Boolean),
     expectedActorChain: [
       SPIFFE_ID('mcp', 'mcp-ops'),
+      SPIFFE_ID('mcp', 'agentgateway'),
       SPIFFE_ID('agents', 'agent-specialist'),
       SPIFFE_ID('agents', 'agent-copilot'),
     ],

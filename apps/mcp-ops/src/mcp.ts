@@ -8,6 +8,23 @@ import type { Config } from './config.js';
 export interface ToolContext {
   subjectToken: string;
   subjectSub: string;
+  /** Caller's `roles` claim (propagated onto every OBO hop by Curity). */
+  subjectRoles: string[];
+}
+
+/**
+ * Per-tool role gate for `set_deployment_image`. Returns null when the caller may
+ * update images, or a human-readable denial reason otherwise. The gateway can't
+ * enforce this without hiding the tool (see agentgateway-config.yaml), so mcp-ops
+ * is the authoritative point — the returned message is surfaced to the caller
+ * (and relayed by the specialist LLM) instead of a silent no-op.
+ */
+export function imageRoleDenial(callerRoles: string[], requiredRoles: string[]): string | null {
+  if (requiredRoles.some((r) => callerRoles.includes(r))) return null;
+  return (
+    `updating a deployment image requires one of these roles: ` +
+    `${requiredRoles.join(', ')}; you have: ${callerRoles.length ? callerRoles.join(', ') : '(none)'}`
+  );
 }
 
 export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
@@ -92,8 +109,17 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
       const ns = namespace ?? cfg.targetNamespace;
       oboLog({
         service: 'mcp-ops', kind: 'RECEIVE', headline: 'MCP tool set_deployment_image',
-        fields: { user: ctx.subjectSub, act: summarizeJwt(ctx.subjectToken).act, acr: summarizeJwt(ctx.subjectToken).acr, deployment: name, image, namespace: ns },
+        fields: { user: ctx.subjectSub, act: summarizeJwt(ctx.subjectToken).act, acr: summarizeJwt(ctx.subjectToken).acr, roles: ctx.subjectRoles.join(',') || '(none)', deployment: name, image, namespace: ns },
       });
+      // Per-tool role gate: image updates are sre-only. Deny BEFORE the ops-api
+      // hop and return a legible message the agent relays (not a silent no-op).
+      const denial = imageRoleDenial(ctx.subjectRoles, cfg.setImageRequiredRoles);
+      if (denial) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'forbidden', message: denial }, null, 2) }],
+          isError: true,
+        };
+      }
       try {
         const bearer = await obtainOpsApiToken({ cfg, subjectToken: ctx.subjectToken });
         const result = await callOpsApiSetImage({ cfg, bearer, args: { name, image, namespace: ns, reason } });

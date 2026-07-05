@@ -1,0 +1,157 @@
+# agentgateway — the MCP front door in the `mcp` namespace.
+#
+# Fronts both MCP servers on ONE listener (:8080) via two path-scoped routes
+# (/observability/mcp, /ops/mcp — see k8s/workloads/agentgateway-config.yaml).
+# It validates the caller's aud=mcp-gateway token, applies per-tool CEL RBAC, and
+# for each tool-call drives an extAuthz call to the co-located exchange-shim, which
+# performs the RFC 8693 exchange (subject = caller token, actor = the gateway's own
+# SPIFFE JWT-SVID) — inserting one position into every downstream `act` chain.
+#
+# Three containers share the pod:
+#   - exchange-shim  (containers[0]): Node RFC 8693 shim on :8090. MUST be first so
+#     scripts/cluster-routing.sh patches NODE_EXTRA_CA_CERTS + the mkcert CA onto it
+#     (it calls https://curity.localtest.me/oauth/v2/oauth-token). Runs as uid 1000
+#     (node) so it can read the 0600 SVID file spiffe-helper writes.
+#   - agentgateway   (containers[1]): the OSS gateway binary on :8080. Uses the
+#     in-cluster PLAIN-HTTP JWKS URL, so it needs neither the hostAlias nor the CA.
+#   - spiffe-helper  (containers[2]): fetches/rotates the gateway's JWT-SVID into the
+#     shared memory emptyDir at /run/spiffe/curity-actor.jwt.
+#
+# NOTE: `agentgateway-curity` Secret (CURITY_CLIENT_SECRET) is created out-of-band
+# via `make seed-gateway-secret`. The `agentgateway-config` ConfigMap is generated
+# from k8s/workloads/agentgateway-config.yaml by `make apply` (do not hand-duplicate).
+# Do NOT add the `istio.io/use-waypoint` label — the waypoint is removed in Task 7.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentgateway
+  namespace: mcp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentgateway-spiffe-helper
+  namespace: mcp
+data:
+  # The gateway presents this SVID as the `actor_token` when the shim exchanges the
+  # caller's token for a backend-scoped token (the new OBO hop).
+  spiffe-helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cmd = ""
+    cmd_args = ""
+    daemon_mode = true
+    jwt_svids = [
+      {
+        jwt_audience = "https://curity.localtest.me/oauth/v2/oauth-token"
+        jwt_svid_file_name = "/run/spiffe/curity-actor.jwt"
+      }
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway
+  namespace: mcp
+  labels:
+    app: agentgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agentgateway }
+  template:
+    metadata:
+      labels: { app: agentgateway }
+    spec:
+      serviceAccountName: agentgateway
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: spiffe-svids
+          emptyDir:
+            medium: Memory
+        - name: spiffe-helper-config
+          configMap:
+            name: agentgateway-spiffe-helper
+        - name: gateway-config
+          configMap:
+            name: agentgateway-config
+      containers:
+        # containers[0] — the exchange-shim. MUST stay first (routing patch target).
+        - name: exchange-shim
+          image: ai-agents-demo/exchange-shim:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8090
+          volumeMounts:
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+              readOnly: true
+          env:
+            - name: PORT
+              value: "8090"
+            - name: CURITY_TOKEN_ENDPOINT
+              value: https://curity.localtest.me/oauth/v2/oauth-token
+            - name: GATEWAY_CLIENT_ID
+              value: mcp-gateway
+            - name: SPIFFE_SVID_PATH
+              value: /run/spiffe/curity-actor.jwt
+          envFrom:
+            - secretRef:
+                name: agentgateway-curity
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+        # containers[1] — the agentgateway binary.
+        - name: agentgateway
+          image: ghcr.io/agentgateway/agentgateway:latest
+          imagePullPolicy: IfNotPresent
+          args: ["-f", "/etc/agentgateway/config.yaml"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: gateway-config
+              mountPath: /etc/agentgateway
+              readOnly: true
+          # The MCP listener requires a valid JWT for HTTP, so an httpGet probe would
+          # 401 forever. A TCP check confirms the listener is accepting connections.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/spiffe-helper.conf"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe-svids
+              mountPath: /run/spiffe
+            - name: spiffe-helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+          # UID-1000 matches the `node` user in the shim so the SVID file (mode 0600
+          # from spiffe-helper) is readable. See agent-copilot.yaml for the story.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway
+  namespace: mcp
+spec:
+  selector:
+    app: agentgateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

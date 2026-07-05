@@ -15,6 +15,9 @@ Built with:
   mesh certs and SVIDs chain to one trust anchor.
 - **Vercel AI SDK** (TypeScript) agents; **A2A** for agent-to-agent calls; **MCP**
   (Streamable HTTP) for tool invocation.
+- **agentgateway** — a standalone MCP front door (JWT + per-tier scope authz +
+  `tools/list` filtering) whose co-located `exchange-shim` sidecar runs the
+  per-backend RFC 8693 OBO exchange for every tool call.
 - **OpenTelemetry → Tempo → Grafana** — identity-decorated distributed tracing.
 - Modern OAuth standards: **RFC 8693** (token exchange), **RFC 9470** (step-up),
   **RFC 9728** (protected-resource metadata), and **CIMD** (Client ID Metadata
@@ -32,8 +35,10 @@ and deny by role. Three identity planes — **human** (OIDC), **workload**
 (SPIFFE), and **assurance** (MFA) — enforced together, visible in one trace.
 
 ```
-Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ mcp-observability ─▶ obs-api ─▶ K8s
-                                                        └─ A2A ─▶ agent-specialist ─▶ mcp-ops ─▶ ops-api ─▶ K8s
+Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+                                                        └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s
+                                                                                    └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+              agentgateway = MCP front door (aud=mcp-gateway; per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
               every agent/MCP hop ⇄ Curity (RFC 8693 exchange, SPIFFE actor_token)
 ```
 
@@ -89,9 +94,9 @@ make demo            # one command, end to end. Prompts up front for the license
 # Grafana, plus the OAuth/SPIFFE metadata endpoints). Re-print anytime:
 make urls
 
-# The ONLY manual step left: create the alice & bob user accounts (+ TOTP) in Curity
-# when running the login flow via the HTML Authenticator create account feature — see
-# docs/curity-seed.md (§Accounts).:
+# The ONLY manual step left: create the alice, carol & bob user accounts (+ TOTP) in
+# Curity when running the login flow via the HTML Authenticator create account feature —
+# see docs/curity-seed.md (§Accounts).:
 open https://app.localtest.me
 ```
 
@@ -125,9 +130,10 @@ apps/
   agent-copilot/        # front-line agent (Vercel AI SDK); CIMD ephemeral client
   agent-specialist/     # privileged agent; A2A server; CIMD ephemeral client
   mcp-observability/    # read-tier MCP (thin client → obs-api)
-  mcp-ops/              # privileged-tier MCP (thin client → ops-api)
+  mcp-ops/              # privileged-tier MCP (thin client → ops-api; sre-only set_deployment_image)
   obs-api/              # read resource server (pods/logs in prod, RBAC)
   ops-api/              # privileged resource server (restart deployments, RBAC)
+  exchange-shim/        # agentgateway extAuthz sidecar; runs the per-backend OBO exchange
 packages/
   auth-curity/          # JWT verify + RFC 8693 exchange + CIMD + identity spans
   agent-runtime/        # shared LLM plumbing: buildLlm + MCP→AI-SDK toolset adapter

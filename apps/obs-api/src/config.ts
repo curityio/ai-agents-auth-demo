@@ -6,8 +6,8 @@ export interface Config {
   requiredScopes: string[];
   /**
    * Allowed `act` chains — each entry is one accepted chain OUTER → INNER.
-   *   Read path A: [mcp-observability, agent-copilot]          (depth 2 — copilot reads directly)
-   *   Read path B: [mcp-observability, agent-specialist, agent-copilot] (depth 3 — specialist remediating)
+   *   Read path A: [mcp-observability, agentgateway, agent-copilot]          (depth 3 — copilot reads directly)
+   *   Read path B: [mcp-observability, agentgateway, agent-specialist, agent-copilot] (depth 4 — specialist remediating)
    */
   expectedActorChains: RegExp[][];
   /** Default namespace for list/logs. RBAC further enforces this. */
@@ -31,11 +31,16 @@ export function loadConfig(): Config {
     expectedAudience: process.env.API_AUDIENCE ?? 'obs-api',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'obs:read').split(/\s+/).filter(Boolean),
     expectedActorChains: [
-      // Read path A: agent-copilot reads directly.
-      [SPIFFE_ID('mcp', 'mcp-observability'), SPIFFE_ID('agents', 'agent-copilot')],
-      // Read path B: agent-specialist reads while remediating (copilot delegated).
+      // Read path A: [mcp-observability, agentgateway, agent-copilot]
       [
         SPIFFE_ID('mcp', 'mcp-observability'),
+        SPIFFE_ID('mcp', 'agentgateway'),
+        SPIFFE_ID('agents', 'agent-copilot'),
+      ],
+      // Read path B: [mcp-observability, agentgateway, agent-specialist, agent-copilot]
+      [
+        SPIFFE_ID('mcp', 'mcp-observability'),
+        SPIFFE_ID('mcp', 'agentgateway'),
         SPIFFE_ID('agents', 'agent-specialist'),
         SPIFFE_ID('agents', 'agent-copilot'),
       ],

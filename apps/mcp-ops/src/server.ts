@@ -60,9 +60,16 @@ async function main(): Promise<void> {
         ? authz.slice('bearer '.length).trim()
         : '';
       const caller = (req as AuthedRequest).caller;
+      const rawRoles = (caller?.payload as { roles?: unknown } | undefined)?.roles;
+      const subjectRoles = Array.isArray(rawRoles)
+        ? rawRoles.map(String)
+        : typeof rawRoles === 'string'
+          ? rawRoles.split(/\s+/).filter(Boolean)
+          : [];
       const server = buildMcpServer(cfg, {
         subjectToken,
         subjectSub: String(caller?.payload.sub ?? 'unknown'),
+        subjectRoles,
       });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,

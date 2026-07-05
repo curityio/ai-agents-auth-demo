@@ -86,19 +86,22 @@ spec:
             - name: AGENT_AUDIENCE
               value: agent-copilot
             - name: MCP_OBSERVABILITY_URL
-              # The Istio ambient waypoint (k8s/istio/mcp-l7-authz.yaml) intercepts
-              # this transparently for a coarse early-deny; the authoritative JWT +
-              # act-chain enforcement lives in the MCP middleware
+              # Routed through the agentgateway MCP front door (mcp ns). The gateway
+              # validates aud=mcp-gateway, applies per-tool CEL RBAC, and re-exchanges
+              # (via the co-located exchange-shim) to a narrowed aud=mcp-observability
+              # token before forwarding to the origin. The authoritative JWT +
+              # act-chain enforcement still lives in the MCP middleware
               # (apps/mcp-observability/src/auth-middleware.ts).
-              value: http://mcp-observability.mcp.svc.cluster.local:8080/mcp
+              value: http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp
             - name: CURITY_TOKEN_ENDPOINT
               value: https://curity.localtest.me/oauth/v2/oauth-token
             # CIMD client_id — the HTTPS URL Curity dereferences for this agent's
             # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
             - name: AGENT_CLIENT_ID
               value: https://copilot.localtest.me/.well-known/oauth-client
+            # Audience is now the gateway; it narrows to mcp-observability per tool.
             - name: MCP_OBSERVABILITY_AUDIENCE
-              value: mcp-observability
+              value: mcp-gateway
             - name: MCP_OBSERVABILITY_SCOPE
               value: obs:read
             # A2A privileged-path target.

@@ -64,17 +64,25 @@ var CLIENT_POLICY = {
   // signs the actor_token is still the agent's K8s service account.
   'https://copilot.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-observability': { scopes: ['obs:read'] },
+      'mcp-gateway': { scopes: ['obs:read'] },
       'agent-specialist': { scopes: ['obs:read', 'ops:write'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/]
   },
   'https://specialist.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-ops': { scopes: ['ops:write'] },
-      'mcp-observability': { scopes: ['obs:read'] }
+      'mcp-gateway': { scopes: ['obs:read', 'ops:write'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
+  },
+  // agentgateway: confidential client fanning out to the two MCP backends,
+  // narrowing the broad aud=mcp-gateway caller token per tool-target.
+  'mcp-gateway': {
+    perAudience: {
+      'mcp-observability': { scopes: ['obs:read'] },
+      'mcp-ops': { scopes: ['ops:write'] }
+    },
+    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/]
   },
   // MCPs are confidential clients exchanging to their backend API.
   'mcp-ops': {
@@ -294,13 +302,20 @@ function result(context) {
   var requestedSet = context.getRequestedScopes(); // Java Set<String>
   var requested = setToArray(requestedSet);
   if (requested.length === 0) requested = subjectScopes;
-  // 5a. Role gate — deny early if ops:write is requested without sre role.
+  // 5a. Role gate — ops:write requires a WRITE role: `sre` OR `oncall`. This is the
+  //     coarse tier gate (may this user touch the ops write-tier at all). The finer
+  //     per-tool split (on-call may restart/scale; only sre may set_deployment_image)
+  //     is enforced at the agentgateway, where the MCP tool name is resolved.
   //     `subjectToken.get('roles')` may be a Java Set, JS array, space-delimited
   //     string (e.g. "sre oncall"), or null. claimToArray() handles all four shapes;
   //     setToArray alone would iterate a string character-by-character.
   var subjectRoles = claimToArray(subjectToken.get('roles'));
-  if (requested.indexOf('ops:write') !== -1 && subjectRoles.indexOf('sre') === -1) {
-    fail('access_denied', "user lacks required role 'sre' for ops:write");
+  if (
+    requested.indexOf('ops:write') !== -1 &&
+    subjectRoles.indexOf('sre') === -1 &&
+    subjectRoles.indexOf('oncall') === -1
+  ) {
+    fail('access_denied', "user lacks a write role ('sre' or 'oncall') for ops:write");
   }
 
   var narrowed = requested.filter(function (s) {

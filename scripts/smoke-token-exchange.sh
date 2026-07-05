@@ -1,35 +1,47 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for the OBO token exchange. Runs against the live KIND cluster.
+# End-to-end smoke test for the OBO read path THROUGH the agentgateway.
+# Runs against the live KIND cluster.
+#
+# Topology (post-agentgateway): the agent no longer exchanges directly to
+# aud=mcp-observability. It mints an aud=mcp-gateway token and calls the gateway's
+# /observability/mcp route; the gateway validates the JWT, applies per-tool RBAC,
+# and (via the co-located exchange-shim) re-exchanges to aud=mcp-observability —
+# inserting the gateway's SPIFFE ID into the act chain — before forwarding to the
+# origin MCP server, which re-exchanges again to obs-api.
 #
 # Assertions:
-#   - positive: Alice's subject token + agent's SVID exchange yields an
-#     access token whose act.sub matches the agent's SPIFFE ID, with aud=
-#     mcp-observability and scope=obs:read.
-#   - negative 1: omitting actor_token → invalid_request from Curity.
-#   - negative 2: requesting scope=ops:write → invalid_scope (the
-#     agent-copilot client's claims policy denies it, regardless of user).
+#   [1/5] positive: Alice's subject token + copilot SVID exchange to
+#         aud=mcp-gateway (scope obs:read) with act.sub=copilot.
+#   [2/5] positive (REAL OBO hop): that mcp-gateway token drives a tools/call
+#         list_pods through the gateway → HTTP 200 with prod pods. This exercises
+#         gateway JWT + RBAC + extAuthz→shim→exchange→mcp-observability→obs-api.
+#   [3/5] negative: copilot exchanging DIRECTLY to aud=mcp-observability is denied
+#         (the gateway is the only door now — copilot's policy dropped that audience).
+#   [4/5] negative: omitting actor_token → invalid_request from Curity.
+#   [5/5] negative: requesting scope=ops:write for aud=mcp-gateway → invalid_scope
+#         (copilot's claims policy allows only obs:read for the gateway audience).
 #
-# Per-hop act.sub enforcement (only the agent SPIFFE-ID pattern is accepted)
-# lives in the MCP server middleware (apps/mcp-observability/src/auth-middleware.ts)
-# and is exercised by its unit tests and the A2A/step-up smoke scripts.
+# Per-hop act.sub / act-chain enforcement lives in the resource-server middleware
+# (apps/*/src/auth-middleware.ts) and is exercised by unit tests + the A2A/step-up
+# smoke scripts (which assert the grown, gateway-including chain end to end).
 #
 # Pre-reqs:
-#   - kubectl context points at the demo cluster
-#   - `alice` exists in Curity (per docs/curity-seed.md)
+#   - kubectl context points at the demo cluster; `make apply` + `make routing` ran.
+#   - `alice` exists in Curity (per docs/curity-seed.md).
 #   - agent-copilot is a CIMD ephemeral client; this script authenticates with a
 #     private_key_jwt assertion signed by the PKCS8 key in the agent-copilot-curity
 #     Secret (seeded via `make seed-agent-key`), exactly as the agent does.
 #
 # Required env: SMOKE_SUBJECT_TOKEN — a fresh Curity access token for Alice.
-# Easiest way to obtain: open https://app.localtest.me, sign in, hit
-# https://app.localtest.me/api/whoami; the response logs the token when
-# AUTH_DEBUG=true is set on the web pod.
+# Easiest way to obtain: open https://app.localtest.me, sign in, then read the
+# token from /api/whoami's server log when AUTH_DEBUG=true on the web pod.
 #
 # Exit codes: 0 on success, non-zero on any failed assertion.
 
 set -euo pipefail
 
 CURITY_TOKEN_URL="${CURITY_TOKEN_URL:-https://curity.localtest.me/oauth/v2/oauth-token}"
+GATEWAY_OBS_URL="${GATEWAY_OBS_URL:-http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp}"
 CACERT="$(mkcert -CAROOT)/rootCA.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COPILOT_CLIENT_ID="${COPILOT_CLIENT_ID:-https://copilot.localtest.me/.well-known/oauth-client}"
@@ -38,7 +50,7 @@ red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 note() { printf '==> %s\n' "$*"; }
 
-# Helpers for redacting sensitive fields from response bodies before logging.
+# Redact sensitive fields from response bodies before logging.
 redact_resp() {
   python3 -c '
 import sys, json
@@ -52,6 +64,30 @@ for k in ("access_token", "id_token", "refresh_token"):
         body[k] = "<redacted>"
 print(json.dumps(body))
 '
+}
+
+# mcp_call: drive an MCP Streamable HTTP request through the gateway from inside a
+# cluster pod (the gateway only checks the JWT, so any in-mesh pod works). It runs
+# initialize (capturing any mcp-session-id + sending notifications/initialized),
+# then the requested method, and echoes "<status>:<body-slice>". Args:
+#   $1 ns  $2 deploy  $3 container  $4 url  $5 bearer  $6 method  $7 params-json
+mcp_call() {
+  kubectl -n "$1" exec "deploy/$2" -c "$3" -- \
+    env U="$4" B="$5" M="$6" P="$7" node -e '
+(async () => {
+  const url = process.env.U, bearer = process.env.B, method = process.env.M;
+  const params = process.env.P ? JSON.parse(process.env.P) : {};
+  const base = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + bearer };
+  const initBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "smoke", version: "0" }, capabilities: {} } });
+  const r1 = await fetch(url, { method: "POST", headers: base, body: initBody });
+  if (!r1.ok) { process.stdout.write("INIT_" + r1.status + ":" + (await r1.text()).slice(0, 300)); return; }
+  const sid = r1.headers.get("mcp-session-id");
+  const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
+  if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
+  const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
+  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 600));
+})().catch(e => process.stdout.write("ERR:" + e.message));
+' 2>/dev/null || true
 }
 
 if [[ -z "${SMOKE_SUBJECT_TOKEN:-}" ]]; then
@@ -84,8 +120,54 @@ client_assertion() {
     "$COPILOT_CLIENT_ID" "$CURITY_TOKEN_URL"
 }
 
-# ----- Positive case ------------------------------------------------------
-note "[1/3] Positive: exchange Alice subject + agent SVID"
+# ----- [1/5] Positive: exchange Alice subject + copilot SVID → aud=mcp-gateway ----
+note "[1/5] Positive: exchange Alice subject + copilot SVID → aud=mcp-gateway"
+RESP=$(curl -sS --cacert "$CACERT" \
+  -d "client_id=$COPILOT_CLIENT_ID" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=$(client_assertion)" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=$SUBJECT_TOKEN" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "actor_token=$SVID" \
+  -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
+  -d "audience=mcp-gateway" \
+  -d "scope=obs:read" \
+  "$CURITY_TOKEN_URL")
+GATEWAY_BEARER=$(echo "$RESP" | jq -r '.access_token // empty')
+[[ -n "$GATEWAY_BEARER" ]] || { red "no access_token in positive response: $(echo "$RESP" | redact_resp)"; exit 1; }
+# Decode the payload (base64url + JSON).
+read_claim() { echo "$GATEWAY_BEARER" | cut -d. -f2 | python3 -c "
+import sys, base64, json
+s = sys.stdin.read().strip(); s += '=' * (-len(s) % 4)
+p = json.loads(base64.urlsafe_b64decode(s))
+v = p.get('$1', '')
+print(v if isinstance(v, str) else ' '.join(v))"; }
+ACT_SUB=$(echo "$GATEWAY_BEARER" | cut -d. -f2 | python3 -c '
+import sys, base64, json
+s = sys.stdin.read().strip(); s += "=" * (-len(s) % 4)
+print(json.loads(base64.urlsafe_b64decode(s)).get("act", {}).get("sub", ""))')
+AUD=$(read_claim aud)
+SCOPE=$(read_claim scope)
+[[ "$ACT_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
+  || { red "act.sub mismatch: $ACT_SUB"; exit 1; }
+[[ "$AUD" == *"mcp-gateway"* ]] || { red "aud mismatch: $AUD"; exit 1; }
+[[ "$SCOPE" == *"obs:read"* ]] || { red "scope mismatch: $SCOPE"; exit 1; }
+green "  OK (act.sub=$ACT_SUB, aud=$AUD, scope=$SCOPE)"
+
+# ----- [2/5] Positive: real read through the gateway (list_pods → 200 + pods) -----
+note "[2/5] Positive: tools/call list_pods through the gateway (REAL OBO hop)"
+STATUS=$(mcp_call agents agent-copilot agent \
+  "$GATEWAY_OBS_URL" "$GATEWAY_BEARER" "tools/call" \
+  '{"name":"list_pods","arguments":{"namespace":"prod"}}')
+case "$STATUS" in
+  200*order-service*) green "  OK (gateway returned prod pods: ${STATUS:0:80}...)" ;;
+  200*) green "  OK (gateway 200; body did not name order-service but call succeeded: ${STATUS:0:120})" ;;
+  *) red "  expected 200 with pods through the gateway, got: $STATUS"; exit 1 ;;
+esac
+
+# ----- [3/5] Negative: copilot direct-to-mcp-observability is denied --------------
+note "[3/5] Negative: copilot exchanging DIRECTLY to aud=mcp-observability → expect denied"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -99,35 +181,22 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "scope=obs:read" \
   "$CURITY_TOKEN_URL")
 ACCESS=$(echo "$RESP" | jq -r '.access_token // empty')
-[[ -n "$ACCESS" ]] || { red "no access_token in positive response: $(echo "$RESP" | redact_resp)"; exit 1; }
-# Decode the payload (base64url + JSON). Use python3 for portable base64url.
-ACT_SUB=$(echo "$ACCESS" | cut -d. -f2 | python3 -c '
-import sys, base64, json
-s = sys.stdin.read().strip()
-s += "=" * (-len(s) % 4)
-print(json.loads(base64.urlsafe_b64decode(s)).get("act", {}).get("sub", ""))')
-AUD=$(echo "$ACCESS" | cut -d. -f2 | python3 -c '
-import sys, base64, json
-s = sys.stdin.read().strip()
-s += "=" * (-len(s) % 4)
-aud = json.loads(base64.urlsafe_b64decode(s)).get("aud", "")
-print(aud if isinstance(aud, str) else " ".join(aud))')
-SCOPE=$(echo "$ACCESS" | cut -d. -f2 | python3 -c '
-import sys, base64, json
-s = sys.stdin.read().strip()
-s += "=" * (-len(s) % 4)
-print(json.loads(base64.urlsafe_b64decode(s)).get("scope", ""))')
+ERR=$(echo "$RESP" | jq -r '.error // empty')
+DESC=$(echo "$RESP" | jq -r '.error_description // empty')
+if [[ -n "$ACCESS" ]]; then
+  red "  copilot should NOT be able to exchange directly to mcp-observability (the gateway is the door)"; exit 1
+fi
+# Curity may surface the procedure denial as invalid_request/invalid_scope/
+# access_denied/invalid_audience (it sanitizes procedure-thrown codes into
+# error_description). Any denial is the correct outcome.
+case "$ERR" in
+  invalid_request|invalid_scope|access_denied|invalid_audience|invalid_target)
+    green "  OK (denied: error=$ERR description='$DESC')" ;;
+  *) red "  expected a denial, got: $(echo "$RESP" | redact_resp)"; exit 1 ;;
+esac
 
-[[ "$ACT_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
-  || { red "act.sub mismatch: $ACT_SUB"; exit 1; }
-[[ "$AUD" == *"mcp-observability"* ]] \
-  || { red "aud mismatch: $AUD"; exit 1; }
-[[ "$SCOPE" == *"obs:read"* ]] \
-  || { red "scope mismatch: $SCOPE"; exit 1; }
-green "  OK (act.sub=$ACT_SUB, aud=$AUD, scope=$SCOPE)"
-
-# ----- Negative 1: missing actor_token -----------------------------------
-note "[2/3] Negative: omit actor_token → expect invalid_request"
+# ----- [4/5] Negative: missing actor_token → invalid_request ----------------------
+note "[4/5] Negative: omit actor_token (aud=mcp-gateway) → expect invalid_request"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -135,7 +204,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
   -d "subject_token=$SUBJECT_TOKEN" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  -d "audience=mcp-observability" \
+  -d "audience=mcp-gateway" \
   -d "scope=obs:read" \
   "$CURITY_TOKEN_URL")
 ERR=$(echo "$RESP" | jq -r '.error // empty')
@@ -143,8 +212,8 @@ ERR=$(echo "$RESP" | jq -r '.error // empty')
   || { red "expected invalid_request, got: $(echo "$RESP" | redact_resp)"; exit 1; }
 green "  OK (error=$ERR)"
 
-# ----- Negative 2: request a disallowed scope ----------------------------
-note "[3/3] Negative: request scope=ops:write → expect invalid_scope"
+# ----- [5/5] Negative: request a disallowed scope for aud=mcp-gateway -------------
+note "[5/5] Negative: request scope=ops:write for aud=mcp-gateway → expect invalid_scope"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -154,19 +223,13 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "actor_token=$SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-  -d "audience=mcp-observability" \
+  -d "audience=mcp-gateway" \
   -d "scope=ops:write" \
   "$CURITY_TOKEN_URL")
 ERR=$(echo "$RESP" | jq -r '.error // empty')
 DESC=$(echo "$RESP" | jq -r '.error_description // empty')
-# Curity sanitizes procedure-thrown OAuth codes to `invalid_request` and
-# prepends the original code into `error_description` (see Curity log
-# "Removing non-validation error from JSON response. Enable the exposing
-# of detailed error messages in the profile..."). RFC 6749 would prefer
-# `error: "invalid_scope"`, but the on-the-wire behavior is fixed.
-# Accept either: the strict form (error=invalid_scope) OR the prefixed-
-# description form (error=invalid_request, description starts with
-# "invalid_scope ").
+# Accept either the strict form (error=invalid_scope) OR Curity's sanitized
+# form (error=invalid_request with an 'invalid_scope' description prefix).
 if [[ "$ERR" == "invalid_scope" ]]; then
   green "  OK (error=$ERR)"
 elif [[ "$ERR" == "invalid_request" ]] && [[ "$DESC" == invalid_scope* ]]; then

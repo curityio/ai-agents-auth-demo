@@ -27,9 +27,11 @@ current spec. The canonical docs above supersede them. Don't reintroduce
 ## Architecture you should know before touching code
 
 ```
-Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
-                                                                └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
-                                                                  (LLM, cross-tier)         └─ MCP ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+                                                                └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
+                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+        agentgateway = MCP front door (aud=mcp-gateway; coarse per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
+        (the set_deployment_image=sre role split is enforced downstream at mcp-ops, NOT the gateway)
                           every agent/MCP hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
 
@@ -222,40 +224,68 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     (Also bump `fs.inotify.max_user_instances` past the default 128 if SPIRE +
     Istio + the apps exhaust watcher instances.)
 
-21. **MCP L7 authz runs on an Istio ambient waypoint, and three things must agree.**
-    `k8s/istio/mcp-l7-authz.yaml` adds a waypoint in the `mcp` ns + a
-    `RequestAuthentication` + per-service `AuthorizationPolicy` doing coarse
-    JWT/identity/audience/scope early-deny in front of `mcp-ops`/`mcp-observability`.
-    Hard-won details:
-    - **The k8s Gateway API CRDs are a prerequisite** (NOT installed by default;
-      the edge uses the *classic* `networking.istio.io` Gateway). `make
-      gateway-api-crds` installs them (`standard-install.yaml`, pinned); istiod then
-      registers the `istio-waypoint` GatewayClass — it may need an istiod restart to
-      notice freshly-installed CRDs. Folded into `make platform`.
-    - **`jwksUri` targets Curity's in-cluster Service DNS over plain HTTP.** istiod
-      (not the proxy) fetches `jwksUri`, and istiod can't resolve `curity.localtest.me`
-      (it maps to its own pod — same loopback foot-gun as #5). So it targets
-      `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`.
-      Curity's runtime listener is **plain HTTP** — the edge gateway terminates external
-      TLS and proxies plaintext upstream (same pattern as web/grafana/agents; the lone
-      re-encrypt DestinationRule was removed). `base-url` stays `https://curity.localtest.me`,
-      so `iss`/metadata/redirects remain https; `issuer` in the RequestAuthentication is
-      decoupled from `jwksUri`. istiod fetches the keys and inlines them into the waypoint
-      Envoy as `local_jwks`, refreshing automatically — so Curity key rotation needs **no
-      manual snapshot** (this replaced `snapshot-curity-jwks.sh`).
-    - **`forwardOriginalToken: true` is mandatory** — Istio strips the validated
-      Bearer by default, which would break the resource servers' act-chain + step-up.
-    - **The waypoint does NOT enforce `acr`/step-up or the `act` chain** — Istio's
-      generic 403 can't carry the RFC 9470 `WWW-Authenticate` challenge and can't
-      match nested `act.act.sub`. Those stay in `auth-middleware.ts`. The waypoint
-      also can't read the JSON-RPC body, so there is no per-tool gate (fine here —
-      each MCP server is single-tier). Source identity uses the **Istio** trust
-      domain (`cluster.local/ns/agents/sa/agent-{specialist,copilot}`), distinct from
-      the SPIFFE `act` chain's `demo.curity.local`.
-    - **`mcp-observability-authz` allows BOTH `agent-copilot` AND `agent-specialist`**
-      principals (the specialist reads deployment state while remediating);
-      `mcp-ops-authz` allows only `agent-specialist`. Keep the principal lists in
-      sync with the agents' actual read/write fan-out.
+21. **MCP L7 authz runs on a standalone `agentgateway`, and several things must agree.**
+    `agentgateway` (ns `mcp`, Service `agentgateway.mcp.svc.cluster.local:8080`,
+    `k8s/workloads/agentgateway-config.yaml`) is the MCP front door for BOTH MCP
+    servers, and **replaces** the former Istio ambient waypoint
+    (`k8s/istio/mcp-l7-authz.yaml`, now deleted; `mcp-observability`/`mcp-ops` no
+    longer carry `istio.io/use-waypoint`). Hard-won details:
+    - **Path-routed, not federated.** ONE listener (`:8080`) with TWO path-scoped
+      routes: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops. It is
+      path-routed (not a single federated `/mcp`) because agentgateway v1.3.1 (latest
+      OSS) does **not** expose `mcp.tool.target` inside its `extAuthz` CEL scope — so
+      per-backend audience narrowing can't be done on a single federated endpoint.
+      Callers pick the path.
+    - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
+      gateway validates the caller's
+      `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
+      JWKS fetched from the in-cluster plain-HTTP URL
+      `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`,
+      same loopback foot-gun as #5). `mcpAuthorization` then does **coarse tier authz**:
+      the `/ops/mcp` route requires `ops:write`, `/observability/mcp` requires `obs:read`,
+      and `tools/list` is filtered by that tier scope. The gateway **lists and allows
+      ALL ops tools** (`restart_deployment`/`scale_deployment`/`set_deployment_image`) for
+      any `ops:write` caller — it does NOT split ops tools by role. It can't: agentgateway
+      couples `tools/list` visibility to call-authorization, so a tool it won't let you
+      CALL is also HIDDEN from `tools/list`; gating `set_deployment_image` here would hide
+      it from an `oncall` caller and the specialist LLM (never seeing the tool) would loop
+      silently instead of surfacing a denial. So the fine-grained
+      `set_deployment_image`=`sre` split is enforced DOWNSTREAM at **mcp-ops**
+      (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`;
+      logic in `apps/mcp-ops/src/mcp.ts` `imageRoleDenial`), which checks the caller's
+      `roles` claim before the ops-api hop and returns a legible error the specialist
+      LLM relays. The `ops:write` Curity role gate (widened `sre` → `sre OR oncall`) is
+      what effectively gates `restart_deployment`/`scale_deployment` — that is the Curity
+      gate, not a separate gateway rule. So carol (`[oncall]`) can restart/scale and SEES
+      `set_deployment_image` in `tools/list` but the CALL is denied by mcp-ops; alice
+      (`[sre]`) may call it; bob (`[developer]`) is denied `ops:write` at the exchange.
+    - **extAuthz → co-located `exchange-shim` = the OBO hop.** For each tool-call the
+      gateway makes an `extAuthz` call to `exchange-shim` (`apps/exchange-shim`,
+      Node/TS, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693
+      exchange: it reads the gateway's rotating SPIFFE JWT-SVID from
+      `/run/spiffe/curity-actor.jwt` (spiffe-helper sidecar) as the `actor_token`, uses
+      the caller's `aud=mcp-gateway` token as the subject, and derives audience/scope
+      **server-side** from an audience→scope allow-list (NEVER caller-supplied). It
+      reuses `@ai-agents-demo/auth-curity` `exchangeToken` + `@ai-agents-demo/spiffe`,
+      returns a token-endpoint-shaped JSON body, and the gateway swaps the narrowed
+      token onto the request before forwarding to the origin MCP server. **The shim
+      exists because agentgateway's CEL cannot read the rotating SVID file** — the
+      exchange must run in a co-located sidecar.
+    - **The gateway inserts ONE position into every downstream `act` chain** — SPIFFE
+      ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. So obs-api now expects
+      `[mcp-observability, agentgateway, agent-copilot]` (copilot direct) OR
+      `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`; ops-api
+      `[mcp-ops, agentgateway, agent-specialist, agent-copilot]`; mcp-ops
+      `[agentgateway, agent-specialist, agent-copilot]`. New Curity client
+      `mcp-gateway` (confidential, `client_secret_basic`) is allowed to exchange
+      `mcp-observability`→`obs:read` and `mcp-ops`→`ops:write`, with `allowedActor`
+      pinned to the agentgateway SPIFFE ID.
+    - **The gateway does NOT enforce `acr`/step-up or match the `act` chain** — those
+      stay in the resource-server middleware (`auth-middleware.ts`). The RFC 9470
+      step-up 401 still originates at mcp-ops/ops-api and passes back through the
+      gateway. Source identity at the gateway is the JWT audience (`aud=mcp-gateway`),
+      NOT mTLS SPIFFE identity. The Kubernetes Gateway API CRDs / `istio-waypoint`
+      GatewayClass are no longer needed for MCP authz.
 
 ## Commands
 

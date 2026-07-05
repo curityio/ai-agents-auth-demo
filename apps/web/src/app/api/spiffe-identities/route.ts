@@ -16,6 +16,11 @@ const SPECIALIST_URL =
   process.env.AGENT_SPECIALIST_URL ?? 'http://agent-specialist.agents.svc.cluster.local:8082';
 const MCP_URL = process.env.MCP_OBSERVABILITY_URL ?? 'http://mcp-observability.mcp.svc.cluster.local:8080';
 const MCP_OPS_URL = process.env.MCP_OPS_URL ?? 'http://mcp-ops.mcp.svc.cluster.local:8080';
+// agentgateway is the MCP front door and inserts its own SPIFFE ID into every
+// downstream act chain. It's a Rust binary with no /spiffe-id of its own, so its
+// co-located exchange-shim serves the pod's SVID at :8080/spiffe-id (a no-auth
+// gateway route → localhost:8090). See k8s/workloads/agentgateway-config.yaml.
+const AGENTGATEWAY_URL = process.env.AGENTGATEWAY_URL ?? 'http://agentgateway.mcp.svc.cluster.local:8080';
 
 interface SvidView {
   workload: string;
@@ -57,9 +62,13 @@ async function readLocalWebSvid(): Promise<SvidView> {
 // debug-only; gate behind a DEBUG flag before production.
 //
 // Returns ONLY the workloads that participate in the requested flow, so the panel
-// mirrors the chain the user just exercised:
-//   - read (default): web → agent-copilot → mcp-observability
-//   - privileged:      web → agent-copilot → agent-specialist → mcp-ops
+// mirrors the chain the user just exercised (every MCP hop now goes THROUGH the
+// agentgateway, so it appears in both flows):
+//   - read (default): web → agent-copilot → agentgateway → mcp-observability
+//   - privileged:      web → agent-copilot → agent-specialist → agentgateway → mcp-ops
+// (The obs-api/ops-api resource servers are intentionally omitted: they receive the
+// exchanged token but perform no exchange of their own, so they aren't token-exchange
+// participants.)
 export async function GET(req: Request) {
   const flow = new URL(req.url).searchParams.get('flow') === 'privileged' ? 'privileged' : 'read';
 
@@ -67,9 +76,13 @@ export async function GET(req: Request) {
     flow === 'privileged'
       ? [
           fetchRemote('agent-specialist', SPECIALIST_URL),
+          fetchRemote('agentgateway', AGENTGATEWAY_URL),
           fetchRemote('mcp-ops', MCP_OPS_URL),
         ]
-      : [fetchRemote('mcp-observability', MCP_URL)];
+      : [
+          fetchRemote('agentgateway', AGENTGATEWAY_URL),
+          fetchRemote('mcp-observability', MCP_URL),
+        ];
 
   const workloads = await Promise.all([
     readLocalWebSvid(),

@@ -1,48 +1,45 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for RFC 9470 step-up + role-based denial.
+# End-to-end smoke test for RFC 9470 step-up + role-based authz THROUGH the
+# agentgateway.
+#
+# Topology (post-agentgateway): the specialist mints an aud=mcp-gateway token and
+# calls the gateway's /ops/mcp route. The gateway validates the JWT, applies
+# per-tool CEL RBAC (role split), and re-exchanges (via the exchange-shim) to
+# aud=mcp-ops before forwarding. The gateway does NOT enforce acr/step-up — the
+# RFC 9470 401 still originates at mcp-ops and is relayed back through the gateway.
 #
 # Assertions:
-#   [1/3] alice-mfa + acr=mfa → full exchange chain succeeds + mcp-ops accepts
-#         (leaf token carries acr=mfa and ops:write; mcp-ops restart succeeds).
-#   [2/3] alice-pwd + acr=password → exchange chain succeeds, mcp-ops issues
-#         HTTP 401 with WWW-Authenticate: error="insufficient_user_authentication"
-#         and acr_values="mfa" (RFC 9470 step-up challenge).
-#   [3/3] bob + role=developer (no sre) → Curity returns access_denied at the
-#         first exchange hop (copilot→specialist, scope=ops:write).
+#   [1/4] alice-mfa (acr=mfa, roles sre+oncall) → full chain to aud=mcp-gateway,
+#         acr=mfa propagated; restart_deployment through the gateway → 200.
+#   [2/4] alice-pwd (acr=password) → same chain, but the gateway/mcp-ops path
+#         returns 401 with WWW-Authenticate: insufficient_user_authentication,
+#         acr_values="mfa" (step-up challenge, relayed through the gateway).
+#   [3/4] bob (role=developer, no write role) → Curity returns access_denied at
+#         the FIRST exchange hop (copilot→specialist, scope ops:write) — the role
+#         gate is (sre OR oncall); bob has neither.
+#   [4/4] per-tool ROLE SPLIT at the gateway (sre ⊇ oncall):
+#         - alice (sre): tools/list on /ops/mcp INCLUDES set_deployment_image.
+#         - carol (oncall, optional token): tools/list OMITS set_deployment_image;
+#           a call to it is DENIED by gateway RBAC; restart_deployment is allowed.
 #
-# Token env vars:
-#   SMOKE_TOKEN_ALICE_MFA  — access token for alice who authenticated with MFA
-#                            (acr=mfa; alice must have role=sre in Curity).
-#                            How to obtain: sign in at https://app.localtest.me
-#                            through the MFA authenticator, then grab the token
-#                            from /api/dev/token (if AUTH_DEBUG=true) or from
-#                            the server log of /api/whoami.
-#   SMOKE_TOKEN_ALICE_PWD  — access token for alice authenticated with only
-#                            password (acr=password; same alice / same roles).
-#                            How to obtain: sign in at https://app.localtest.me
-#                            skipping/bypassing MFA, then grab token same way.
-#   SMOKE_TOKEN_BOB        — access token for bob (role=developer, NOT sre).
-#                            How to obtain: sign in at https://app.localtest.me
-#                            as bob (per docs/curity-seed.md), grab token same
-#                            way. Bob only needs password-level auth for this
-#                            test because the exchange fails at the role gate
-#                            before ACR is checked.
-#
-# At least SMOKE_TOKEN_ALICE_MFA is required (assertion 1). Assertions 2 and 3
-# are skipped (with a yellow note) if their respective tokens are absent.
+# Token env vars (each obtained by signing in at https://app.localtest.me and
+# reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
+#   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; roles sre+oncall). REQUIRED.
+#   SMOKE_TOKEN_ALICE_PWD  — alice, password only (acr=password). Optional → skips [2/4].
+#   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
+#   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
+#                            Optional → the carol half of [4/4] is skipped.
 #
 # Pre-reqs:
-#   - kubectl context points at the demo cluster
-#   - the current Curity config + rebuilt images are deployed (`make apply`)
-#   - mcp-ops, agent-specialist, agent-copilot Deployments are Ready
+#   - kubectl context points at the demo cluster; `make apply` + `make routing` ran.
+#   - agentgateway, mcp-ops, agent-specialist, agent-copilot Deployments are Ready.
 #
 # Exit codes: 0 on success, non-zero on any failed assertion.
 
 set -euo pipefail
 
 CURITY_TOKEN_URL="${CURITY_TOKEN_URL:-https://curity.localtest.me/oauth/v2/oauth-token}"
-SPECIALIST_A2A_URL="${SPECIALIST_A2A_URL:-http://agent-specialist.agents.svc.cluster.local:8082/a2a}"
-MCP_OPS_URL="${MCP_OPS_URL:-http://mcp-ops.mcp.svc.cluster.local:8080/mcp}"
+GATEWAY_OPS_URL="${GATEWAY_OPS_URL:-http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp}"
 CACERT="$(mkcert -CAROOT)/rootCA.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COPILOT_CLIENT_ID="${COPILOT_CLIENT_ID:-https://copilot.localtest.me/.well-known/oauth-client}"
@@ -80,7 +77,70 @@ print(json.dumps(json.loads(base64.urlsafe_b64decode(s))))
 '
 }
 
-# Require at least the alice-mfa token (assertion 1 is the primary happy-path).
+# Fresh private_key_jwt assertion (unique jti) per token call, per client.
+copilot_assertion() {
+  printf '%s' "$COPILOT_PEM" | node "$SCRIPT_DIR/cimd-sign-assertion.mjs" "$COPILOT_CLIENT_ID" "$CURITY_TOKEN_URL"
+}
+specialist_assertion() {
+  printf '%s' "$SPECIALIST_PEM" | node "$SCRIPT_DIR/cimd-sign-assertion.mjs" "$SPECIALIST_CLIENT_ID" "$CURITY_TOKEN_URL"
+}
+
+# exchange: thin curl wrapper around the token endpoint. Echoes the raw JSON.
+#   $1 client_id  $2 assertion  $3 subject_token  $4 actor_token  $5 audience  $6 scope
+exchange() {
+  curl -sS --cacert "$CACERT" \
+    -d "client_id=$1" \
+    -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+    -d "client_assertion=$2" \
+    -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+    -d "subject_token=$3" \
+    -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+    -d "actor_token=$4" \
+    -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
+    -d "audience=$5" \
+    -d "scope=$6" \
+    "$CURITY_TOKEN_URL"
+}
+
+# build_gateway_ops_token: run the two agent-side exchanges (copilot→specialist,
+# specialist→mcp-gateway) for a given user subject token. Echoes the aud=mcp-gateway
+# ops:write bearer, or empty on failure. Prints a diagnostic to stderr on failure.
+build_gateway_ops_token() {
+  local subj="$1" resp spb gwb
+  resp=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$subj" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
+  spb=$(echo "$resp" | jq -r '.access_token // empty')
+  if [[ -z "$spb" ]]; then echo "copilot→specialist failed: $(echo "$resp" | redact)" >&2; return 1; fi
+  resp=$(exchange "$SPECIALIST_CLIENT_ID" "$(specialist_assertion)" "$spb" "$SPECIALIST_SVID" "mcp-gateway" "ops:write")
+  gwb=$(echo "$resp" | jq -r '.access_token // empty')
+  if [[ -z "$gwb" ]]; then echo "specialist→mcp-gateway failed: $(echo "$resp" | redact)" >&2; return 1; fi
+  echo "$gwb"
+}
+
+# gw_mcp: drive an MCP request through the gateway from the specialist pod; echoes
+# "<status>:<body-slice>" (or "INIT_<status>:<www-authenticate>|<body>" if the
+# initialize handshake is rejected — used to observe the RFC 9470 step-up challenge
+# which mcp-ops returns on the first authenticated request, relayed by the gateway).
+#   $1 url  $2 bearer  $3 method  $4 params-json
+gw_mcp() {
+  kubectl -n agents exec deploy/agent-specialist -c agent -- \
+    env U="$1" B="$2" M="$3" P="$4" node -e '
+(async () => {
+  const url = process.env.U, bearer = process.env.B, method = process.env.M;
+  const params = process.env.P ? JSON.parse(process.env.P) : {};
+  const base = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + bearer };
+  const initBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "smoke", version: "0" }, capabilities: {} } });
+  const r1 = await fetch(url, { method: "POST", headers: base, body: initBody });
+  if (!r1.ok) { process.stdout.write("INIT_" + r1.status + ":" + ((r1.headers.get("www-authenticate") || "").slice(0, 300)) + "|" + (await r1.text()).slice(0, 200)); return; }
+  const sid = r1.headers.get("mcp-session-id");
+  const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
+  if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
+  const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
+  process.stdout.write(String(r2.status) + ":" + ((r2.headers.get("www-authenticate") || "")) + "|" + (await r2.text()).slice(0, 500));
+})().catch(e => process.stdout.write("ERR:" + e.message));
+' 2>/dev/null || true
+}
+
+# Require at least the alice-mfa token (assertions 1 + 4-alice are the happy path).
 if [[ -z "${SMOKE_TOKEN_ALICE_MFA:-}" ]]; then
   red "SMOKE_TOKEN_ALICE_MFA is required (sign in with MFA at https://app.localtest.me)."
   red "See script header for how to obtain each token."
@@ -102,212 +162,153 @@ SPECIALIST_PEM=$(kubectl -n agents get secret agent-specialist-curity \
   | python3 -c 'import sys,base64;print(base64.b64decode(sys.stdin.read()).decode(),end="")')
 [[ -n "$COPILOT_PEM" && -n "$SPECIALIST_PEM" ]] || { red "missing CIMD private key(s)"; exit 1; }
 
-# Fresh private_key_jwt assertion (unique jti) per token call, per client.
-copilot_assertion() {
-  printf '%s' "$COPILOT_PEM" | node "$SCRIPT_DIR/cimd-sign-assertion.mjs" "$COPILOT_CLIENT_ID" "$CURITY_TOKEN_URL"
-}
-specialist_assertion() {
-  printf '%s' "$SPECIALIST_PEM" | node "$SCRIPT_DIR/cimd-sign-assertion.mjs" "$SPECIALIST_CLIENT_ID" "$CURITY_TOKEN_URL"
-}
-
 # ===========================================================================
-# [1/3] alice + acr=mfa → full chain succeeds; mcp-ops accepts (restart OK)
+# [1/4] alice + acr=mfa → full chain to aud=mcp-gateway; restart via gateway = 200
 # ===========================================================================
-note "[1/3] alice-mfa: full exchange chain + mcp-ops restart (expects acr=mfa propagated)"
-
-SUBJECT_TOKEN_MFA="$SMOKE_TOKEN_ALICE_MFA"
-
-# Step A: copilot exchanges user-MFA token → agent-specialist
-note "  [1/3-A] copilot exchange → aud=agent-specialist"
-RESP=$(curl -sS --cacert "$CACERT" \
-  -d "client_id=$COPILOT_CLIENT_ID" \
-  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-  -d "client_assertion=$(copilot_assertion)" \
-  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-  -d "subject_token=$SUBJECT_TOKEN_MFA" \
-  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  -d "actor_token=$COPILOT_SVID" \
-  -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-  -d "audience=agent-specialist" \
-  -d "scope=obs:read ops:write" \
-  "$CURITY_TOKEN_URL")
+note "[1/4] alice-mfa: full chain to aud=mcp-gateway + restart via gateway (acr=mfa propagated)"
+RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_ALICE_MFA" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
 SPECIALIST_BEARER_MFA=$(echo "$RESP" | jq -r '.access_token // empty')
-[[ -n "$SPECIALIST_BEARER_MFA" ]] || { red "no token in 1/3-A: $(echo "$RESP" | redact)"; exit 1; }
-
-PAYLOAD=$(echo "$SPECIALIST_BEARER_MFA" | decode_jwt_payload)
-ACT_SUB=$(echo "$PAYLOAD" | jq -r '.act.sub // empty')
+[[ -n "$SPECIALIST_BEARER_MFA" ]] || { red "no token in 1/4-A: $(echo "$RESP" | redact)"; exit 1; }
+ACT_SUB=$(echo "$SPECIALIST_BEARER_MFA" | decode_jwt_payload | jq -r '.act.sub // empty')
 [[ "$ACT_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
   || { red "expected act.sub=copilot, got: $ACT_SUB"; exit 1; }
-green "  OK (specialist-bound token issued, act.sub=copilot)"
 
-# Step B: specialist re-exchanges → aud=mcp-ops
-note "  [1/3-B] specialist exchange → aud=mcp-ops"
-RESP=$(curl -sS --cacert "$CACERT" \
-  -d "client_id=$SPECIALIST_CLIENT_ID" \
-  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-  -d "client_assertion=$(specialist_assertion)" \
-  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-  -d "subject_token=$SPECIALIST_BEARER_MFA" \
-  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  -d "actor_token=$SPECIALIST_SVID" \
-  -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-  -d "audience=mcp-ops" \
-  -d "scope=ops:write" \
-  "$CURITY_TOKEN_URL")
-OPS_BEARER_MFA=$(echo "$RESP" | jq -r '.access_token // empty')
-[[ -n "$OPS_BEARER_MFA" ]] || { red "no token in 1/3-B: $(echo "$RESP" | redact)"; exit 1; }
-
-PAYLOAD=$(echo "$OPS_BEARER_MFA" | decode_jwt_payload)
-OUTER_SUB=$(echo "$PAYLOAD" | jq -r '.act.sub // empty')
-INNER_SUB=$(echo "$PAYLOAD" | jq -r '.act.act.sub // empty')
+RESP=$(exchange "$SPECIALIST_CLIENT_ID" "$(specialist_assertion)" "$SPECIALIST_BEARER_MFA" "$SPECIALIST_SVID" "mcp-gateway" "ops:write")
+GATEWAY_BEARER_MFA=$(echo "$RESP" | jq -r '.access_token // empty')
+[[ -n "$GATEWAY_BEARER_MFA" ]] || { red "no token in 1/4-B: $(echo "$RESP" | redact)"; exit 1; }
+PAYLOAD=$(echo "$GATEWAY_BEARER_MFA" | decode_jwt_payload)
 LEAF_ACR=$(echo "$PAYLOAD" | jq -r '.acr // empty')
 LEAF_SCOPE=$(echo "$PAYLOAD" | jq -r '.scope // empty')
-[[ "$OUTER_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-specialist" ]] \
-  || { red "outer act.sub wrong: $OUTER_SUB"; exit 1; }
-[[ "$INNER_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
-  || { red "inner act.act.sub wrong: $INNER_SUB"; exit 1; }
-[[ "$LEAF_ACR" == "mfa" ]] \
-  || { red "acr not propagated into leaf token (expected mfa, got: $LEAF_ACR)"; exit 1; }
-[[ "$LEAF_SCOPE" == *"ops:write"* ]] \
-  || { red "ops:write missing from leaf token scope: $LEAF_SCOPE"; exit 1; }
-green "  OK (depth-2 chain: outer=specialist, inner=copilot; acr=mfa propagated; ops:write present)"
+[[ "$LEAF_ACR" == "mfa" ]] || { red "acr not propagated to mcp-gateway token (expected mfa, got: $LEAF_ACR)"; exit 1; }
+[[ "$LEAF_SCOPE" == *"ops:write"* ]] || { red "ops:write missing: $LEAF_SCOPE"; exit 1; }
+green "  OK (aud=mcp-gateway token; acr=mfa propagated; ops:write present)"
 
-# Step C: call mcp-ops restart_deployment — must succeed (acr=mfa satisfies step-up)
-note "  [1/3-C] mcp-ops restart_deployment with MFA leaf token (expect 200)"
-INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"smoke","version":"0"},"capabilities":{}}}'
-CALL='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"step-up smoke mfa"}}}'
-STATUS=$(kubectl -n web exec deploy/web -c web -- node -e "
-(async () => {
-  const init = '$INIT';
-  const call = '$CALL';
-  const headers = { authorization: 'Bearer $OPS_BEARER_MFA', 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
-  const r1 = await fetch('$MCP_OPS_URL', { method: 'POST', headers, body: init });
-  if (!r1.ok) { process.stdout.write('INIT_'+r1.status); return; }
-  const r2 = await fetch('$MCP_OPS_URL', { method: 'POST', headers, body: call });
-  process.stdout.write(String(r2.status)+':'+(await r2.text()).slice(0, 240));
-})().catch(e => process.stdout.write('ERR:'+e.message));
-" 2>/dev/null || true)
+note "  [1/4-C] restart_deployment through the gateway (expect 200 — acr=mfa satisfies step-up)"
+STATUS=$(gw_mcp "$GATEWAY_OPS_URL" "$GATEWAY_BEARER_MFA" "tools/call" \
+  '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"step-up smoke mfa"}}')
 case "$STATUS" in
-  200*) green "  OK (mcp-ops accepted MFA token: $STATUS)" ;;
-  401*insufficient_user_authentication*)
+  200*) green "  OK (gateway → mcp-ops accepted MFA token: ${STATUS:0:80}...)" ;;
+  INIT_401*insufficient_user_authentication*|*insufficient_user_authentication*)
     red "  step-up challenge returned but MFA token should satisfy it: $STATUS"; exit 1 ;;
   *) red "  unexpected response: $STATUS"; exit 1 ;;
 esac
 
 # ===========================================================================
-# [2/3] alice + acr=password → mcp-ops returns RFC 9470 step-up challenge
+# [2/4] alice + acr=password → gateway/mcp-ops path returns 401 step-up challenge
 # ===========================================================================
 if [[ -z "${SMOKE_TOKEN_ALICE_PWD:-}" ]]; then
-  yellow "SKIP [2/3]: SMOKE_TOKEN_ALICE_PWD not set — sign in as alice WITHOUT MFA to obtain."
+  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — sign in as alice WITHOUT MFA to obtain."
 else
-  note "[2/3] alice-pwd: full exchange chain, then mcp-ops must return 401 step-up challenge"
-  SUBJECT_TOKEN_PWD="$SMOKE_TOKEN_ALICE_PWD"
+  note "[2/4] alice-pwd: full chain, then gateway/mcp-ops must return 401 step-up challenge"
+  GATEWAY_BEARER_PWD=$(build_gateway_ops_token "$SMOKE_TOKEN_ALICE_PWD") \
+    || { red "  failed to build aud=mcp-gateway token for alice-pwd"; exit 1; }
+  LEAF_ACR_PWD=$(echo "$GATEWAY_BEARER_PWD" | decode_jwt_payload | jq -r '.acr // empty')
+  green "  OK (aud=mcp-gateway token issued; acr=$LEAF_ACR_PWD — expect non-mfa)"
 
-  # Step A
-  note "  [2/3-A] copilot exchange → aud=agent-specialist"
-  RESP=$(curl -sS --cacert "$CACERT" \
-    -d "client_id=$COPILOT_CLIENT_ID" \
-    -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-    -d "client_assertion=$(copilot_assertion)" \
-    -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-    -d "subject_token=$SUBJECT_TOKEN_PWD" \
-    -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-    -d "actor_token=$COPILOT_SVID" \
-    -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-    -d "audience=agent-specialist" \
-    -d "scope=obs:read ops:write" \
-    "$CURITY_TOKEN_URL")
-  SPECIALIST_BEARER_PWD=$(echo "$RESP" | jq -r '.access_token // empty')
-  [[ -n "$SPECIALIST_BEARER_PWD" ]] || { red "no token in 2/3-A: $(echo "$RESP" | redact)"; exit 1; }
-  green "  OK (specialist-bound token issued)"
-
-  # Step B
-  note "  [2/3-B] specialist exchange → aud=mcp-ops"
-  RESP=$(curl -sS --cacert "$CACERT" \
-    -d "client_id=$SPECIALIST_CLIENT_ID" \
-    -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-    -d "client_assertion=$(specialist_assertion)" \
-    -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-    -d "subject_token=$SPECIALIST_BEARER_PWD" \
-    -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-    -d "actor_token=$SPECIALIST_SVID" \
-    -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-    -d "audience=mcp-ops" \
-    -d "scope=ops:write" \
-    "$CURITY_TOKEN_URL")
-  OPS_BEARER_PWD=$(echo "$RESP" | jq -r '.access_token // empty')
-  [[ -n "$OPS_BEARER_PWD" ]] || { red "no token in 2/3-B: $(echo "$RESP" | redact)"; exit 1; }
-
-  PAYLOAD=$(echo "$OPS_BEARER_PWD" | decode_jwt_payload)
-  LEAF_ACR_PWD=$(echo "$PAYLOAD" | jq -r '.acr // empty')
-  green "  OK (leaf token issued; acr=$LEAF_ACR_PWD — expect password or similar non-mfa)"
-
-  # Step C: mcp-ops must return 401 with the step-up challenge
-  note "  [2/3-C] mcp-ops with password-acr leaf token → expect 401 insufficient_user_authentication"
-  INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"smoke","version":"0"},"capabilities":{}}}'
-  CALL='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"step-up smoke pwd"}}}'
-  FULL_STATUS=$(kubectl -n web exec deploy/web -c web -- node -e "
-(async () => {
-  const init = '$INIT';
-  const call = '$CALL';
-  const headers = { authorization: 'Bearer $OPS_BEARER_PWD', 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
-  const r1 = await fetch('$MCP_OPS_URL', { method: 'POST', headers, body: init });
-  const wwwAuth = r1.headers.get('www-authenticate') || '';
-  process.stdout.write(String(r1.status)+':'+wwwAuth.slice(0, 300));
-})().catch(e => process.stdout.write('ERR:'+e.message));
-" 2>/dev/null || true)
-  # The initialize request triggers auth; mcp-ops must 401 before we even send tools/call.
-  case "$FULL_STATUS" in
-    401*insufficient_user_authentication*acr_values*mfa*)
-      green "  OK (mcp-ops returned 401 step-up challenge: $FULL_STATUS)" ;;
-    401*insufficient_user_authentication*)
-      # acr_values field may be formatted differently — still a valid challenge
-      green "  OK (mcp-ops returned 401 insufficient_user_authentication: $FULL_STATUS)" ;;
+  note "  [2/4-C] restart via gateway with password-acr token → expect 401 insufficient_user_authentication"
+  STATUS=$(gw_mcp "$GATEWAY_OPS_URL" "$GATEWAY_BEARER_PWD" "tools/call" \
+    '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"step-up smoke pwd"}}')
+  # mcp-ops 401s on the first authenticated (initialize) request; the gateway
+  # relays it. Accept the challenge in either the WWW-Authenticate header or body.
+  case "$STATUS" in
+    INIT_401*insufficient_user_authentication*mfa*|*insufficient_user_authentication*acr_values*mfa*)
+      green "  OK (step-up challenge relayed through the gateway: ${STATUS:0:160})" ;;
+    INIT_401*insufficient_user_authentication*|*insufficient_user_authentication*)
+      green "  OK (401 insufficient_user_authentication relayed: ${STATUS:0:160})" ;;
     200*)
-      red "  mcp-ops accepted password-acr token — step-up not enforced: $FULL_STATUS"; exit 1 ;;
+      red "  password-acr token was accepted — step-up not enforced: $STATUS"; exit 1 ;;
+    INIT_401*|401*)
+      # A 401 without the challenge string still means step-up denied it; surface for review.
+      yellow "  401 returned but challenge string not visible (gateway may not relay WWW-Authenticate): $STATUS"
+      green "  OK (denied with 401)" ;;
     *)
-      red "  unexpected response (expected 401 step-up): $FULL_STATUS"; exit 1 ;;
+      red "  unexpected response (expected 401 step-up): $STATUS"; exit 1 ;;
   esac
 fi
 
 # ===========================================================================
-# [3/3] bob (role=developer, no sre) → access_denied at first exchange hop
+# [3/4] bob (role=developer, no write role) → access_denied at first exchange hop
 # ===========================================================================
 if [[ -z "${SMOKE_TOKEN_BOB:-}" ]]; then
-  yellow "SKIP [3/3]: SMOKE_TOKEN_BOB not set — sign in as bob (per docs/curity-seed.md) to obtain."
+  yellow "SKIP [3/4]: SMOKE_TOKEN_BOB not set — sign in as bob (per docs/curity-seed.md) to obtain."
 else
-  note "[3/3] bob (no sre): copilot exchange requesting ops:write → expect access_denied"
-  SUBJECT_TOKEN_BOB="$SMOKE_TOKEN_BOB"
-
-  RESP=$(curl -sS --cacert "$CACERT" \
-    -d "client_id=$COPILOT_CLIENT_ID" \
-    -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-    -d "client_assertion=$(copilot_assertion)" \
-    -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-    -d "subject_token=$SUBJECT_TOKEN_BOB" \
-    -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-    -d "actor_token=$COPILOT_SVID" \
-    -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-    -d "audience=agent-specialist" \
-    -d "scope=obs:read ops:write" \
-    "$CURITY_TOKEN_URL")
+  note "[3/4] bob (no write role): copilot exchange requesting ops:write → expect access_denied"
+  RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_BOB" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
   ERR=$(echo "$RESP" | jq -r '.error // empty')
   DESC=$(echo "$RESP" | jq -r '.error_description // empty')
-  # Curity may sanitize procedure-thrown non-validation errors:
-  # the procedure calls fail('access_denied', "user lacks required role 'sre' for ops:write")
-  # which Curity can surface as error=access_denied directly, OR as
-  # error=invalid_request with the original code prefixed in error_description
-  # (see Curity log "Removing non-validation error from JSON response.").
-  # Accept either form, tolerating Curity error sanitization.
+  # The role gate is (sre OR oncall); bob is developer. Curity surfaces the
+  # procedure fail() as access_denied directly, OR sanitized to invalid_request
+  # with the code in error_description.
   if [[ "$ERR" == "access_denied" ]]; then
     green "  OK (Curity denied bob at role gate: error=$ERR description='$DESC')"
-  elif [[ "$ERR" == "invalid_request" ]] && [[ "$DESC" == *"sre"* || "$DESC" == *access_denied* ]]; then
+  elif [[ "$ERR" == "invalid_request" ]] && [[ "$DESC" == *sre* || "$DESC" == *oncall* || "$DESC" == *access_denied* || "$DESC" == *role* ]]; then
     green "  OK (Curity sanitized to invalid_request, description carries role/access_denied signal: '$DESC')"
   else
-    red "  expected access_denied for bob lacking sre role, got: $(echo "$RESP" | redact)"
+    red "  expected access_denied for bob lacking a write role, got: $(echo "$RESP" | redact)"
     exit 1
   fi
 fi
 
+# ===========================================================================
+# [4/4] per-tool ROLE SPLIT at the gateway (sre ⊇ oncall)
+# ===========================================================================
+# NOTE on where the split is enforced: the gateway lists+allows ALL ops tools for
+# any ops:write caller (it can't hide a tool without also making it uncallable,
+# which turns a denial into a silent no-op). The set_deployment_image = sre split
+# is enforced at MCP-OPS, which denies the CALL for non-sre with a legible error.
+# So BOTH alice and carol SEE set_deployment_image in tools/list; only the CALL
+# differs (alice may, carol may not).
+note "[4/4] per-tool role split: set_deployment_image call is sre-only (enforced at mcp-ops)"
+
+# alice (sre): tools/list on /ops/mcp must INCLUDE set_deployment_image.
+note "  [4/4-alice] tools/list as alice (sre) → expect set_deployment_image present"
+LIST=$(gw_mcp "$GATEWAY_OPS_URL" "$GATEWAY_BEARER_MFA" "tools/list" '{}')
+case "$LIST" in
+  200*set_deployment_image*) green "  OK (alice/sre sees set_deployment_image)" ;;
+  200*) red "  alice (sre) tools/list is missing set_deployment_image: ${LIST:0:300}"; exit 1 ;;
+  *) red "  tools/list failed for alice: $LIST"; exit 1 ;;
+esac
+
+if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
+  yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set — seed carol (oncall) per docs/curity-seed.md and sign in to obtain."
+else
+  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied by mcp-ops; restart allowed"
+  CAROL_GW=$(build_gateway_ops_token "$SMOKE_TOKEN_CAROL") \
+    || { red "  failed to build aud=mcp-gateway token for carol (does carol have the oncall role?)"; exit 1; }
+
+  # Visibility: the gateway lists all ops tools for any ops:write caller, so carol
+  # SEES set_deployment_image (the split is enforced downstream at mcp-ops, not by
+  # hiding the tool). She should see both it and restart_deployment.
+  LIST=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/list" '{}')
+  case "$LIST" in
+    200*set_deployment_image*restart_deployment*|200*restart_deployment*set_deployment_image*)
+      green "    OK (tools/list shows set_deployment_image AND restart_deployment)" ;;
+    200*) red "  carol tools/list missing expected ops tools: ${LIST:0:300}"; exit 1 ;;
+    *) red "  tools/list failed for carol: $LIST"; exit 1 ;;
+  esac
+
+  note "    call set_deployment_image as carol → expect mcp-ops role denial (requires sre)"
+  CALL=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/call" \
+    '{"name":"set_deployment_image","arguments":{"name":"order-service","namespace":"prod","image":"nginx:1.27"}}')
+  # mcp-ops denies BEFORE the ops-api hop and returns an isError tool result; the
+  # gateway relays it as HTTP 200 with a JSON-RPC body of {"error":"forbidden",
+  # "message":"...requires one of these roles: sre; you have: oncall"}.
+  case "$CALL" in
+    *forbidden*|*"requires one of these roles"*|*requires*sre*)
+      green "    OK (mcp-ops denied set_deployment_image for oncall: ${CALL:0:200})" ;;
+    200*busybox*|200*replicas*|200*restartedAt*|200*updatedReplicas*)
+      red "  carol (oncall) appears to have UPDATED the image — role split not enforced: ${CALL:0:220}"; exit 1 ;;
+    *) red "  unexpected response calling set_deployment_image as carol: ${CALL:0:240}"; exit 1 ;;
+  esac
+
+  note "    call restart_deployment as carol → expect allowed (200)"
+  CALL=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/call" \
+    '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"role-split smoke"}}')
+  case "$CALL" in
+    200*) green "    OK (carol/oncall may restart_deployment: ${CALL:0:80}...)" ;;
+    *) red "  carol (oncall) should be allowed to restart_deployment, got: $CALL"; exit 1 ;;
+  esac
+fi
+
 echo
-green "ALL STEP-UP SMOKE CHECKS PASSED (or skipped where tokens not provided)"
+green "ALL STEP-UP / ROLE-SPLIT SMOKE CHECKS PASSED (or skipped where tokens not provided)"

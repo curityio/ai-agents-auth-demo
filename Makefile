@@ -40,7 +40,7 @@ CERT_DIR ?= certs
 
 # App images, keyed by their apps/<name>/Dockerfile. Used by `make images`
 # (build + kind load) and `make clean` (removal).
-IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web
+IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web exchange-shim
 
 # ============================================================================
 # Help
@@ -290,15 +290,21 @@ apply: curity-procedures curity-truststore ## Apply all manifests (assumes image
 	kubectl apply -f k8s/workloads/agent-specialist.yaml
 	kubectl apply -f k8s/workloads/mcp-observability.yaml
 	kubectl apply -f k8s/workloads/mcp-ops.yaml
+	# agentgateway: generate its config ConfigMap from the single source of truth
+	# (k8s/workloads/agentgateway-config.yaml) BEFORE the Deployment, then apply the
+	# workload (SA + spiffe-helper CM + Deployment + Service). The ClusterSPIFFEID is
+	# applied by the k8s/spire/identities/ glob above.
+	kubectl -n $(NS_MCP) create configmap agentgateway-config \
+	  --from-file=config.yaml=k8s/workloads/agentgateway-config.yaml \
+	  --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -f k8s/workloads/agentgateway.yaml
 	kubectl apply -f k8s/workloads/obs-api.yaml
 	kubectl apply -f k8s/workloads/ops-api.yaml
 	# Edge gateway routes (Gateway + VirtualServices + Curity DestinationRule).
 	kubectl apply -f k8s/istio/gateway-edge.yaml
-	# MCP L7 authz: waypoint + RequestAuthentication + AuthorizationPolicies
-	# (requires Gateway API CRDs — `make gateway-api-crds`, run by `make platform`).
-	# istiod fetches the Curity JWKS at runtime via the in-cluster jwksUri, so no
-	# snapshot step; it retries until Curity's HTTP listener is serving.
-	kubectl apply -f k8s/istio/mcp-l7-authz.yaml
+	# MCP L7 authz now runs at the agentgateway (k8s/workloads/agentgateway*.yaml),
+	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
+	# was removed in favour of it.
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
 	# mTLS identity. Plain apply — no JWKS snapshot needed (principal pinning is L4,
 	# no RequestAuthentication).
@@ -330,7 +336,7 @@ routing-check: ## Verify every app pod is wired to reach Curity (read-only; no r
 # back to prompting if .demo.env is absent (standalone re-seed).
 # ============================================================================
 .PHONY: seed-secrets
-seed-secrets: seed-license seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-observability-secret ## Seed the license + every workload secret + agent keys
+seed-secrets: seed-license seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-observability-secret seed-gateway-secret ## Seed the license + every workload secret + agent keys
 	@echo "==> License + all workload secrets seeded."
 
 .PHONY: seed-license
@@ -421,6 +427,16 @@ seed-mcp-observability-secret: ## Seed the mcp-observability client secret (fixe
 	    --from-literal=CURITY_CLIENT_SECRET=Password1 \
 	    --dry-run=client -o yaml | kubectl apply -f -; \
 	  $(call restart_if_exists,$(NS_MCP),mcp-observability)
+
+# The agentgateway is a confidential client_secret_basic client (fixed demo secret
+# "Password1"); its SHA-256 crypt is committed in k8s/curity/configmap.yaml.
+.PHONY: seed-gateway-secret
+seed-gateway-secret: ## Seed the agentgateway client secret (fixed demo value "Password1")
+	@kubectl create namespace $(NS_MCP) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
+	  kubectl -n $(NS_MCP) create secret generic agentgateway-curity \
+	    --from-literal=CURITY_CLIENT_SECRET=Password1 \
+	    --dry-run=client -o yaml | kubectl apply -f -; \
+	  $(call restart_if_exists,$(NS_MCP),agentgateway)
 
 # ============================================================================
 # Validation + health checks

@@ -46,16 +46,24 @@ the bits you seed by hand (license + users).
 - TOTP authenticator enrolled for each user (drives the RFC 9470 step-up for `ops:write`)
 
 ### Accounts
-Create accounts alice and bob via HTML form authenticator during login process.
+Create accounts alice, carol, and bob via HTML form authenticator during login process.
 | Username | Password | Roles | MFA | Notes |
 | --- | --- | --- | --- | --- |
-| `alice` | (your choice) | `sre`, `oncall` | TOTP enrolled | Happy-path user. Can MFA up for `ops:write`. |
-| `bob` | (your choice) | `developer` | TOTP enrolled | Counter-example. Even after MFA, the role gate denies `ops:write`. |
+| `alice` | (your choice) | `sre`, `oncall` | TOTP enrolled | Happy-path SRE. Can MFA up for `ops:write`; may use **all** ops tools incl. `set_deployment_image`. |
+| `carol` | (your choice) | `oncall` | forced login MFA | On-call. Holds a write role, so gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is denied downstream at **mcp-ops** (`sre`-only). She *sees* the tool in `tools/list` — the gateway lists all ops tools — the **call** is what's refused. |
+| `bob` | (your choice) | `developer` | TOTP enrolled | Counter-example. Even after MFA, the role gate denies `ops:write` entirely (no write role). |
+
+> Roles are assigned by `k8s/curity/procedures/add-roles.js` keyed on username, so the
+> account **usernames must be exactly** `alice`, `carol`, `bob`. The write-tier gate
+> (`token-exchange.js`) admits `ops:write` for `sre` **or** `oncall`; the finer
+> `set_deployment_image` = `sre`-only split is enforced **downstream at `mcp-ops`**
+> (`Config.setImageRequiredRoles`), not at the agentgateway — the gateway lists and
+> allows all ops tools for any `ops:write` caller.
 
 ### Claims wiring (minimum)
 - Standard OIDC profile claims (`sub`, `email`, `name`).
 - Custom claim `roles` mapping the account's roles into the access token (the
-  token-exchange role gate keys on `sre` for `ops:write`).
+  token-exchange role gate admits `ops:write` for `sre` **or** `oncall`).
 - The `acr` claim is stamped procedurally at login (`authorization-code.js`,
   `acr-passthrough`) and re-emitted on every exchange — see [`design.md`](design.md) §7.
 - Token `aud` includes `web-app` for the user-issued token; each exchanged token
@@ -66,8 +74,8 @@ These are already encoded in `k8s/curity/configmap.yaml` and the procedures
 under `k8s/curity/procedures/`; this list is the conceptual checklist behind
 that config. The token-exchange procedure validates the `subject_token`,
 verifies the `actor_token` against SPIRE's JWKS (fetched at runtime), narrows scope +
-audience, nests the `act` chain, and enforces the `sre` role gate + `acr=mfa`
-step-up for `ops:write`.
+audience, nests the `act` chain, and enforces the write-role gate (`sre` **or**
+`oncall`) + `acr=mfa` step-up for `ops:write`.
 
 ---
 
@@ -75,10 +83,10 @@ step-up for `ops:write`.
 
 `make demo` already does all of this for you — it runs `seed-secrets` (license +
 every workload secret + the agent keypairs), then `images` and `apply`. The only
-step it can't automate is creating the **alice/bob accounts** in Curity's
+step it can't automate is creating the **alice/carol/bob accounts** in Curity's
 in-memory store; do that by hand during the login flow via the HTML Form
 authenticator's "create account" feature (see §Accounts above) — open
-`https://app.localtest.me`, register alice & bob, then log in as Alice.
+`https://app.localtest.me`, register alice, carol & bob, then log in as Alice.
 
 `make seed-secrets` does **not** prompt for client secrets: the web and MCP
 clients use the fixed demo value `Password1` (whose hash is committed in the

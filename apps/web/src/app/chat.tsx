@@ -44,7 +44,7 @@ interface AgentStep {
 
 interface AgentResponse {
   answer: string;
-  identity: { sub: string; scopes: string[] };
+  identity: { sub: string; scopes: string[]; roles?: string[]; acr?: string };
   // Observability path: the LLM tool-calling steps.
   steps?: AgentStep[];
   // Privileged path: a deterministic agent-to-agent route (no LLM steps).
@@ -428,6 +428,31 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                     <span className="text-sm text-muted-foreground">none</span>
                   )}
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Roles</span>
+                  {response.identity.roles && response.identity.roles.length > 0 ? (
+                    response.identity.roles.map((role) => (
+                      <Badge key={role} variant="secondary" className="font-mono">
+                        {role}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">none</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">ACR</span>
+                  {response.identity.acr ? (
+                    <Badge
+                      variant={response.identity.acr === 'mfa' ? 'success' : 'secondary'}
+                      className="font-mono"
+                    >
+                      {response.identity.acr}
+                    </Badge>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">none</span>
+                  )}
+                </div>
                 <JsonBlock data={response.identity} />
               </TabsContent>
 
@@ -490,7 +515,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="font-mono text-sm font-semibold">{s.workload}</span>
                       {!s.error && typeof s.ttl_seconds === 'number' && (
-                        <Badge variant="muted" className="font-mono">
+                        <Badge variant="muted" className="gap-1 font-mono">
+                          <Clock className="h-3 w-3" />
                           ttl {s.ttl_seconds}s
                         </Badge>
                       )}

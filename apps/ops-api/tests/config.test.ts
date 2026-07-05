@@ -25,6 +25,7 @@ describe('loadConfig (ops-api)', () => {
     expect(cfg.targetNamespace).toBe('prod');
     expect(cfg.expectedActorChain.map((re) => re.source)).toEqual([
       '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/mcp-ops$',
+      '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/agentgateway$',
       '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/agents\\/sa\\/agent-specialist$',
       '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/agents\\/sa\\/agent-copilot$',
     ]);
@@ -33,5 +34,13 @@ describe('loadConfig (ops-api)', () => {
   it('throws when a required env var is missing', () => {
     delete process.env.CURITY_ISSUER;
     expect(() => loadConfig()).toThrow(/CURITY_ISSUER/);
+  });
+
+  it('includes agentgateway as the second chain position', () => {
+    const cfg = loadConfig();
+    expect(cfg.expectedActorChain.length).toBe(4);
+    expect(cfg.expectedActorChain[1]!.test('spiffe://demo.curity.local/ns/mcp/sa/agentgateway')).toBe(
+      true,
+    );
   });
 });

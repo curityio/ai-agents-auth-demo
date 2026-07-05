@@ -134,6 +134,29 @@ export interface SpecialistResponse {
 }
 
 /**
+ * Build the user-facing answer for a privileged (A2A) run from the specialist's
+ * response. The specialist is an LLM agent: on success it returns a natural-
+ * language `summary` describing what it actually did — including when it was
+ * DENIED a tool (e.g. an oncall user attempting set_deployment_image). We surface
+ * that summary verbatim rather than a hardcoded "Restart completed", which would
+ * (a) misreport the action type and (b) claim success even when the goal was
+ * denied or unmet (`ok` only means the A2A task finished, not that it succeeded).
+ */
+export function buildPrivilegedAnswer(resp: SpecialistResponse, deployment: string): string {
+  if (!resp.ok) {
+    return `Remediation on '${deployment}' failed: ${resp.text ?? 'unknown error'}`;
+  }
+  const summary =
+    resp.result && typeof (resp.result as { summary?: unknown }).summary === 'string'
+      ? ((resp.result as { summary: string }).summary).trim()
+      : '';
+  if (summary) return summary;
+  // No prose from the LLM (e.g. it stopped on tool-calls at the step limit) —
+  // stay neutral rather than falsely asserting a specific action completed.
+  return `Remediation on '${deployment}' finished, but the specialist returned no summary.`;
+}
+
+/**
  * Send a single message via A2A JSON-RPC to agent-specialist. We don't stream
  * because the specialist publishes a final status-update; the message-send
  * response carries it directly.

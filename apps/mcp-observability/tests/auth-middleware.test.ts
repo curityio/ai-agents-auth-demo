@@ -26,7 +26,7 @@ const cfg: Config = {
   curityJwksUri: 'https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks',
   expectedAudience: 'mcp-observability',
   requiredScopes: ['obs:read'],
-  actorPattern: /^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/[a-z0-9-]+$/,
+  actorPattern: /^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/,
   curityTokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
   clientId: 'mcp-observability',
   clientSecret: 'test',
@@ -53,9 +53,9 @@ const baseReq = { header: (n: string) => (n.toLowerCase() === 'authorization' ? 
 beforeEach(() => verifyJwt.mockReset());
 
 describe('mcp-observability authMiddleware', () => {
-  it('passes when act.sub matches actorPattern and scope is satisfied', async () => {
+  it('passes when act.sub is the agentgateway and scope is satisfied', async () => {
     verifyJwt.mockResolvedValue({
-      payload: { sub: 'alice', act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' } },
+      payload: { sub: 'alice', act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' } },
       protectedHeader: {},
       scopes: new Set(['obs:read']),
     });
@@ -106,7 +106,7 @@ describe('mcp-observability authMiddleware', () => {
 
   it('rejects when required scope is missing', async () => {
     verifyJwt.mockResolvedValue({
-      payload: { sub: 'alice', act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' } },
+      payload: { sub: 'alice', act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' } },
       protectedHeader: {},
       scopes: new Set(['ops:read']),
     });

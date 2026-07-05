@@ -9,8 +9,47 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { Message, Task } from '@a2a-js/sdk';
-import { callSpecialist } from '../src/specialist-client.js';
+import { callSpecialist, buildPrivilegedAnswer } from '../src/specialist-client.js';
 import type { Config } from '../src/config.js';
+
+describe('buildPrivilegedAnswer', () => {
+  it('surfaces the specialist LLM summary on success (not a hardcoded restart message)', () => {
+    const answer = buildPrivilegedAnswer(
+      {
+        ok: true,
+        status: 'completed',
+        result: { ok: true, summary: 'Updated order-service to busybox:1.36 and verified the rollout.' },
+      },
+      'order-service',
+    );
+    expect(answer).toBe('Updated order-service to busybox:1.36 and verified the rollout.');
+    expect(answer).not.toMatch(/Restart of/i);
+  });
+
+  it('relays a denial the specialist reported in its summary', () => {
+    const answer = buildPrivilegedAnswer(
+      {
+        ok: true,
+        status: 'completed',
+        result: { ok: true, summary: 'I could not update the image: the gateway denied set_deployment_image (requires the sre role).' },
+      },
+      'order-service',
+    );
+    expect(answer).toMatch(/sre role/);
+  });
+
+  it('falls back to a neutral message when the summary is empty (no false "restart completed")', () => {
+    const answer = buildPrivilegedAnswer({ ok: true, status: 'completed', result: { ok: true, summary: '' } }, 'order-service');
+    expect(answer).toMatch(/order-service/);
+    expect(answer).not.toMatch(/Restart of/i);
+  });
+
+  it('reports failure with the specialist text', () => {
+    const answer = buildPrivilegedAnswer({ ok: false, status: 'failed', text: 'boom' }, 'order-service');
+    expect(answer).toMatch(/failed/i);
+    expect(answer).toMatch(/boom/);
+  });
+});
 
 // Minimal config — only the fields callSpecialist reads
 const cfg = {
