@@ -1,7 +1,35 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ToolExecutionError } from 'ai';
-import { runRemediation, type RemediationDeps } from '../src/executor.js';
+import { runRemediation, fallbackSummary, type RemediationDeps } from '../src/executor.js';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
+
+describe('fallbackSummary', () => {
+  it('surfaces a tool denial (e.g. set_deployment_image requires sre) over silence', () => {
+    const summary = fallbackSummary([
+      { toolCalls: [{ name: 'get_deployment', args: {} }], toolResults: [{ name: 'get_deployment', result: { ok: true } }] },
+      {
+        toolCalls: [{ name: 'set_deployment_image', args: {} }],
+        toolResults: [
+          { name: 'set_deployment_image', result: { error: 'forbidden', message: 'updating a deployment image requires one of these roles: sre; you have: oncall' } },
+        ],
+      },
+    ]);
+    expect(summary).toMatch(/set_deployment_image/);
+    expect(summary).toMatch(/sre/);
+  });
+
+  it('reports inspection-only when no tool errored', () => {
+    const summary = fallbackSummary([
+      { toolCalls: [{ name: 'get_deployment', args: {} }], toolResults: [{ name: 'get_deployment', result: { ok: true } }] },
+    ]);
+    expect(summary).toMatch(/get_deployment/);
+    expect(summary).toMatch(/did not complete/i);
+  });
+
+  it('never returns empty for an empty step list', () => {
+    expect(fallbackSummary([]).length).toBeGreaterThan(0);
+  });
+});
 import { StepUpRequiredError } from '@ai-agents-demo/a2a-helpers';
 
 function makeStepUp(): StepUpRequiredError {

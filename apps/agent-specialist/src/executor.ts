@@ -35,6 +35,30 @@ export interface RemediationStep {
   finishReason?: string;
 }
 
+/**
+ * Build a summary when the LLM ends its tool loop with no prose (e.g. it hit the
+ * step limit, or stopped on a tool error). Prefer surfacing a tool error the model
+ * saw — a gateway/mcp-ops denial like "requires the sre role" — so a blocked action
+ * is legible instead of an empty "no summary" answer.
+ */
+export function fallbackSummary(steps: RemediationStep[]): string {
+  const results = steps.flatMap((s) => s.toolResults ?? []);
+  for (const r of results) {
+    const text = typeof r.result === 'string' ? r.result : JSON.stringify(r.result);
+    if (/error|forbidden|denied|not allowed|requires|unauthor/i.test(text)) {
+      return `The requested change could not be completed. \`${r.name}\` reported: ${text.slice(0, 400)}`;
+    }
+  }
+  const tools = [...new Set(steps.flatMap((s) => (s.toolCalls ?? []).map((c) => c.name)))];
+  if (tools.length) {
+    return (
+      `I inspected the deployment (called: ${tools.join(', ')}) but did not complete the ` +
+      `requested change — no authorized action was available to fulfil the goal.`
+    );
+  }
+  return 'No action was taken and no summary was produced.';
+}
+
 export interface RemediationDeps {
   obtainOpsToken: (o: { cfg: Config; subjectToken: string; subjectSub: string }) => Promise<string>;
   obtainObsToken: (o: { cfg: Config; subjectToken: string }) => Promise<string>;
@@ -260,7 +284,11 @@ export function buildExecutor(cfg: Config): AgentExecutor {
         finishReason: s.finishReason,
       };
     });
-    return { text: result.text, steps };
+    // The model sometimes ends on a tool step with no final text (step limit, or
+    // it stopped after a denied tool call). Never return empty — synthesize an
+    // honest summary from the steps so the UI shows what happened, not silence.
+    const text = result.text?.trim() ? result.text : fallbackSummary(steps);
+    return { text, steps };
   };
   const deps: RemediationDeps = {
     obtainOpsToken,
