@@ -302,11 +302,9 @@ apply: curity-procedures curity-truststore ## Apply all manifests (assumes image
 	kubectl apply -f k8s/workloads/ops-api.yaml
 	# Edge gateway routes (Gateway + VirtualServices + Curity DestinationRule).
 	kubectl apply -f k8s/istio/gateway-edge.yaml
-	# MCP L7 authz: waypoint + RequestAuthentication + AuthorizationPolicies
-	# (requires Gateway API CRDs — `make gateway-api-crds`, run by `make platform`).
-	# istiod fetches the Curity JWKS at runtime via the in-cluster jwksUri, so no
-	# snapshot step; it retries until Curity's HTTP listener is serving.
-	kubectl apply -f k8s/istio/mcp-l7-authz.yaml
+	# MCP L7 authz now runs at the agentgateway (k8s/workloads/agentgateway*.yaml),
+	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
+	# was removed in favour of it.
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
 	# mTLS identity. Plain apply — no JWKS snapshot needed (principal pinning is L4,
 	# no RequestAuthentication).

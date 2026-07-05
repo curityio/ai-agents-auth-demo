@@ -79,16 +79,19 @@ spec:
             # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
             - name: AGENT_CLIENT_ID
               value: https://specialist.localtest.me/.well-known/oauth-client
+            # Both MCP paths now route through the agentgateway (mcp ns), which
+            # validates aud=mcp-gateway and re-exchanges per tool-target to the
+            # narrowed backend audience (mcp-ops / mcp-observability) via the shim.
             - name: MCP_OPS_URL
-              value: http://mcp-ops.mcp.svc.cluster.local:8080/mcp
+              value: http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp
             - name: MCP_OPS_AUDIENCE
-              value: mcp-ops
+              value: mcp-gateway
             - name: MCP_OPS_SCOPE
               value: ops:write
             - name: MCP_OBSERVABILITY_URL
-              value: http://mcp-observability.mcp.svc.cluster.local:8080/mcp
+              value: http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp
             - name: MCP_OBSERVABILITY_AUDIENCE
-              value: mcp-observability
+              value: mcp-gateway
             - name: MCP_OBSERVABILITY_SCOPE
               value: obs:read
             - name: REQUIRED_ACR

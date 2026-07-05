@@ -128,10 +128,7 @@ kind: Service
 metadata:
   name: mcp-observability
   namespace: mcp
-  labels:
-    # Route this Service's inbound traffic through the L7 waypoint (k8s/istio/mcp-l7-authz.yaml)
-    # so the Curity JWT + caller-identity authz runs before requests reach the pod.
-    istio.io/use-waypoint: mcp-waypoint
+  # Inbound MCP authz now runs at the agentgateway (mcp ns), not an Istio waypoint.
 spec:
   selector:
     app: mcp-observability
