@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { authMiddleware, type AuthedRequest } from './auth-middleware.js';
 import { buildLlm } from './llm.js';
 import { obtainMcpToken, invalidateMcpTokenCache, openMcpToolset } from './mcp-client.js';
+import { obtainLlmToken } from './llm-token.js';
 import {
   obtainSpecialistToken,
   invalidateSpecialistTokenCache,
@@ -27,7 +28,6 @@ Rules:
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  const llm = buildLlm(cfg);
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.locals.cfg = cfg;
@@ -213,6 +213,21 @@ async function main(): Promise<void> {
       res.status(502).json({ error: 'mcp_unavailable' });
       return;
     }
+
+    let llmToken: string;
+    try {
+      llmToken = await obtainLlmToken({
+        cfg,
+        subjectToken: authed.bearerToken!,
+        subjectSub: userSub,
+        subjectAcr: userAcr,
+      });
+    } catch (e) {
+      console.error('[agent-copilot] llm token exchange failed', e);
+      res.status(502).json({ error: 'llm_unavailable' });
+      return;
+    }
+    const llm = buildLlm(cfg, { accessToken: llmToken });
 
     try {
       const result = await generateText({

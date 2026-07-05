@@ -25,14 +25,12 @@ data:
       }
     ]
 ---
-# NOTE: `agent-copilot-llm` is NOT defined here. Create it out-of-band so
-# `make apply` cannot clobber real values. The Secret holds both the API key
-# AND the endpoint URL (the endpoint identifies the Foundry resource and is
-# treated as private):
-#   kubectl -n agents create secret generic agent-copilot-llm \
-#     --from-literal=AZURE_OPENAI_API_KEY=<key-from-azure-foundry> \
-#     --from-literal=AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-# (or use `make seed-llm-secret`)
+# NOTE: agent-copilot no longer holds an LLM API key or endpoint. LLM calls
+# are routed through the agentgateway `/llm` route (identity-bound egress):
+# the agent exchanges the caller's user token for an aud=llm-gateway,
+# scope=llm:invoke token (RFC 8693, actor = this agent's SPIFFE JWT-SVID) and
+# presents it as the bearer to the gateway, which swaps in the real upstream
+# API key before forwarding. See llm-token.ts / packages/agent-runtime/llm.ts.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -112,11 +110,20 @@ spec:
             - name: SPECIALIST_SCOPE
               value: obs:read ops:write
             - name: LLM_PROVIDER
-              value: azure
+              value: gateway
             - name: LLM_MODEL
               value: gpt-4.1
-            - name: AZURE_OPENAI_API_VERSION
-              value: 2024-04-01-preview
+            # Identity-bound LLM egress: routed through the agentgateway `/llm`
+            # route (mcp ns). The agent exchanges the caller's user token for an
+            # aud=llm-gateway, scope=llm:invoke token (RFC 8693) and presents it
+            # as the bearer; the gateway swaps in the real upstream API key
+            # before forwarding. See llm-token.ts.
+            - name: LLM_GATEWAY_URL
+              value: http://agentgateway.mcp.svc.cluster.local:8080/llm
+            - name: LLM_GATEWAY_AUDIENCE
+              value: llm-gateway
+            - name: LLM_GATEWAY_SCOPE
+              value: llm:invoke
             # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
             # SVID file at SPIFFE_SVID_PATH by otel-bootstrap at SDK init.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -127,11 +134,7 @@ spec:
               value: service.namespace=agents
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
-            # AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT come from the
-            # `agent-copilot-llm` Secret via envFrom below.
           envFrom:
-            - secretRef:
-                name: agent-copilot-llm
             - secretRef:
                 name: agent-copilot-curity
           readinessProbe:

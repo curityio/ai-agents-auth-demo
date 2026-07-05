@@ -16,12 +16,14 @@ export interface Config {
   specialistA2aUrl: string;
   specialistAudience: string;
   specialistScope: string;
-  llmProvider: 'anthropic' | 'azure' | 'ollama';
+  llmProvider: 'gateway' | 'anthropic' | 'ollama';
   llmModel: string;
-  /** Only set when llmProvider === 'azure'. Used as baseURL prefix. */
-  azureEndpoint?: string;
-  /** Only set when llmProvider === 'azure'. */
-  azureApiVersion?: string;
+  /** Base URL of the agentgateway LLM route. Only used when llmProvider === 'gateway'. */
+  llmGatewayUrl: string;
+  /** RFC 8693 exchange audience for the gateway LLM route. */
+  llmGatewayAudience: string;
+  /** RFC 8693 exchange scope for the gateway LLM route. */
+  llmGatewayScope: string;
 }
 
 function required(name: string): string {
@@ -31,9 +33,9 @@ function required(name: string): string {
 }
 
 export function loadConfig(): Config {
-  const provider = (process.env.LLM_PROVIDER ?? 'azure').toLowerCase();
-  if (provider !== 'anthropic' && provider !== 'azure' && provider !== 'ollama') {
-    throw new Error(`LLM_PROVIDER must be 'anthropic' | 'azure' | 'ollama' (got '${provider}')`);
+  const provider = (process.env.LLM_PROVIDER ?? 'gateway').toLowerCase();
+  if (provider !== 'gateway' && provider !== 'anthropic' && provider !== 'ollama') {
+    throw new Error(`LLM_PROVIDER must be 'gateway' | 'anthropic' | 'ollama' (got '${provider}')`);
   }
 
   const cfg: Config = {
@@ -58,17 +60,12 @@ export function loadConfig(): Config {
     llmProvider: provider,
     llmModel:
       process.env.LLM_MODEL ??
-      (provider === 'anthropic'
-        ? 'claude-sonnet-4-6'
-        : provider === 'azure'
-          ? 'gpt-4.1'
-          : 'qwen2.5-coder:7b'),
+      (provider === 'anthropic' ? 'claude-sonnet-4-6' : provider === 'gateway' ? 'gpt-4.1' : 'qwen2.5-coder:7b'),
+    llmGatewayUrl:
+      process.env.LLM_GATEWAY_URL ?? 'http://agentgateway.mcp.svc.cluster.local:8080/llm',
+    llmGatewayAudience: process.env.LLM_GATEWAY_AUDIENCE ?? 'llm-gateway',
+    llmGatewayScope: process.env.LLM_GATEWAY_SCOPE ?? 'llm:invoke',
   };
-
-  if (provider === 'azure') {
-    cfg.azureEndpoint = required('AZURE_OPENAI_ENDPOINT');
-    cfg.azureApiVersion = process.env.AZURE_OPENAI_API_VERSION ?? '2024-04-01-preview';
-  }
 
   return cfg;
 }
