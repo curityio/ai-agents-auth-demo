@@ -198,3 +198,81 @@ binds:
               host: mcp-ops.mcp.svc.cluster.local
               port: 8080
               path: /mcp
+
+    # ------------------------------------------------------------------ #
+    # DEMO-ONLY chain-visualization passthroughs (NOT part of the enforcement
+    # path). The web UI walks the OBO chain by recursively calling each service's
+    # /last-token. Since the agents now reach the MCP servers only THROUGH this
+    # gateway, these plain-HTTP routes proxy
+    #   {gateway}/observability/last-token → mcp-observability:8080/last-token
+    #   {gateway}/ops/last-token           → mcp-ops:8080/last-token
+    # through the SAME extAuthz→shim exchange as the /mcp routes, so the caller's
+    # aud=mcp-gateway token is narrowed to aud=mcp-observability / aud=mcp-ops —
+    # the audience each /last-token endpoint verifies. urlRewrite strips the
+    # /observability|/ops prefix so the origin sees plain /last-token.
+    # ------------------------------------------------------------------ #
+    - name: observability-last-token
+      matches:
+      - path:
+          pathPrefix: /observability/last-token
+      policies:
+        jwtAuth:
+          providers:
+          - issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            audiences:
+            - mcp-gateway
+            jwks:
+              url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
+        extAuthz:
+          host: localhost:8090
+          failureMode: deny
+          protocol:
+            http:
+              path: '"/exchange"'
+              addRequestHeaders:
+                x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
+                x-target-audience: '"mcp-observability"'
+              metadata:
+                token: json(response.body).access_token
+        transformations:
+          request:
+            set:
+              authorization: '"Bearer " + extauthz.token'
+        urlRewrite:
+          path:
+            full: /last-token
+      backends:
+      - host: mcp-observability.mcp.svc.cluster.local:8080
+
+    - name: ops-last-token
+      matches:
+      - path:
+          pathPrefix: /ops/last-token
+      policies:
+        jwtAuth:
+          providers:
+          - issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            audiences:
+            - mcp-gateway
+            jwks:
+              url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
+        extAuthz:
+          host: localhost:8090
+          failureMode: deny
+          protocol:
+            http:
+              path: '"/exchange"'
+              addRequestHeaders:
+                x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
+                x-target-audience: '"mcp-ops"'
+              metadata:
+                token: json(response.body).access_token
+        transformations:
+          request:
+            set:
+              authorization: '"Bearer " + extauthz.token'
+        urlRewrite:
+          path:
+            full: /last-token
+      backends:
+      - host: mcp-ops.mcp.svc.cluster.local:8080

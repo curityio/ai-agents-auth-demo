@@ -88,7 +88,9 @@ export function buildLastTokenHandlers(cfg: Config): {
         // obs-api fetched with the obs:read-bound token.
         const obs = peekLastObsExchange();
         if (obs) {
-          chain.push(decode('agent-specialist → mcp-observability', obs.accessToken, includeRaw));
+          // aud=mcp-gateway now (reached via the gateway); the gateway → mcp-obs +
+          // mcp-obs → obs-api legs come from the downstream passthrough walk.
+          chain.push(decode('agent-specialist → agentgateway (obs:read)', obs.accessToken, includeRaw));
           const obsUrl = cfg.mcpObservabilityUrl.replace(/\/mcp\/?$/, '') + '/last-token';
           chain.push(
             ...(await fetchDownstreamChain('mcp-observability', obsUrl, obs.accessToken, includeRaw)),
@@ -99,7 +101,9 @@ export function buildLastTokenHandlers(cfg: Config): {
         // mcp-ops → ops-api hop fetched with the ops:write-bound token.
         const ops = peekLastExchange();
         if (ops) {
-          chain.push(decode('agent-specialist → mcp-ops', ops.accessToken, includeRaw));
+          // aud=mcp-gateway now (reached via the gateway); the gateway → mcp-ops +
+          // mcp-ops → ops-api legs come from the downstream passthrough walk.
+          chain.push(decode('agent-specialist → agentgateway (ops:write)', ops.accessToken, includeRaw));
           const opsUrl = cfg.mcpOpsUrl.replace(/\/mcp\/?$/, '') + '/last-token';
           chain.push(...(await fetchDownstreamChain('mcp-ops', opsUrl, ops.accessToken, includeRaw)));
         }

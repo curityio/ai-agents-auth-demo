@@ -54,18 +54,37 @@ export function buildLastTokenHandlers(cfg: Config): {
     authn: lastTokenAuth(cfg),
     handler(req: Request, res: Response) {
       const includeRaw = req.query.raw === '1';
+      const chain: Array<{
+        hop: string;
+        header: Record<string, unknown> | null;
+        payload: Record<string, unknown> | null;
+        token?: string;
+      }> = [];
+      // Inbound hop: the aud=mcp-observability token the agentgateway minted for
+      // us (via the exchange-shim). Reveals the gateway → mcp leg the caller can't
+      // see (that token is minted inside the gateway pod, not by the agent).
+      const authz = req.header('authorization') ?? '';
+      const inbound = authz.toLowerCase().startsWith('bearer ')
+        ? authz.slice('bearer '.length).trim()
+        : '';
+      if (inbound) {
+        chain.push({
+          hop: 'agentgateway → mcp-observability',
+          header: decodePart(inbound, 0),
+          payload: decodePart(inbound, 1),
+          ...(includeRaw ? { token: inbound } : {}),
+        });
+      }
       const last = peekLastExchange();
-      const chain = last
-        ? [
-            {
-              hop: 'mcp-observability → obs-api',
-              header: decodePart(last.accessToken, 0),
-              payload: decodePart(last.accessToken, 1),
-              // Raw JWT only when explicitly requested (debug inspect).
-              ...(includeRaw ? { token: last.accessToken } : {}),
-            },
-          ]
-        : [];
+      if (last) {
+        chain.push({
+          hop: 'mcp-observability → obs-api',
+          header: decodePart(last.accessToken, 0),
+          payload: decodePart(last.accessToken, 1),
+          // Raw JWT only when explicitly requested (debug inspect).
+          ...(includeRaw ? { token: last.accessToken } : {}),
+        });
+      }
       res.json({ chain });
     },
   };

@@ -127,7 +127,11 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
   );
 
   if (showObs && obsExch) {
-    chain.push(decode('agent-copilot → mcp-observability', obsExch.accessToken, includeRaw));
+    // This token is aud=mcp-gateway — the agent now reaches mcp-observability
+    // THROUGH the agentgateway, which re-exchanges (via the shim) to
+    // aud=mcp-observability. The gateway → mcp-observability + mcp-observability →
+    // obs-api legs come from the downstream /last-token walk below.
+    chain.push(decode('agent-copilot → agentgateway', obsExch.accessToken, includeRaw));
     if (cfg) {
       const url = cfg.mcpObservabilityUrl.replace(/\/mcp\/?$/, '') + '/last-token';
       chain.push(...(await fetchDownstreamChain(url, obsExch.accessToken, includeRaw)));
