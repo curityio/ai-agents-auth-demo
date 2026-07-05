@@ -44,7 +44,7 @@ interface AgentStep {
 
 interface AgentResponse {
   answer: string;
-  identity: { sub: string; scopes: string[] };
+  identity: { sub: string; scopes: string[]; roles?: string[]; acr?: string };
   // Observability path: the LLM tool-calling steps.
   steps?: AgentStep[];
   // Privileged path: a deterministic agent-to-agent route (no LLM steps).
@@ -424,6 +424,31 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                         {scope}
                       </Badge>
                     ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">none</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Roles</span>
+                  {response.identity.roles && response.identity.roles.length > 0 ? (
+                    response.identity.roles.map((role) => (
+                      <Badge key={role} variant="secondary" className="font-mono">
+                        {role}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">none</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">ACR</span>
+                  {response.identity.acr ? (
+                    <Badge
+                      variant={response.identity.acr === 'mfa' ? 'success' : 'secondary'}
+                      className="font-mono"
+                    >
+                      {response.identity.acr}
+                    </Badge>
                   ) : (
                     <span className="text-sm text-muted-foreground">none</span>
                   )}

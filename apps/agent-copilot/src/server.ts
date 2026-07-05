@@ -64,6 +64,12 @@ async function main(): Promise<void> {
     // cache must be keyed on it — otherwise a post-step-up (acr=mfa) request
     // reuses the stale pre-step-up token and the step-up loops.
     const userAcr = authed.caller?.payload.acr ?? '';
+    const rawRoles = (authed.caller?.payload as { roles?: unknown } | undefined)?.roles;
+    const userRoles = Array.isArray(rawRoles)
+      ? rawRoles.map(String)
+      : typeof rawRoles === 'string'
+        ? rawRoles.split(/\s+/).filter(Boolean)
+        : [];
     const message = (req.body as { message?: unknown }).message;
     if (typeof message !== 'string' || message.trim() === '') {
       res.status(400).json({ error: 'bad_request', error_description: 'message: string required' });
@@ -160,7 +166,7 @@ async function main(): Promise<void> {
           intent: { ...intent },
           ...(steps ? { steps } : {}),
           specialist: specialistResp,
-          identity: { sub: userSub, scopes: [...authed.caller!.scopes] },
+          identity: { sub: userSub, scopes: [...authed.caller!.scopes], roles: userRoles, acr: userAcr },
         });
         return;
       } catch (e) {
@@ -235,6 +241,8 @@ async function main(): Promise<void> {
         identity: {
           sub: userSub,
           scopes: [...authed.caller!.scopes],
+          roles: userRoles,
+          acr: userAcr,
         },
       });
     } catch (e) {
