@@ -36,6 +36,10 @@ TARGETS=(
   "agents agent-specialist"
   "mcp mcp-observability"
   "mcp mcp-ops"
+  # agentgateway: only the co-located exchange-shim (containers[0]) talks TLS to
+  # https://curity.localtest.me, so it needs the hostAlias + mkcert CA. The routing
+  # patch targets containers[0] — the shim is deliberately first in the pod spec.
+  "mcp agentgateway"
   "apis ops-api"
   "apis obs-api"
 )
