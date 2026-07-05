@@ -166,16 +166,23 @@ agent-specialist ─┤    (subject = user, actor = agent SPIFFE JWT-SVID)
   (open item #2), add a seed-time templating step for the gateway config
   (precedent: `scripts/embed-mkcert-ca.sh`, `embed-curity-procedures.sh`).
 
-## Open items (resolve during implementation, with evidence)
+## Open items (resolved by spike — see `.superpowers/sdd/task-1-report.md`)
 
-1. **Azure-provider path translation.** Confirm, against the real seeded Azure
-   endpoint, that a POST to `{gateway}/llm/chat/completions` (OpenAI format) is
-   correctly translated by the `ai`/azure provider to Azure's
-   `/openai/deployments/{model}/chat/completions?api-version=...` and returns a
-   streamed completion. This is the single largest remaining risk. Verify before
-   declaring done. (SSE passthrough itself is already proven.)
-2. **`resourceName` injection.** Determine whether `provider.azure.resourceName`
-   accepts `$ENV`. If not, template it at seed time.
+1. **Azure-provider path translation — PASS.** Spiked against the real seeded
+   Azure endpoint (agentgateway v1.3.1, pinned digest
+   `sha256:c3ce7b75da90fef70239befcc1c3adc05152d7b9dd21fcb8351178026a2c4381`,
+   no jwtAuth, isolating the Azure hop). A streamed POST to
+   `http://127.0.0.1:8080/llm/chat/completions` (OpenAI format, `stream:true`)
+   returned real SSE `data: {...delta...}` chunks from Azure ending
+   `data: [DONE]`. Gateway access log confirms the exact upstream the client
+   used: `endpoint=aifoundryplayg9725967827.openai.azure.com:443 ... http.status=200
+   protocol=llm gen_ai.provider.name=azure gen_ai.request.model=gpt-4.1`.
+2. **`resourceName` injection — ENV.** Re-ran with
+   `resourceName: $AZURE_RESOURCE_NAME` and `-e AZURE_RESOURCE_NAME=<resource>`;
+   the streamed completion still succeeded end-to-end (same
+   `endpoint=...openai.azure.com:443 http.status=200` log line), confirming
+   `provider.azure.resourceName` supports `$ENV` interpolation. No seed-time
+   templating step is needed.
 
 ## Testing
 
