@@ -29,8 +29,12 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.MCP_AUDIENCE ?? 'mcp-observability',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'obs:read').split(/\s+/).filter(Boolean),
+    // The immediate (outermost) actor calling mcp-observability is now the
+    // agentgateway (mcp ns) — all agent traffic is fronted by it. The deeper
+    // chain (copilot / specialist) is validated downstream by obs-api's full
+    // expectedActorChains. See k8s/workloads/agentgateway*.yaml.
     actorPattern: new RegExp(
-      process.env.ACTOR_PATTERN ?? '^spiffe://demo\\.curity\\.local/ns/agents/sa/[a-z0-9-]+$',
+      process.env.ACTOR_PATTERN ?? '^spiffe://demo\\.curity\\.local/ns/mcp/sa/agentgateway$',
     ),
     curityTokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
     clientId: process.env.MCP_CLIENT_ID ?? 'mcp-observability',
