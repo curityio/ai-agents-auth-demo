@@ -18,6 +18,7 @@ import {
   buildStepUpInterceptingFetch,
 } from './mcp-ops-client.js';
 import { obtainObsToken } from './obs-token.js';
+import { obtainLlmToken } from './llm-token.js';
 import { SPECIALIST_SYSTEM_PROMPT } from './system-prompt.js';
 import type { Config } from './config.js';
 
@@ -62,11 +63,18 @@ export function fallbackSummary(steps: RemediationStep[]): string {
 export interface RemediationDeps {
   obtainOpsToken: (o: { cfg: Config; subjectToken: string; subjectSub: string }) => Promise<string>;
   obtainObsToken: (o: { cfg: Config; subjectToken: string }) => Promise<string>;
+  obtainLlmToken: (o: {
+    cfg: Config;
+    subjectToken: string;
+    subjectSub: string;
+    subjectAcr: string;
+  }) => Promise<string>;
   openMcpToolset: typeof openMcpToolset;
   runLlm: (o: {
     system: string;
     goal: string;
     tools: ToolSet;
+    accessToken: string;
   }) => Promise<{ text: string; steps: RemediationStep[] }>;
   fetchResourceMetadata: typeof fetchResourceMetadata;
 }
@@ -143,7 +151,13 @@ export async function runRemediation(args: {
 
   try {
     const tools: ToolSet = { ...readSet.tools, ...writeSet.tools };
-    const { text, steps } = await deps.runLlm({ system: SPECIALIST_SYSTEM_PROMPT, goal, tools });
+    const llmToken = await deps.obtainLlmToken({ cfg, subjectToken: bearer, subjectSub: sub, subjectAcr: '' });
+    const { text, steps } = await deps.runLlm({
+      system: SPECIALIST_SYSTEM_PROMPT,
+      goal,
+      tools,
+      accessToken: llmToken,
+    });
     return { kind: 'ok', summary: text, steps };
   } catch (e) {
     // A mid-flight step-up 401 from mcp-ops/ops-api is thrown by
@@ -264,8 +278,8 @@ function publishWorkingTask(bus: ExecutionEventBus, ctx: RequestContext): Task {
 }
 
 export function buildExecutor(cfg: Config): AgentExecutor {
-  const llm = buildLlm(cfg);
-  const runLlm: RemediationDeps['runLlm'] = async ({ system, goal, tools }) => {
+  const runLlm: RemediationDeps['runLlm'] = async ({ system, goal, tools, accessToken }) => {
+    const llm = buildLlm(cfg, { accessToken });
     const result = await generateText({
       model: llm,
       system,
@@ -293,6 +307,7 @@ export function buildExecutor(cfg: Config): AgentExecutor {
   const deps: RemediationDeps = {
     obtainOpsToken,
     obtainObsToken,
+    obtainLlmToken,
     openMcpToolset,
     runLlm,
     fetchResourceMetadata,

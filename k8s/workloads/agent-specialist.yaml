@@ -97,11 +97,20 @@ spec:
             - name: REQUIRED_ACR
               value: mfa
             - name: LLM_PROVIDER
-              value: azure
+              value: gateway
             - name: LLM_MODEL
               value: gpt-4.1
-            - name: AZURE_OPENAI_API_VERSION
-              value: 2024-04-01-preview
+            # Identity-bound LLM egress: routed through the agentgateway `/llm`
+            # route (mcp ns). The agent exchanges the caller's user token for an
+            # aud=llm-gateway, scope=llm:invoke token (RFC 8693) and presents it
+            # as the bearer; the gateway swaps in the real upstream API key
+            # before forwarding. See llm-token.ts.
+            - name: LLM_GATEWAY_URL
+              value: http://agentgateway.mcp.svc.cluster.local:8080/llm
+            - name: LLM_GATEWAY_AUDIENCE
+              value: llm-gateway
+            - name: LLM_GATEWAY_SCOPE
+              value: llm:invoke
             - name: PUBLIC_BASE_URL
               value: https://specialist.localtest.me
             # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
@@ -115,8 +124,6 @@ spec:
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
           envFrom:
-            - secretRef:
-                name: agent-specialist-llm
             - secretRef:
                 name: agent-specialist-curity
           readinessProbe:

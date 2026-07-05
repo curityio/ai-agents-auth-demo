@@ -46,12 +46,18 @@ const cfg = {
   mcpObservabilityUrl: 'http://mcp-observability/mcp',
   mcpOpsResourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
   mcpOpsScope: 'ops:write',
+  llmProvider: 'gateway',
+  llmModel: 'gpt-4.1',
+  llmGatewayUrl: 'http://gw:8080/llm',
+  llmGatewayAudience: 'llm-gateway',
+  llmGatewayScope: 'llm:invoke',
 } as never;
 
 function deps(over: Partial<RemediationDeps> = {}): RemediationDeps {
   return {
     obtainOpsToken: vi.fn().mockResolvedValue('ops-token'),
     obtainObsToken: vi.fn().mockResolvedValue('obs-token'),
+    obtainLlmToken: vi.fn().mockResolvedValue('test-llm-token'),
     openMcpToolset: vi.fn().mockResolvedValue({ tools: {}, close: vi.fn() }),
     runLlm: vi.fn().mockResolvedValue({ text: 'done: restarted api-gateway', steps: [] }),
     fetchResourceMetadata: vi
