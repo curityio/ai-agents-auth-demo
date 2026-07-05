@@ -201,11 +201,14 @@ authorization-code procedure `authorization-code.js` (which stamps the standard
 Curity configmap by `scripts/embed-curity-procedures.sh` (`make curity-procedures`).
 On each exchange the token-exchange procedure:
 
-1. **Verifies the `actor_token`** (SPIFFE JWT-SVID) with **jose4j** against an
-   embedded **SPIRE JWKS snapshot**, requiring `aud =
-   https://curity.localtest.me/oauth/v2/oauth-token` and a `sub` under
-   `spiffe://demo.curity.local/ns/`. (Curity's built-in `getPresentedActorToken()`
-   expects a server-issued actor, so the raw form param is read directly.)
+1. **Verifies the `actor_token`** (SPIFFE JWT-SVID) with **jose4j** against
+   **SPIRE's JWKS fetched at runtime** (`httpsGet()`) from the SPIRE OIDC
+   Discovery Provider — the resolver is cached across invocations and refetched on
+   an unknown `kid`, so a fresh cluster or SPIRE key rotation needs no snapshot —
+   requiring `aud = https://curity.localtest.me/oauth/v2/oauth-token` and a `sub`
+   under `spiffe://demo.curity.local/ns/`. (Curity's built-in
+   `getPresentedActorToken()` expects a server-issued actor, so the raw form param
+   is read directly.)
 2. **Looks up a per-client policy** (`CLIENT_POLICY`) keyed by client ID
    (`context.getClient().getId()` — for the ephemeral agents this is their
    `client_id` URL), with an `allowedActors` regex (the exact SPIFFE ID the
@@ -337,9 +340,10 @@ real values. All credentials are seeded out-of-band via `make seed-*`
 
 ## 5. Deployment model
 
-- **Images.** Seven app images built from a shared monorepo build context (the
+- **Images.** Eight app images built from a shared monorepo build context (the
   `Dockerfile`s `COPY` the workspace and `pnpm install` once). `make images`
-  builds all seven and `kind load`s them. `.dockerignore` excludes host
+  builds all eight — the seven services plus `exchange-shim` — and `kind load`s
+  them. `.dockerignore` excludes host
   `node_modules` (pnpm host-absolute symlinks otherwise break the container build).
 - **Manifests.** Plain YAML under `k8s/workloads/`. Each workload = Deployment +
   Service + ServiceAccount + a `spiffe-helper` sidecar + the SVID/CSI volumes.
@@ -401,9 +405,13 @@ real values. All credentials are seeded out-of-band via `make seed-*`
   `accessTokenData.acr` / `tokenData.acr` directly. The auth-code procedure
   (`acr-passthrough`) sets it at login; the exchange procedure re-emits it on
   every hop — so the standard OIDC claim flows end-to-end with no custom claim.
-- **Snapshot the SPIRE JWKS** rather than fetch at runtime — the Curity
-  procedure (Rhino) has no portable HTTP client, and the SVID-mount is `subPath`
-  (no hot reload), so a refresh is an explicit, documented step.
+- **Fetch the SPIRE JWKS at runtime** (rather than embedding a snapshot) — the
+  token-exchange procedure runs on Nashorn and reaches the SPIRE OIDC Discovery
+  Provider over an in-cluster hop (`httpsGet()`, using Java interop for TLS with
+  the provider's own name), caches the jose4j resolver across invocations, and
+  refetches on an unknown `kid`. So a fresh cluster or a SPIRE key rotation
+  self-heals with no manual snapshot step (the earlier `make spire-jwks-snapshot`
+  tooling is gone).
 - **A2A step-up is message-encoded** because the A2A SDK swallows executor
   throws; the structured 401 challenge rides in the task message instead.
 - **No external policy engine (OPA/Cedar).** Authorization is expressed in

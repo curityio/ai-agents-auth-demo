@@ -83,7 +83,7 @@ flowchart TB
   end
 
   subgraph mcp_ns["mcp namespace (ambient)"]
-    GWY["agentgateway<br/>(JWT + per-tool RBAC)<br/>+ exchange-shim (OBO)"]
+    GWY["agentgateway<br/>(JWT + per-tier scope authz)<br/>+ exchange-shim (OBO)"]
     M1["mcp-observability"]
     M2["mcp-ops"]
   end
@@ -188,7 +188,7 @@ sequenceDiagram
     A1->>Cu: exchange(subject=user, actor=copilot-SVID,<br/>aud=mcp-gateway, scope=obs:read)
     Cu-->>A1: token aud=mcp-gateway, act=[copilot]
     A1->>GW: MCP tools/call (list_pods) /observability/mcp + Bearer
-    Note over GW: validate aud=mcp-gateway + per-tool RBAC<br/>shim: exchange(subject=that token, actor=gateway-SVID,<br/>aud=mcp-observability, scope=obs:read)
+    Note over GW: validate aud=mcp-gateway + obs:read tier authz<br/>shim: exchange(subject=that token, actor=gateway-SVID,<br/>aud=mcp-observability, scope=obs:read)
     Cu-->>GW: token aud=mcp-observability, act=[gateway, copilot]
     GW->>M1: MCP tools/call (narrowed token)
     M1->>Cu: exchange(subject=that token, actor=obs-mcp-SVID,<br/>aud=obs-api, scope=obs:read)
@@ -237,7 +237,7 @@ sequenceDiagram
     Note over A2: deterministic acr=mfa pre-check<br/>→ 401 step-up here if not MFA, LLM never runs
     Note over A2: opens both MCP toolsets via the gateway,<br/>generateText(maxSteps=8) plans inspect→act→verify
     A2->>GW: MCP get_deployment /observability/mcp (aud=mcp-gateway)
-    Note over GW: per-tool RBAC + shim OBO<br/>exchange → aud=mcp-observability, act +gateway
+    Note over GW: obs:read tier authz + shim OBO<br/>exchange → aud=mcp-observability, act +gateway
     GW->>M1: MCP get_deployment (narrowed token)
     M1->>B1: GET /deployments (re-exchanged)
     B1->>K: get deployment (RBAC get,list)
@@ -287,7 +287,7 @@ call is refused at `mcp-ops` (a legible role-denial the specialist relays).
 |---|---|---|
 | Browser | Istio edge gateway TLS | mkcert local CA |
 | web / agents / MCP / APIs | Curity-issued JWTs | Curity JWKS (signature, `iss`, `aud`, `exp`, scope) |
-| Curity (token exchange) | SPIFFE JWT-SVIDs as `actor_token` | embedded **SPIRE JWKS** snapshot (verified with jose4j inside the procedure) |
+| Curity (token exchange) | SPIFFE JWT-SVIDs as `actor_token` | **SPIRE's JWKS fetched at runtime** from the SPIRE OIDC Discovery Provider, verified inside the procedure (refetched on an unknown `kid`, so key rotation self-heals) |
 | Curity (client auth) | the two agents' published signing keys | each agent's self-hosted **CIMD** metadata doc + JWKS, fetched over the mkcert-trusted gateway, used to verify the `private_key_jwt` assertion |
 | Curity | the user | OIDC login (HTML form + TOTP) |
 | Each resource server | the OBO actor chain | per-position SPIFFE-ID regex over the nested `act` claim |

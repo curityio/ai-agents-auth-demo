@@ -40,12 +40,13 @@ trace**.
 
 ## 2. The storyline
 
-Two users are seeded in Curity:
+Three users are seeded in Curity:
 
 | User | Role | MFA | Outcome |
 |---|---|---|---|
-| **alice** | `sre`, `oncall` | TOTP enrolled | Can read, and (after MFA) restart. The happy path. |
-| **bob** | `developer` | TOTP enrolled | Can read; **denied** restart even after a successful MFA. |
+| **alice** | `sre`, `oncall` | on-demand step-up | Can read, and (after step-up MFA) restart *and* set image. The happy path. |
+| **carol** | `oncall` | forced login MFA | Can read, restart, and scale — but `set_deployment_image` is **denied** at `mcp-ops` (`sre`-only). Authz is per-tool, not just per-tier. |
+| **bob** | `developer` | forced login MFA | Can read; **denied** `ops:write` entirely even after a successful MFA. |
 
 The target is the `prod` namespace, which holds two remediable sample
 deployments named like real microservices: **`order-service`** and
@@ -91,10 +92,24 @@ the specialist fanning out to **both** `mcp-observability` (read) and `mcp-ops`
 > Bob logs in, MFAs successfully, and asks to restart `order-service`.
 
 Bob's MFA *succeeds* — but the very first token exchange fails with
-**`access_denied`** because Bob lacks the `sre` role. **Expected:** a clear
-"you authenticated, but you're not authorized" message. The teaching point:
-authentication strength and authorization grant are different things, decided in
-different places.
+**`access_denied`** because Bob holds no write role (`sre`/`oncall`).
+**Expected:** a clear "you authenticated, but you're not authorized" message. The
+teaching point: authentication strength and authorization grant are different
+things, decided in different places.
+
+### Act 4 — Per-tool authorization (carol) — authz is finer than the tier
+
+> Carol logs in (forced login MFA), restarts `order-service` successfully, then
+> asks to *change its image*.
+
+Carol holds `oncall`, so Curity grants her `ops:write` and the restart succeeds.
+But when the specialist calls `set_deployment_image`, **`mcp-ops`** refuses it
+with a legible role-denial — that tool is `sre`-only (`Config.setImageRequiredRoles`).
+**Expected:** restart works; the image change comes back as a clear "requires the
+`sre` role" message the specialist relays. The teaching point: the gateway grants
+the *tier* (`ops:write`), but the fine-grained per-tool split is enforced
+**downstream at the resource tier** — carol even *sees* `set_deployment_image` in
+`tools/list` (the gateway lists all ops tools); it's the **call** that's denied.
 
 ---
 
@@ -157,11 +172,11 @@ to copy it in if absent) and prompts for the Azure OpenAI endpoint + API key
 - **images / apply** build + load all images and apply every manifest, then wire
   pod routing.
 
-### 5.2 Seed the alice & bob accounts (the only manual step)
+### 5.2 Seed the alice, carol & bob accounts (the only manual step)
 
-Curity's in-memory account store starts empty. The two demo users are created
+Curity's in-memory account store starts empty. The three demo users are created
 **during the login flow** via the HTML Authenticator's "create account"
-functionality — register alice & bob and enrol TOTP for each per
+functionality — register alice, carol & bob and enrol TOTP for each per
 [`curity-seed.md`](curity-seed.md) (§Accounts). The clients, scopes, and token
 procedures all load from the configmap — only the **accounts** are seeded by
 hand.
@@ -189,9 +204,9 @@ any time to see it again:
     mcp-observability resource md    https://mcp-observability.localtest.me/.well-known/oauth-protected-resource
 ```
 
-The **Apps** are click-to-use (the demo app needs alice/bob seeded first, §5.2 —
-register them through the app's login flow via the HTML Authenticator's "create
-account" feature). The **Identity & metadata** URLs are live OAuth/SPIFFE
+The **Apps** are click-to-use (the demo app needs alice/carol/bob seeded first,
+§5.2 — register them through the app's login flow via the HTML Authenticator's
+"create account" feature). The **Identity & metadata** URLs are live OAuth/SPIFFE
 discovery documents — handy for showing what each hop fetches.
 
 ```bash
@@ -199,8 +214,9 @@ make status            # (optional) confirm pods are Ready across all namespaces
 open https://app.localtest.me
 ```
 
-Log in as **alice**, then walk Acts 1–3 above. Then log in as **bob** for the
-denial.
+Log in as **alice** and walk Acts 1–2 (read, then step-up remediation). Then log
+in as **bob** for the role denial (Act 3), and **carol** for the per-tool split
+(Act 4).
 
 ### 5.4 (Optional) Verify auth behavior headlessly
 
