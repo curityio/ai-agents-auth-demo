@@ -8,6 +8,7 @@ import {
   obtainSpecialistToken,
   invalidateSpecialistTokenCache,
   callSpecialist,
+  buildPrivilegedAnswer,
 } from './specialist-client.js';
 import { detectIntent } from './intent.js';
 import { CurityAuthError, oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
@@ -151,9 +152,10 @@ async function main(): Promise<void> {
         const specialistResult = specialistResp.result as { steps?: unknown } | undefined;
         const steps = Array.isArray(specialistResult?.steps) ? specialistResult.steps : undefined;
         res.json({
-          answer: specialistResp.ok
-            ? `Restart of '${intent.deployment}' completed.`
-            : `Restart of '${intent.deployment}' failed: ${specialistResp.text ?? 'unknown error'}`,
+          // Surface the specialist LLM's actual summary (what it did, or why it
+          // was denied) — not a hardcoded "Restart completed" that would misreport
+          // the action and claim success on a denied/unmet goal.
+          answer: buildPrivilegedAnswer(specialistResp, intent.deployment),
           route: 'privileged-a2a',
           intent: { ...intent },
           ...(steps ? { steps } : {}),
