@@ -40,7 +40,7 @@ CERT_DIR ?= certs
 
 # App images, keyed by their apps/<name>/Dockerfile. Used by `make images`
 # (build + kind load) and `make clean` (removal).
-IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web
+IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web exchange-shim
 
 # ============================================================================
 # Help
