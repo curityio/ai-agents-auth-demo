@@ -200,6 +200,44 @@ binds:
               path: /mcp
 
     # ------------------------------------------------------------------ #
+    # LLM egress -> {gateway}:8080/llm  (OpenAI-compatible; azure backend)
+    # Identity-bound reasoning hop. jwtAuth(aud=llm-gateway) + require llm:invoke;
+    # the gateway holds the ONLY Azure key (backendAuth.key). No shim, no act-chain:
+    # Azure is outside the Curity trust domain — a single upstream credential swap.
+    # ------------------------------------------------------------------ #
+    - name: llm
+      matches:
+      - path:
+          pathPrefix: /llm
+      policies:
+        jwtAuth:
+          providers:
+          - issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
+            audiences:
+            - llm-gateway
+            jwks:
+              url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
+        authorization:
+          rules:
+          - require: '"llm:invoke" in (jwt.scope.split(" "))'
+        backendAuth:
+          key:
+            value: $AZURE_OPENAI_API_KEY
+            location:
+              header:
+                name: api-key
+                prefix: ""
+      backends:
+      - ai:
+          name: azure
+          provider:
+            azure:
+              resourceName: $AZURE_RESOURCE_NAME
+              resourceType: openAI
+              model: gpt-4.1
+              apiVersion: "2024-04-01-preview"
+
+    # ------------------------------------------------------------------ #
     # DEMO-ONLY chain-visualization passthroughs (NOT part of the enforcement
     # path). The web UI walks the OBO chain by recursively calling each service's
     # /last-token. Since the agents now reach the MCP servers only THROUGH this

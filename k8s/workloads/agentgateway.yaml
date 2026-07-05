@@ -111,6 +111,17 @@ spec:
           image: ghcr.io/agentgateway/agentgateway:latest
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
+          env:
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentgateway-llm
+                  key: AZURE_OPENAI_API_KEY
+            - name: AZURE_RESOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: agentgateway-llm
+                  key: AZURE_RESOURCE_NAME
           ports:
             - containerPort: 8080
           volumeMounts:
