@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Istio ambient waypoint in front of the MCP servers with a standalone agentgateway that federates both MCP servers, does per-tool authz, and becomes a new RFC 8693 OBO hop via a co-located SPIFFE-aware exchange shim.
+**Goal:** Replace the Istio ambient waypoint in front of the MCP servers with a standalone agentgateway that fronts both MCP servers, does per-tool authz, and becomes a new RFC 8693 OBO hop via a co-located SPIFFE-aware exchange shim.
+
+> **DECISION (resolved 2026-07-05):** The Task 5 spike (real agentgateway v1.3.1, latest OSS) proved `mcp.tool.target` is not exposed in `extAuthz`, so a single federated `/mcp` endpoint can't do per-backend audience narrowing (corroborated by Solo.io's reference, which exchanges in a separate STS). **Design of record = two path-scoped routes on one listener** (`/observability/mcp`, `/ops/mcp`) — Task 5 Step 2b. Per-tool RBAC + `tools/list` filtering + the OBO hop are preserved. Task 5 Step 2a (single federated route) is retained below only as the rejected alternative.
 
 **Architecture:** agentgateway (upstream OSS image) validates the caller's `aud=mcp-gateway` token, applies per-tool CEL RBAC, and for each tool-call drives an `extAuthz` call to a co-located `exchange-shim` (Node, reuses `@ai-agents-demo/auth-curity`). The shim reads the gateway's rotating SPIFFE JWT-SVID from `/run/spiffe/curity-actor.jwt` and performs the RFC 8693 exchange (subject = caller token, actor = SVID, audience/scope = per backend), returning a token-endpoint-shaped JSON body. agentgateway swaps the returned token onto the request and forwards to the origin MCP server. The gateway inserts one position into every downstream `act` chain.
 
@@ -37,7 +39,7 @@
   `SpiffeJwtSvidSource` from `@ai-agents-demo/spiffe`, constructed as
   `new SpiffeJwtSvidSource({ audiences: [{ audience: string; filePath: string }] })` with `await source.getSvid(audience): Promise<{ jwt: string; audience: string } | null>`.
 - Produces: `handleExchange(req: ExchangeRequest, deps: HandlerDeps): Promise<ExchangeResponse>` where
-  `ExchangeRequest = { callerToken: string; targetAudience: string; targetScope: string }`,
+  `ExchangeRequest = { callerToken: string; targetAudience: string }` (NO caller-supplied scope — scope is derived server-side from the audience allow-list; see Task 1 fix wave),
   `ExchangeResponse = { access_token: string; token_type: string; expires_in: number }` (token-endpoint-shaped so agentgateway reads `json(response.body).access_token`),
   and `HandlerDeps = { getSvidJwt: () => Promise<string>; exchange: typeof exchangeToken; tokenEndpoint: string; clientId: string; clientSecret: string; audienceScopes: Record<string, string> }`.
 
@@ -54,7 +56,7 @@ Create `apps/exchange-shim/package.json`:
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "@ai-agents-demo/auth-curity": "workspace:*",
@@ -67,7 +69,13 @@ Create `apps/exchange-shim/package.json`:
 }
 ```
 
-Create `apps/exchange-shim/tsconfig.json` (copy the shape of `apps/mcp-ops/tsconfig.json`):
+Create `apps/exchange-shim/tsconfig.json` AND `apps/exchange-shim/tsconfig.test.json`,
+copying the shape of `apps/mcp-ops/tsconfig.json` + `apps/mcp-ops/tsconfig.test.json`
+(the build config compiles `src`; the test config also includes `tests` so `pnpm typecheck`
+type-checks the test files — matches repo convention). Also add `apps/exchange-shim/vitest.config.ts`
+mirroring `apps/mcp-ops/vitest.config.ts` if that sibling has one.
+
+`apps/exchange-shim/tsconfig.json`:
 
 ```json
 {
@@ -77,6 +85,19 @@ Create `apps/exchange-shim/tsconfig.json` (copy the shape of `apps/mcp-ops/tscon
     "rootDir": "src"
   },
   "include": ["src"]
+}
+```
+
+`apps/exchange-shim/tsconfig.test.json` (mirror `apps/mcp-ops/tsconfig.test.json` exactly; typically):
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "tests"]
 }
 ```
 
@@ -109,7 +130,7 @@ const deps = {
 describe('handleExchange', () => {
   it('exchanges caller token using the SVID as actor and returns a token-endpoint body', async () => {
     const res = await handleExchange(
-      { callerToken: 'caller.token', targetAudience: 'mcp-observability', targetScope: 'obs:read' },
+      { callerToken: 'caller.token', targetAudience: 'mcp-observability' },
       deps,
     );
     expect(deps.exchange).toHaveBeenCalledWith(
@@ -125,12 +146,14 @@ describe('handleExchange', () => {
     expect(res).toEqual({ access_token: 'narrowed.token', token_type: 'Bearer', expires_in: 300 });
   });
 
+  it('derives scope from the audience (never from caller input)', async () => {
+    await handleExchange({ callerToken: 'c', targetAudience: 'mcp-ops' }, deps);
+    expect(deps.exchange).toHaveBeenCalledWith(expect.objectContaining({ scope: 'ops:write' }));
+  });
+
   it('rejects an audience not in the allow-list', async () => {
     await expect(
-      handleExchange(
-        { callerToken: 'c', targetAudience: 'evil', targetScope: 'obs:read' },
-        deps,
-      ),
+      handleExchange({ callerToken: 'c', targetAudience: 'evil' }, deps),
     ).rejects.toThrow(/audience/i);
   });
 });
@@ -151,7 +174,8 @@ import type { exchangeToken } from '@ai-agents-demo/auth-curity';
 export interface ExchangeRequest {
   callerToken: string;
   targetAudience: string;
-  targetScope: string;
+  // No targetScope: scope is derived server-side from the audience allow-list,
+  // never from caller input (prevents scope-escalation for the read audience).
 }
 
 export interface ExchangeResponse {
@@ -178,6 +202,7 @@ export async function handleExchange(
   if (!allowedScope) {
     throw new Error(`audience not allowed: ${req.targetAudience}`);
   }
+  // scope is `allowedScope` (from the audience map) — see the exchange call below.
   const actorToken = await deps.getSvidJwt();
   const result = await deps.exchange({
     tokenEndpoint: deps.tokenEndpoint,
@@ -186,7 +211,11 @@ export async function handleExchange(
     subjectToken: req.callerToken,
     actorToken,
     audience: req.targetAudience,
-    scope: req.targetScope || allowedScope,
+    // SECURITY: scope is derived SOLELY from the audience allow-list — never from
+    // caller input. The audience→scope map is 1:1, so a caller must not be able to
+    // request a broader scope (e.g. ops:write for the read audience). `targetScope`
+    // is intentionally NOT a field on ExchangeRequest.
+    scope: allowedScope,
   });
   return {
     access_token: result.accessToken,
@@ -262,14 +291,13 @@ const server = createServer((req, res) => {
   }
   const callerAuth = req.headers['x-caller-authorization'];
   const targetAudience = req.headers['x-target-audience'];
-  const targetScope = req.headers['x-target-scope'];
   if (typeof callerAuth !== 'string' || typeof targetAudience !== 'string') {
     res.writeHead(400).end(JSON.stringify({ error: 'invalid_request' }));
     return;
   }
   const callerToken = callerAuth.replace(/^Bearer\s+/i, '');
   handleExchange(
-    { callerToken, targetAudience, targetScope: typeof targetScope === 'string' ? targetScope : '' },
+    { callerToken, targetAudience },
     {
       getSvidJwt: async () => {
         const svid = await svidSource.getSvid(cfg.svidAudience);
@@ -619,13 +647,15 @@ binds:
           jwks:
             url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
         mcpAuthorization:
+          # NOTE: this Step 2a block is the REJECTED federated alternative. The authoritative
+          # role-split rules live in the path-routed primary (Step 2b / the shipped
+          # k8s/workloads/agentgateway-config.yaml). Rules shown for reference only:
           rules:
-          # Equivalence: any authenticated caller may use the read tools + the safe write tools.
-          - 'mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment", "restart_deployment", "scale_deployment"]'
-          # Showcase: set_deployment_image requires an extra claim the base role lacks
-          # (filtered from tools/list AND denied on call_tool when absent). Adjust the
-          # claim to whatever the demo's privileged path carries, e.g. a role or scope.
-          - 'mcp.tool.name == "set_deployment_image" && "ops:write" in (jwt.scope.split(" "))'
+          # read tools (would sit on the observability target): obs:read
+          - '"obs:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
+          # ops tools: ops:write tier + per-tool role split (hierarchical, sre ⊇ oncall)
+          - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name in ["restart_deployment", "scale_deployment"] && ("oncall" in jwt.roles || "sre" in jwt.roles)'
+          - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name == "set_deployment_image" && "sre" in jwt.roles'
         extAuthz:
           host: localhost:8090
           cache:
@@ -641,7 +671,8 @@ binds:
                 :method: '"POST"'
                 x-caller-authorization: request.headers["authorization"]
                 x-target-audience: '(mcp.tool.target == "ops") ? "mcp-ops" : "mcp-observability"'
-                x-target-scope: '(mcp.tool.target == "ops") ? "ops:write" : "obs:read"'
+                # NOTE: no x-target-scope — the shim derives scope from the audience
+                # allow-list (1:1 map), never from a caller/gateway-supplied header.
               metadata:
                 token: json(response.body).access_token
                 expires: unvalidatedJwtPayload(json(response.body).access_token).exp
@@ -663,7 +694,7 @@ binds:
 
 - [ ] **Step 2b: Write the path-routed fallback (if Outcome B)**
 
-Instead of one federated route, define two routes on the same listener (`/observability/mcp`, `/ops/mcp`), each with its own `mcp.targets` single entry and a **static** `x-target-audience`/`x-target-scope` in `extAuthz.addRequestHeaders` (no `mcp.*`). The per-tool `set_deployment_image` rule stays on the `/ops/mcp` route's `mcpAuthorization`. Record in the file header that federation degraded to path-routing and why.
+Instead of one federated route, define two routes on the same listener (`/observability/mcp`, `/ops/mcp`), each with its own `mcp.targets` single entry and a **static** `x-target-audience` in `extAuthz.addRequestHeaders` (no `mcp.*`, no `x-target-scope` — scope is derived by the shim from the audience). The per-tool `set_deployment_image` rule stays on the `/ops/mcp` route's `mcpAuthorization`. Record in the file header that federation degraded to path-routing and why.
 
 - [ ] **Step 3: Re-run the local harness end-to-end**
 
@@ -778,17 +809,23 @@ git commit -m "feat(k8s): agentgateway workload (gateway + shim + spiffe-helper)
 - Consumes: Service `agentgateway.mcp.svc.cluster.local:8080/mcp` (Task 6).
 - Produces: both agents call the gateway with `aud=mcp-gateway`; the waypoint no longer exists.
 
+> **UPDATED after Task 5 spike (Outcome B):** agentgateway v1.3.1 does not expose
+> `mcp.tool.target` inside `extAuthz`, so the gateway is PATH-ROUTED — two routes on one
+> listener (`/observability/mcp`, `/ops/mcp`), NOT a single federated `/mcp`. The agent
+> URLs below point at the per-tier paths accordingly.
+
 - [ ] **Step 1: Repoint agent-copilot**
 
 In `k8s/workloads/agent-copilot.yaml`, set:
-- `MCP_OBSERVABILITY_URL` → `http://agentgateway.mcp.svc.cluster.local:8080/mcp`
+- `MCP_OBSERVABILITY_URL` → `http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp`
 - `MCP_OBSERVABILITY_AUDIENCE` → `mcp-gateway`
 - keep `MCP_OBSERVABILITY_SCOPE` = `obs:read`.
 
 - [ ] **Step 2: Repoint agent-specialist**
 
-In `k8s/workloads/agent-specialist.yaml`, set BOTH MCP URLs to the gateway and BOTH audiences to `mcp-gateway`:
-- `MCP_OPS_URL` and `MCP_OBSERVABILITY_URL` → `http://agentgateway.mcp.svc.cluster.local:8080/mcp`
+In `k8s/workloads/agent-specialist.yaml`, set both MCP URLs to the gateway's per-tier paths and both audiences to `mcp-gateway`:
+- `MCP_OBSERVABILITY_URL` → `http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp`
+- `MCP_OPS_URL` → `http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp`
 - `MCP_OPS_AUDIENCE` → `mcp-gateway`, `MCP_OBSERVABILITY_AUDIENCE` → `mcp-gateway`
 - keep scopes `ops:write` / `obs:read`.
 
@@ -833,7 +870,7 @@ In the smoke script, add assertions:
 1. **OBO read still works:** copilot read path returns pods (existing assertion should still pass with the gateway inserted).
 2. **A2A write still works + step-up:** specialist write path still triggers the RFC 9470 challenge for a non-MFA session and succeeds for an MFA session (existing assertions pass unchanged through the gateway).
 3. **New hop present:** hit copilot's `/last-token` (or ops-api trace) and assert the `act` chain now contains `…/ns/mcp/sa/agentgateway`.
-4. **Per-tool filtering:** an MCP `tools/list` through the gateway with a base-role token omits `set_deployment_image`; with the privileged token it appears.
+4. **Per-tool role split (carol vs alice):** as **carol** (`oncall`), `tools/list` on `/ops/mcp` shows `restart_deployment`/`scale_deployment` but OMITS `set_deployment_image`, and a `call_tool` for `set_deployment_image` is denied; as **alice** (`sre`), `set_deployment_image` appears and is callable. As **bob** (`developer`), the exchange denies `ops:write` outright (role-denial, unchanged).
 
 - [ ] **Step 2: Run the smoke suite (needs a cluster)**
 

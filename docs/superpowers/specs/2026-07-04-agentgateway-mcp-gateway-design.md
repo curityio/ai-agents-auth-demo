@@ -39,12 +39,32 @@ than merely relocating it.
    servers. `mcp-l7-authz.yaml` and the `istio.io/use-waypoint` labels are removed.
    The JWT `act`-chain + step-up enforcement in the resource-server middleware stays
    authoritative (it always was — it is JWT-based, transport-independent).
-2. **Equivalence + one showcase per-tool rule.** CEL reproduces today's coarse gate,
-   plus one rule that filters `set_deployment_image` out of `tools/list` and denies
-   its `call_tool` unless the caller carries an extra claim — a body-aware, per-tool
-   decision the waypoint provably could not make. No new Curity scopes.
-3. **One federated endpoint.** agentgateway aggregates both MCP servers' tools behind
-   a single MCP endpoint and routes each tool-call to its origin backend.
+2. **Per-tool RBAC by role (refined 2026-07-05).** The `/ops/mcp` tier requires
+   `ops:write` for every tool (restores the mcp-ops write-tier invariant), then splits
+   tools by **role**, hierarchical (`sre` ⊇ `oncall`): `restart_deployment`/`scale_deployment`
+   need any write role (`oncall` OR `sre`); `set_deployment_image` needs `sre`. Tools the
+   caller can't call are filtered from `tools/list` and denied on `call_tool` — a body-aware,
+   per-tool decision the waypoint provably could not make. `roles` is already a propagated
+   token claim, so **no new Curity scopes** are needed; the only Curity change is widening the
+   exchange role gate to accept `sre` OR `oncall` for `ops:write` (was `sre`-only), and adding
+   a demo user `carol=[oncall]` to exercise the split (restart yes / set-image denied).
+   *Superseded the earlier "set_deployment_image needs an extra claim" idea, which was a no-op
+   because `ops:write` already implies `sre` via the exchange role gate.*
+   The **read tier is symmetric**: `/observability/mcp` requires `obs:read` for every read tool
+   (`list_pods`/`get_pod_logs`/`get_deployment`); reads are unprivileged, so no role gate. Net:
+   every tool on both tiers is scope-gated at the gateway, and writes are additionally role-split.
+3. **~~One federated endpoint~~ → REVISED to two path-scoped routes on one listener.**
+   Original intent was a single `/mcp` endpoint aggregating both servers. The Task 5 spike
+   (run against the real agentgateway **v1.3.1**, the latest OSS release) proved
+   `mcp.tool.target` is **not exposed inside the `extAuthz` policy CEL**, so a single
+   federated route cannot select the per-backend exchange audience per tool-call. Confirmed
+   against the ecosystem: Solo.io's own reference (christian-posta/agent-auth-istio-keycloak)
+   puts token exchange in a separate STS called by the agents and applies **no per-backend
+   auth** on its federated MCP route — single-endpoint per-backend narrowing is not a
+   supported OSS pattern. **Decision of record:** two path-scoped routes on ONE listener —
+   `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops — each with a static
+   downstream audience. Per-tool RBAC + `tools/list` filtering + the OBO hop are fully
+   preserved; only the single aggregated tool namespace is given up.
 4. **Gateway as a new RFC 8693 hop.** Agents mint `aud=mcp-gateway`; the gateway
    re-exchanges per backend, adding itself to the `act` chain. This intentionally
    requires Curity changes.
