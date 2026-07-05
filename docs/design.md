@@ -12,10 +12,10 @@ The repository is a pnpm + Turborepo monorepo. Two trees matter:
 
 ```
 apps/        web  agent-copilot  agent-specialist
-             mcp-observability  mcp-ops  obs-api  ops-api
+             mcp-observability  mcp-ops  obs-api  ops-api  exchange-shim
 packages/    auth-curity  spiffe  otel-bootstrap  a2a-helpers  agent-runtime
 k8s/         curity  spire  istio  observability
-             workloads  prod  kind
+             workloads (incl. agentgateway)  prod  kind
 scripts/     bootstrap + smoke-test shell scripts
 ```
 
@@ -86,17 +86,24 @@ from this package); `agent-specialist` depends on it directly.
 ### Tiers
 
 ```
-web (BFF)  →  agent-copilot  ─┬─ MCP ─→ mcp-observability ─→ obs-api ─→ K8s
-                              └─ A2A ─→ agent-specialist ─→ mcp-ops ─→ ops-api ─→ K8s
+web (BFF)  →  agent-copilot  ─┬─ MCP ─→ agentgateway ─→ mcp-observability ─→ obs-api ─→ K8s
+                              └─ A2A ─→ agent-specialist ─→ agentgateway ─┬─→ mcp-ops ─→ ops-api ─→ K8s
+                                                                          └─→ mcp-observability ─→ obs-api ─→ K8s
 ```
+
+`agentgateway` (ns `mcp`) is the MCP front door for both MCP servers — the agents
+target `aud=mcp-gateway` and pick a path (`/observability/mcp`, `/ops/mcp`); its
+co-located `exchange-shim` sidecar performs the per-backend OBO exchange (§2, §3.5).
 
 | App | Stack | Inbound | Outbound | Auth role |
 |---|---|---|---|---|
 | **web** | Next.js App Router, Auth.js | Browser (session cookie) | `agent-copilot` (Bearer user token) | BFF; OIDC client `web-app`. No SPIFFE ID (not a workload actor). |
-| **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`; `LLM_PROVIDER` `azure` default, also `anthropic`) | Bearer user token | `mcp-observability`, `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. |
-| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `mcp-ops` **and** `mcp-observability` | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires both an `ops:write` and an `obs:read` token, opens both MCP toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. |
-| **mcp-observability** | Express + MCP Streamable HTTP | Bearer OBO token | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
-| **mcp-ops** | Express + MCP Streamable HTTP | Bearer OBO token | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). |
+| **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`; `LLM_PROVIDER` `azure` default, also `anthropic`) | Bearer user token | `agentgateway` (`aud=mcp-gateway`), `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Reaches `mcp-observability` **through the agentgateway** (no longer directly). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. |
+| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires one `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens both toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. |
+| **agentgateway** | agentgateway v1.3.1 (OSS) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp` | `mcp-observability`, `mcp-ops` | MCP front door. Validates the caller's JWT, applies **per-tool CEL RBAC** + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up. |
+| **exchange-shim** | Node/TypeScript (Express); `@ai-agents-demo/auth-curity` + `@ai-agents-demo/spiffe` | `extAuthz` from agentgateway (`:8090`, same pod) | Curity token endpoint | Performs the RFC 8693 exchange: reads the gateway's rotating SPIFFE JWT-SVID (`/run/spiffe/curity-actor.jwt`) as `actor_token`, subject = the caller's `aud=mcp-gateway` token, audience/scope derived **server-side** from an audience→scope allow-list (never caller-supplied). Returns a token-endpoint-shaped JSON body. Exists because agentgateway's CEL cannot read the rotating SVID file. |
+| **mcp-observability** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
+| **mcp-ops** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). |
 | **obs-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `GET /pods`, `GET /pods/:name/logs`, `GET /deployments/:name` (image/replicas/rollout status). RBAC `get,list` on pods and deployments. Accepts **two** actor chains (see §2 middleware). |
 | **ops-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `POST /restart`, `POST /set-image` (strategic-merge patch; container name == deployment name), `POST /scale` — each patches a deployment. |
 
@@ -124,10 +131,10 @@ Expected chain(s) per service (outer = most recent actor):
 
 | Service | Expected chain(s) |
 |---|---|
-| `mcp-observability` | `[agent-copilot]` (also `[agent-specialist]` at the waypoint — see §5) |
-| `obs-api` | `[mcp-observability, agent-copilot]` **or** `[mcp-observability, agent-specialist, agent-copilot]` |
-| `mcp-ops` | `[agent-specialist, agent-copilot]` |
-| `ops-api` | `[mcp-ops, agent-specialist, agent-copilot]` |
+| `mcp-observability` | *(no act-chain enforced in its own middleware; obs-api enforces downstream)* |
+| `obs-api` | `[mcp-observability, agentgateway, agent-copilot]` **or** `[mcp-observability, agentgateway, agent-specialist, agent-copilot]` |
+| `mcp-ops` | `[agentgateway, agent-specialist, agent-copilot]` |
+| `ops-api` | `[mcp-ops, agentgateway, agent-specialist, agent-copilot]` |
 
 ### The specialist's remediation loop (`runRemediation`)
 
@@ -207,8 +214,10 @@ On each exchange the token-exchange procedure:
    the issued scope is `requested ∩ subject ∩ policy(audience)`. **Scopes are
    keyed by audience** so a client can't pull a privileged scope under an
    unprivileged audience.
-4. **Role gate:** if `ops:write` is requested and the subject lacks role `sre`,
-   fail `access_denied`.
+4. **Role gate:** if `ops:write` is requested and the subject lacks role `sre`
+   **or** `oncall`, fail `access_denied`. (Fine-grained per-tool role splitting —
+   e.g. `set_deployment_image` for `sre` only — is applied downstream at the
+   agentgateway; see §3.5.)
 5. **Nests `act`:** if the subject token already carries an `act`, wrap it under
    the new actor (`{sub: thisActor, act: priorChain}`); else `{sub: thisActor}`.
    Innermost = oldest.
@@ -219,8 +228,9 @@ The per-client policy as configured:
 
 | Client (`CLIENT_POLICY` key) | Audience → scopes | Allowed actor SPIFFE ID |
 |---|---|---|
-| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-observability`→`obs:read`; `agent-specialist`→`obs:read ops:write` | `…/ns/agents/sa/agent-copilot` |
-| `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-ops`→`ops:write`; `mcp-observability`→`obs:read` | `…/ns/agents/sa/agent-specialist` |
+| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write` | `…/ns/agents/sa/agent-copilot` |
+| `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read ops:write` | `…/ns/agents/sa/agent-specialist` |
+| `mcp-gateway` | `mcp-observability`→`obs:read`; `mcp-ops`→`ops:write` | `…/ns/mcp/sa/agentgateway` |
 | `mcp-ops` | `ops-api`→`ops:write` | `…/ns/mcp/sa/mcp-ops` |
 | `mcp-observability` | `obs-api`→`obs:read` | `…/ns/mcp/sa/mcp-observability` |
 
@@ -239,6 +249,51 @@ stamping `auth.sub/scope/acr/aud/roles/act[]` onto the active HTTP span.
 `spiffe.id` is a resource attribute (same for all of a service's spans).
 `exchangeToken` opens an `auth.token_exchange` child span recording the
 requested vs issued scope — making scope narrowing visible in the trace.
+
+### 3.5 The agentgateway + exchange-shim (MCP front door)
+
+`agentgateway` (`k8s/workloads/agentgateway-config.yaml`, ns `mcp`, Service
+`agentgateway.mcp.svc.cluster.local:8080`) is the single MCP front door for both
+MCP servers, replacing the former Istio ambient waypoint.
+
+- **One audience, one gateway.** Both agents now target a single Curity audience,
+  **`mcp-gateway`** (confidential `client_secret_basic` client), rather than the MCP
+  servers directly. The gateway validates that JWT (issuer
+  `https://curity.localtest.me/oauth/v2/oauth-anonymous`; JWKS fetched from the
+  in-cluster plain-HTTP URL `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`).
+- **Path-routed, not federated.** ONE listener (`:8080`) exposes TWO path-scoped
+  routes — `/observability/mcp` → mcp-observability and `/ops/mcp` → mcp-ops. It is
+  path-routed (not a single federated `/mcp`) because agentgateway **v1.3.1** (latest
+  OSS) does not expose `mcp.tool.target` inside its `extAuthz` CEL scope, so
+  per-backend audience narrowing can't be done on one federated endpoint. Callers
+  pick the path.
+- **Per-tool CEL RBAC.** `mcpAuthorization` gates tools by role and filters
+  `tools/list`. The Curity role gate widened `sre` → `(sre OR oncall)`; the gateway
+  then splits the ops tools hierarchically (sre ⊇ oncall): `restart_deployment` /
+  `scale_deployment` require role `oncall` OR `sre`; `set_deployment_image` requires
+  role `sre` ONLY; read tools require `obs:read` (no role gate). Demo users:
+  alice=`[sre, oncall]` (password-only → step-up demo), bob=`[developer]` (denied
+  `ops:write`), carol=`[oncall]` (forced login-MFA; can restart/scale but NOT
+  `set_deployment_image`).
+- **extAuthz → exchange-shim = the OBO hop.** For each tool-call the gateway makes
+  an `extAuthz` call to the co-located **`exchange-shim`** (`apps/exchange-shim`,
+  `:8090`, same pod). The shim performs the RFC 8693 exchange — reading the gateway's
+  rotating SPIFFE JWT-SVID from `/run/spiffe/curity-actor.jwt` (spiffe-helper
+  sidecar) as the `actor_token`, the caller's `aud=mcp-gateway` token as the subject,
+  and a per-backend audience/scope derived **server-side** from an audience→scope
+  allow-list (never caller-supplied) — reusing `@ai-agents-demo/auth-curity`
+  `exchangeToken` + `@ai-agents-demo/spiffe`. It returns a token-endpoint-shaped JSON
+  body; the gateway swaps the returned narrowed token onto the request and forwards
+  to the origin MCP server. **The shim exists because agentgateway's CEL cannot read
+  the rotating SVID file**, so the exchange is done in a co-located sidecar.
+- **`act`-chain position.** The exchange nests the gateway's SPIFFE ID
+  (`spiffe://demo.curity.local/ns/mcp/sa/agentgateway`) as one new `act` position, so
+  every downstream chain grows by it (see the actor-chain table in §2).
+- **What it does NOT do (unchanged from the waypoint's limits).** It does not enforce
+  `acr`/step-up (RFC 9470) or match the nested `act` chain — those stay in the
+  resource-server middleware. The RFC 9470 step-up 401 still originates at
+  mcp-ops/ops-api and passes back through the gateway. Source identity at the gateway
+  is the JWT audience (`aud=mcp-gateway`), not mTLS SPIFFE identity.
 
 ---
 
@@ -278,18 +333,17 @@ real values. All credentials are seeded out-of-band via `make seed-*`
   `node_modules` (pnpm host-absolute symlinks otherwise break the container build).
 - **Manifests.** Plain YAML under `k8s/workloads/`. Each workload = Deployment +
   Service + ServiceAccount + a `spiffe-helper` sidecar + the SVID/CSI volumes.
-  `make apply` applies Curity, the prod namespace, all workloads, the
-  `ClusterSPIFFEID` CRs, the edge gateway routes, the MCP L7 authz waypoint, and
-  the observability config, then runs `make routing`.
-- **MCP L7 authz waypoint.** `k8s/istio/mcp-l7-authz.yaml` adds an Istio ambient
-  **waypoint** in the `mcp` namespace (the `mcp-ops`/`mcp-observability` Services
-  opt in via `istio.io/use-waypoint`). A `RequestAuthentication` validates the
-  Curity JWT (keys fetched live via `jwksUri` at Curity's in-cluster HTTP listener
-  `curity.curity.svc:8443` — istiod can't resolve `curity.localtest.me`; keys
-  refresh automatically) and two `AuthorizationPolicy` resources do a
-  coarse early-deny on caller SPIFFE identity + audience + scope. Requires the
-  Kubernetes Gateway API CRDs (`make gateway-api-crds`, folded into `make
-  platform`). Fine-grained `act`-chain + step-up stay in the resource servers.
+  `make apply` applies Curity, the prod namespace, all workloads (including the
+  agentgateway), the `ClusterSPIFFEID` CRs, the edge gateway routes, and the
+  observability config, then runs `make routing`.
+- **MCP front door (agentgateway).** `k8s/workloads/agentgateway-config.yaml`
+  deploys the standalone **agentgateway** in the `mcp` namespace with its co-located
+  `exchange-shim` sidecar — the MCP front door for both MCP servers (see §3.5). It
+  replaces the former Istio ambient waypoint (`k8s/istio/mcp-l7-authz.yaml`, now
+  deleted); `mcp-ops`/`mcp-observability` no longer carry `istio.io/use-waypoint`,
+  and the MCP authz path no longer needs the Kubernetes Gateway API CRDs /
+  `istio-waypoint` GatewayClass. Fine-grained `act`-chain + step-up stay in the
+  resource servers.
 - **Platform via Helm.** SPIRE (hardened chart, three namespaces), Istio Ambient
   (base/istiod/cni/ztunnel + gateway), Tempo, and Grafana — all driven
   by `make platform`.

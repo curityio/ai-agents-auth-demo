@@ -1,40 +1,47 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for the OBO chain + privileged restart.
+# End-to-end smoke test for the A2A OBO chain + privileged restart THROUGH the
+# agentgateway.
+#
+# Topology (post-agentgateway): the specialist no longer exchanges directly to
+# aud=mcp-ops. It mints an aud=mcp-gateway token (scope ops:write) and calls the
+# gateway's /ops/mcp route; the gateway validates the JWT, applies per-tool RBAC,
+# and (via the co-located exchange-shim) re-exchanges to aud=mcp-ops — inserting
+# the gateway's SPIFFE ID into the act chain — before forwarding to mcp-ops, which
+# validates the grown chain [agentgateway, agent-specialist, agent-copilot] and
+# re-exchanges again to ops-api.
 #
 # Assertions:
-#   - positive: copilot exchanges to aud=agent-specialist; specialist
-#     re-exchanges to aud=mcp-ops; mcp-ops's middleware accepts the depth-2
-#     `act` chain and PATCHes the order-service Deployment — which in turn flows
-#     through the apis waypoint to ops-api.
-#   - negative 1: a user-aud token presented to mcp-ops is denied at the mcp
-#     waypoint (wrong audience) before it reaches the app → 403.
-#   - negative 2: a depth-1 specialist-aud token is likewise denied at the
-#     waypoint (wrong audience) → 403.
-#   - negative 3: Curity refuses to MINT a wrong-order chain at all (copilot
-#     can't exchange directly to mcp-ops).
+#   [A] copilot exchanges user → aud=agent-specialist (act.sub=copilot).
+#   [B] specialist re-exchanges → aud=mcp-gateway (scope ops:write); the token's
+#       act chain is depth-2 [specialist, copilot] (the gateway position is added
+#       by the shim at call time, downstream — not in this token).
+#   [C] positive: that mcp-gateway token drives tools/call restart_deployment
+#       through the gateway → HTTP 200. mcp-ops accepts the grown act chain
+#       [agentgateway, specialist, copilot].
+#   [D1] negative: a user-aud (agent-copilot) token to the gateway /ops/mcp is
+#        rejected at the gateway (aud≠mcp-gateway) → 401.
+#   [D2] negative: a depth-1 specialist-aud (agent-specialist) token to /ops/mcp
+#        is likewise rejected at the gateway (aud≠mcp-gateway) → 401.
+#   [D3] negative: Curity refuses to MINT a wrong path at all — copilot cannot
+#        exchange directly to aud=mcp-ops.
 #
-# The mcp/apis waypoints (k8s/istio/{mcp,apis}-l7-authz.yaml) pin the caller's
-# mTLS identity, so the mcp-ops HTTP calls below run from the agent-specialist
-# pod. The waypoint also coarse-checks audience+scope, which fires BEFORE the
-# resource server's act-chain middleware — so the wrong-audience negatives (1, 2)
-# are caught at the waypoint. The app-level act-chain checks (act_required /
-# act_chain_length / act_chain_order) still run for tokens that pass the waypoint,
-# but can't be negative-tested from outside because Curity won't mint an mcp-ops
-# token with a bad chain — which is exactly what negative 3 demonstrates.
+# The gateway authenticates on the JWT audience (aud=mcp-gateway), not mTLS source
+# identity, so the calls below can run from any in-mesh pod; we use the specialist
+# pod for parity with the real caller. The app-level act-chain + step-up checks
+# still run in the resource-server middleware (exercised fully by smoke-stepup.sh).
 #
 # Pre-reqs:
-#   - kubectl context points at the demo cluster
-#   - mcp-ops + agent-specialist Deployments are Ready (`make apply` ran)
+#   - kubectl context points at the demo cluster; `make apply` + `make routing` ran.
+#   - agentgateway, mcp-ops, agent-specialist Deployments are Ready.
 #   - $SMOKE_SUBJECT_TOKEN set to a fresh Curity access token for Alice
-#     (per docs/curity-seed.md or /api/whoami with AUTH_DEBUG=true)
+#     (per docs/curity-seed.md or /api/whoami with AUTH_DEBUG=true).
 #
 # Exit codes: 0 on success, non-zero on any failed assertion.
 
 set -euo pipefail
 
 CURITY_TOKEN_URL="${CURITY_TOKEN_URL:-https://curity.localtest.me/oauth/v2/oauth-token}"
-SPECIALIST_A2A_URL="${SPECIALIST_A2A_URL:-http://agent-specialist.agents.svc.cluster.local:8082/a2a}"
-MCP_OPS_URL="${MCP_OPS_URL:-http://mcp-ops.mcp.svc.cluster.local:8080/mcp}"
+GATEWAY_OPS_URL="${GATEWAY_OPS_URL:-http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp}"
 CACERT="$(mkcert -CAROOT)/rootCA.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COPILOT_CLIENT_ID="${COPILOT_CLIENT_ID:-https://copilot.localtest.me/.well-known/oauth-client}"
@@ -69,6 +76,30 @@ s = parts[1]
 s += "=" * (-len(s) % 4)
 print(json.dumps(json.loads(base64.urlsafe_b64decode(s))))
 '
+}
+
+# mcp_call: drive an MCP Streamable HTTP request through the gateway from a pod.
+# Runs initialize (capturing mcp-session-id + notifications/initialized) then the
+# requested method; echoes "<status>:<body-slice>" (or "INIT_<status>:..." if the
+# initialize handshake itself is rejected — e.g. the gateway 401 on a bad audience).
+#   $1 ns  $2 deploy  $3 container  $4 url  $5 bearer  $6 method  $7 params-json
+mcp_call() {
+  kubectl -n "$1" exec "deploy/$2" -c "$3" -- \
+    env U="$4" B="$5" M="$6" P="$7" node -e '
+(async () => {
+  const url = process.env.U, bearer = process.env.B, method = process.env.M;
+  const params = process.env.P ? JSON.parse(process.env.P) : {};
+  const base = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + bearer };
+  const initBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "smoke", version: "0" }, capabilities: {} } });
+  const r1 = await fetch(url, { method: "POST", headers: base, body: initBody });
+  if (!r1.ok) { process.stdout.write("INIT_" + r1.status + ":" + (await r1.text()).slice(0, 300)); return; }
+  const sid = r1.headers.get("mcp-session-id");
+  const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
+  if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
+  const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
+  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 400));
+})().catch(e => process.stdout.write("ERR:" + e.message));
+' 2>/dev/null || true
 }
 
 if [[ -z "${SMOKE_SUBJECT_TOKEN:-}" ]]; then
@@ -123,8 +154,8 @@ ACT_SUB=$(echo "$PAYLOAD" | jq -r '.act.sub // empty')
   || { red "expected act.sub=copilot, got: $ACT_SUB"; exit 1; }
 green "  OK (specialist-bound token issued, act.sub=copilot)"
 
-# ----- Step B: specialist re-exchange → aud=mcp-ops ----------------------
-note "[B] Exchange specialist-bound token → mcp-ops (specialist client + specialist SVID)"
+# ----- Step B: specialist re-exchange → aud=mcp-gateway ------------------
+note "[B] Exchange specialist-bound token → mcp-gateway (specialist client + specialist SVID)"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$SPECIALIST_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -134,84 +165,57 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "actor_token=$SPECIALIST_SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-  -d "audience=mcp-ops" \
+  -d "audience=mcp-gateway" \
   -d "scope=ops:write" \
   "$CURITY_TOKEN_URL")
-OPS_BEARER=$(echo "$RESP" | jq -r '.access_token // empty')
-[[ -n "$OPS_BEARER" ]] || { red "no token in B: $(echo "$RESP" | redact)"; exit 1; }
+GATEWAY_BEARER=$(echo "$RESP" | jq -r '.access_token // empty')
+[[ -n "$GATEWAY_BEARER" ]] || { red "no token in B: $(echo "$RESP" | redact)"; exit 1; }
 
-PAYLOAD=$(echo "$OPS_BEARER" | decode_jwt_payload)
+PAYLOAD=$(echo "$GATEWAY_BEARER" | decode_jwt_payload)
+AUD=$(echo "$PAYLOAD" | jq -r 'if (.aud|type)=="array" then .aud|join(" ") else .aud end')
 OUTER_SUB=$(echo "$PAYLOAD" | jq -r '.act.sub // empty')
 INNER_SUB=$(echo "$PAYLOAD" | jq -r '.act.act.sub // empty')
+[[ "$AUD" == *"mcp-gateway"* ]] || { red "aud not mcp-gateway: $AUD"; exit 1; }
 [[ "$OUTER_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-specialist" ]] \
   || { red "outer act.sub wrong: $OUTER_SUB"; exit 1; }
 [[ "$INNER_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
   || { red "inner act.act.sub wrong: $INNER_SUB"; exit 1; }
-green "  OK (depth-2 chain: outer=specialist, inner=copilot)"
+green "  OK (aud=mcp-gateway; depth-2 chain: outer=specialist, inner=copilot)"
 
-# ----- Step C: mcp-ops restart_deployment with depth-2 token --------------
-note "[C] Positive: mcp-ops restart_deployment with depth-2 chain"
-INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"smoke","version":"0"},"capabilities":{}}}'
-CALL='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"a2a smoke"}}}'
-# Single Streamable HTTP transport per request — mcp-ops is stateless. Runs from
-# the agent-specialist pod so the mTLS caller identity matches the mcp waypoint's
-# pinned principal (cluster.local/ns/agents/sa/agent-specialist).
-STATUS=$(kubectl -n agents exec deploy/agent-specialist -c agent -- node -e "
-(async () => {
-  const init = '$INIT';
-  const call = '$CALL';
-  const headers = { authorization: 'Bearer $OPS_BEARER', 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
-  const r1 = await fetch('$MCP_OPS_URL', { method: 'POST', headers, body: init });
-  if (!r1.ok) { process.stdout.write('INIT_'+r1.status); return; }
-  const r2 = await fetch('$MCP_OPS_URL', { method: 'POST', headers, body: call });
-  process.stdout.write(String(r2.status)+':'+(await r2.text()).slice(0, 240));
-})().catch(e => process.stdout.write('ERR:'+e.message));
-" 2>/dev/null || true)
+# ----- Step C: restart_deployment through the gateway /ops/mcp -----------
+note "[C] Positive: restart_deployment through the gateway (gateway adds its act position)"
+STATUS=$(mcp_call agents agent-specialist agent \
+  "$GATEWAY_OPS_URL" "$GATEWAY_BEARER" "tools/call" \
+  '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"a2a smoke"}}')
 case "$STATUS" in
-  200*) green "  OK (mcp-ops accepted: $STATUS)" ;;
+  200*) green "  OK (gateway → mcp-ops accepted the grown chain: ${STATUS:0:80}...)" ;;
   *)    red "  unexpected response: $STATUS"; exit 1 ;;
 esac
 
-# ----- Negative 1: user-aud token to mcp-ops → denied at the waypoint -----
-note "[D1] Negative: user-aud token to mcp-ops → expect waypoint 403 (wrong audience)"
-STATUS=$(kubectl -n agents exec deploy/agent-specialist -c agent -- node -e "
-fetch('$MCP_OPS_URL', { method: 'POST', headers: { authorization: 'Bearer $SUBJECT_TOKEN', 'content-type': 'application/json' }, body: '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}' })
-  .then(async r => process.stdout.write(String(r.status)+':'+(await r.text()).slice(0,160)))
-  .catch(e => process.stdout.write('ERR:'+e.message));
-" 2>/dev/null || true)
-# aud=agent-copilot ≠ mcp-ops, so the waypoint's audience `when` clause denies it
-# (403 RBAC) before the app's act-chain middleware ever sees it. An expired token
-# would 401 at the RequestAuthentication — both are valid "denied" outcomes.
+# ----- Negative D1: user-aud token to the gateway → 401 (wrong audience) --
+note "[D1] Negative: user-aud token to gateway /ops/mcp → expect gateway 401 (aud≠mcp-gateway)"
+STATUS=$(mcp_call agents agent-specialist agent \
+  "$GATEWAY_OPS_URL" "$SUBJECT_TOKEN" "tools/call" \
+  '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod"}}')
 case "$STATUS" in
-  403*|401*) green "  OK (denied before the app: $STATUS)" ;;
-  *) red "  expected 403 (waypoint audience denial) or 401, got: $STATUS"; exit 1 ;;
+  INIT_401*|401*) green "  OK (gateway rejected wrong audience: $STATUS)" ;;
+  INIT_403*|403*) green "  OK (gateway denied: $STATUS)" ;;
+  *) red "  expected 401/403 at the gateway, got: $STATUS"; exit 1 ;;
 esac
 
-# ----- Negative 2: depth-1 specialist-aud token to mcp-ops → waypoint 403 --
-note "[D2] Negative: depth-1 specialist-aud token to mcp-ops → expect waypoint 403 (wrong audience)"
-STATUS=$(kubectl -n agents exec deploy/agent-specialist -c agent -- node -e "
-fetch('$MCP_OPS_URL', { method: 'POST', headers: { authorization: 'Bearer $SPECIALIST_BEARER', 'content-type': 'application/json' }, body: '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}' })
-  .then(async r => process.stdout.write(String(r.status)+':'+(await r.text()).slice(0,200)))
-  .catch(e => process.stdout.write('ERR:'+e.message));
-" 2>/dev/null || true)
-# aud=agent-specialist ≠ mcp-ops → same waypoint audience denial. (The app-level
-# act_chain_length check this used to probe is now shadowed by the waypoint.)
+# ----- Negative D2: depth-1 specialist-aud token to the gateway → 401 -----
+note "[D2] Negative: specialist-aud token to gateway /ops/mcp → expect gateway 401 (aud≠mcp-gateway)"
+STATUS=$(mcp_call agents agent-specialist agent \
+  "$GATEWAY_OPS_URL" "$SPECIALIST_BEARER" "tools/call" \
+  '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod"}}')
 case "$STATUS" in
-  403*|401*) green "  OK (denied before the app: $STATUS)" ;;
-  *) red "  expected 403 (waypoint audience denial) or 401, got: $STATUS"; exit 1 ;;
+  INIT_401*|401*) green "  OK (gateway rejected wrong audience: $STATUS)" ;;
+  INIT_403*|403*) green "  OK (gateway denied: $STATUS)" ;;
+  *) red "  expected 401/403 at the gateway, got: $STATUS"; exit 1 ;;
 esac
 
-# ----- Negative 3: chain in wrong order → act_chain_order ----------------
-note "[D3] Negative: forge a chain with copilot as the outer actor → expect act_chain_order"
-# Reuse copilot's depth-1 trick: exchange user→mcp-ops directly using
-# copilot as client + copilot SVID. Curity will fail this (mcp-ops isn't
-# on copilot's allowed audiences) so we synthesize the negative by asking
-# *specialist* to exchange a NEW user→mcp-ops chain where it presents itself
-# as actor TWICE. That's also blocked by Curity policy. Both produce a
-# "wrong actor at outer position" signal that mcp-ops's middleware turns
-# into act_chain_order — but the Curity-side block happens FIRST.
-# So this assertion verifies the broader invariant: a forged-wrong-order
-# attempt cannot mint a token at all.
+# ----- Negative D3: copilot cannot mint an mcp-ops token at all ----------
+note "[D3] Negative: copilot exchanging directly to aud=mcp-ops → expect Curity denial"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -227,7 +231,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
 ERR=$(echo "$RESP" | jq -r '.error // empty')
 DESC=$(echo "$RESP" | jq -r '.error_description // empty')
 case "$ERR" in
-  invalid_request|invalid_audience|access_denied)
+  invalid_request|invalid_audience|invalid_target|access_denied)
     green "  OK (Curity refused outright: error=$ERR description='$DESC')" ;;
   invalid_scope)
     green "  OK (Curity refused via scope path: error=$ERR description='$DESC')" ;;
