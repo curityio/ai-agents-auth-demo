@@ -1,8 +1,9 @@
 /**
  * Transformation procedure — assigns `roles` per user at login.
  * A write role (`sre` OR `oncall`) gates `ops:write` in the token-exchange procedure;
- * the agentgateway then splits ops tools per-role (hierarchical, `sre` ⊇ `oncall`):
- * on-call may restart/scale; only `sre` may set_deployment_image.
+ * mcp-ops then applies the finer per-tool split (`Config.setImageRequiredRoles`):
+ * on-call may restart/scale; only `sre` may set_deployment_image. (The agentgateway
+ * does NOT split ops tools by role — it lists/allows all ops tools for any ops:write caller.)
  * @param {se.curity.identityserver.procedures.context.TransformationProcedureContext} context
  * @returns {*}
  */
