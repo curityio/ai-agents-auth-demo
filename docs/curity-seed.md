@@ -46,11 +46,17 @@ the bits you seed by hand (license + users).
 - TOTP authenticator enrolled for each user (drives the RFC 9470 step-up for `ops:write`)
 
 ### Accounts
-Create accounts alice and bob via HTML form authenticator during login process.
+Create accounts alice, carol, and bob via HTML form authenticator during login process.
 | Username | Password | Roles | MFA | Notes |
 | --- | --- | --- | --- | --- |
-| `alice` | (your choice) | `sre`, `oncall` | TOTP enrolled | Happy-path user. Can MFA up for `ops:write`. |
-| `bob` | (your choice) | `developer` | TOTP enrolled | Counter-example. Even after MFA, the role gate denies `ops:write`. |
+| `alice` | (your choice) | `sre`, `oncall` | TOTP enrolled | Happy-path SRE. Can MFA up for `ops:write`; may use **all** ops tools incl. `set_deployment_image`. |
+| `carol` | (your choice) | `oncall` | TOTP enrolled | On-call. Holds a write role, so gets `ops:write`, but the agentgateway per-tool rule allows only `restart_deployment`/`scale_deployment` — `set_deployment_image` is denied (needs `sre`). |
+| `bob` | (your choice) | `developer` | TOTP enrolled | Counter-example. Even after MFA, the role gate denies `ops:write` entirely (no write role). |
+
+> Roles are assigned by `k8s/curity/procedures/add-roles.js` keyed on username, so the
+> account **usernames must be exactly** `alice`, `carol`, `bob`. The write-tier gate
+> (`token-exchange.js`) admits `ops:write` for `sre` **or** `oncall`; the agentgateway
+> then splits ops tools by role (hierarchical, `sre` ⊇ `oncall`).
 
 ### Claims wiring (minimum)
 - Standard OIDC profile claims (`sub`, `email`, `name`).
