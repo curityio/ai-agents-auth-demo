@@ -1,0 +1,201 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway config — federated MCP front door for mcp-observability + mcp-ops.
+# Validated against agentgateway v1.3.1 (ghcr.io/agentgateway/agentgateway:latest,
+# git dbaaf7e). See .superpowers/sdd/task-5-report.md for the full spike record.
+#
+# ============================================================================
+# SPIKE OUTCOME (Task 5 Step 1): OUTCOME B — PATH-ROUTED. VERIFIED locally.
+# ----------------------------------------------------------------------------
+# The `mcp` CEL context (`mcp.tool.target` / `mcp.tool.name`) is NOT available
+# inside the `extAuthz` policy. extAuthz runs at the HTTP layer *before* MCP
+# tool multiplexing resolution, so any `mcp.*` reference in extAuthz
+# `addRequestHeaders` evaluates to undefined and agentgateway silently drops the
+# ENTIRE computed header map (including mcp-free headers in the same block).
+#
+# Proven with a local run (agentgateway v1.3.1 + two stdio `server-everything`
+# stubs + an echo authz server):
+#   - `x-static-test: '"STATIC_OK"'`  -> arrived at the shim  (addRequestHeaders works)
+#   - `x-req-path: request.path`      -> arrived (`/mcp`)      (request.* works)
+#   - `x-mcp-toolname: has(mcp.tool) ? mcp.tool.name : "NO_MCP_CTX"` -> "NO_MCP_CTX"
+#   - a header referencing `mcp.tool.target` -> dropped, and dropped its siblings too
+#   Meanwhile the gateway's own request log DID resolve `mcp.target=ops` — the
+#   target is known internally but not exposed to the extAuthz CEL scope.
+# => Federation-with-dynamic-audience is impossible on v1.3.1. We path-route:
+#    one route per backend, each with a STATIC x-target-audience. The single
+#    external MCP endpoint is preserved *logically* (one gateway, one listener,
+#    :8080) but split into /observability/mcp and /ops/mcp. Callers pick the path.
+#    The federated single-endpoint variant is kept at
+#    k8s/workloads/agentgateway-config.federated.yaml for when/if a future
+#    agentgateway release exposes mcp.* to extAuthz (re-run the spike to confirm).
+#
+# VERIFIED behaviors of THIS design (local run, same harness):
+#   - JWT validation (issuer/aud=mcp-gateway/jwks) gates every request (200 vs 401).
+#   - mcpAuthorization runs at the MCP layer where mcp.tool.name IS available:
+#     tools/list with a read-only token OMITS the gated tool; an ops:write token
+#     includes it (12 vs 13 tools in the stub). call is denied without ops:write.
+#   - Static `x-target-audience: mcp-ops` / `mcp-observability` reaches the shim.
+#   - The caller token reaches the shim via `jwt.rawToken.unredacted()` — NOT via
+#     `request.headers["authorization"]`, which the JWT layer strips before extAuthz
+#     (verified: request.headers["authorization"] arrived ABSENT; the rawToken form
+#     arrived byte-identical to the original bearer). This corrects the brief.
+#
+# ============================================================================
+# SCHEMA NOTES (what is CONFIRMED vs ASSUMED)
+# ----------------------------------------------------------------------------
+# CONFIRMED against v1.3.1 schema/config.json + examples + a passing --validate-only:
+#   - binds[].listeners[].routes[].matches[].path.pathPrefix
+#   - route policies: mcpAuthentication, mcpAuthorization, extAuthz, transformations
+#     (all keys on the FilterOrPolicy schema def)
+#   - mcpAuthentication REQUIRES `resourceMetadata` (issuer/audiences/jwks.url|file,
+#     resourceMetadata.{resource,scopesSupported,bearerMethodsSupported})
+#   - mcpAuthorization.rules: []CEL over `mcp.tool.name`, `jwt.<claim>`
+#   - extAuthz: `host: <hostname:port>` (schema oneOf: host | service | backend),
+#     failureMode, protocol.http.{path,addRequestHeaders,metadata} (all CEL),
+#     metadata exposed under the `extauthz` var, cache.{key[],ttl,maxEntries}
+#   - transformations.request.set.<header>: CEL  (LocalTransformationConfig/LocalTransform)
+#   - backends[].mcp.targets[].mcp.{host,port,path}
+# CAVEAT / to re-verify on the deployed build:
+#   - `metadata.token`/`expires` var wiring past a REAL shim response was not run to
+#     completion (the echo stub returned a token and the transformation applied it;
+#     `unvalidatedJwtPayload(...).exp` for cache TTL was schema-valid but its runtime
+#     value was not asserted — see report). Left OUT of the primary config's cache to
+#     avoid an unproven expression; a simple duration TTL is used instead.
+#   - YAML FOOT-GUN: a CEL ternary `A ? B : C` written UNQUOTED is parsed by YAML as a
+#     complex mapping key (`?`/`:`) and fails as "expected a string". All CEL here is
+#     single-quoted. (Not triggered in this file — no ternaries remain — but noted.)
+#
+# ============================================================================
+# DEPLOYMENT
+#   Mount this file into the agentgateway pod and run `agentgateway --file <path>`.
+#   The exchange-shim runs co-located (same pod, localhost:8090) — see apps/exchange-shim.
+#   In-cluster JWKS URL is istiod-style loopback-safe (plain-HTTP Service DNS), per
+#   CLAUDE.md fact #5/#21: pods cannot resolve curity.localtest.me to the gateway.
+# ============================================================================
+
+binds:
+- port: 8080
+  listeners:
+  - name: mcp
+    protocol: HTTP
+    routes:
+
+    # ------------------------------------------------------------------ #
+    # Observability backend  ->  GET/POST {gateway}:8080/observability/mcp
+    # Read-only tools: list_pods, get_pod_logs, get_deployment.
+    # Audience narrowed to mcp-observability; the shim maps that audience to
+    # the obs:read scope from its own allow-list (never a caller-supplied scope).
+    # ------------------------------------------------------------------ #
+    - name: observability
+      matches:
+      - path:
+          pathPrefix: /observability/mcp
+      policies:
+        mcpAuthentication:
+          issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
+          audiences:
+          - mcp-gateway
+          jwks:
+            url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
+          resourceMetadata:
+            resource: https://mcp-gateway.localtest.me/observability/mcp
+            scopesSupported:
+            - obs:read
+            bearerMethodsSupported:
+            - header
+        # Read tier: obs:read required for every observability tool (mirrors the
+        # ops tier's ops:write invariant). Reads are unprivileged — no role gate.
+        mcpAuthorization:
+          rules:
+          - '"obs:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
+        extAuthz:
+          host: localhost:8090
+          failureMode: deny
+          protocol:
+            http:
+              path: '"/exchange"'
+              addRequestHeaders:
+                # Original caller bearer. Must come from jwt.rawToken.unredacted():
+                # the JWT auth layer strips request.headers["authorization"] before
+                # extAuthz runs (VERIFIED). The shim strips the "Bearer " prefix.
+                x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
+                # Static per-route audience — no mcp.* dependency (Outcome B).
+                # The shim derives the scope from this audience; NO x-target-scope.
+                x-target-audience: '"mcp-observability"'
+              metadata:
+                token: json(response.body).access_token
+        transformations:
+          request:
+            set:
+              authorization: '"Bearer " + extauthz.token'
+      backends:
+      - mcp:
+          targets:
+          - name: observability
+            mcp:
+              host: mcp-observability.mcp.svc.cluster.local
+              port: 8080
+              path: /mcp
+
+    # ------------------------------------------------------------------ #
+    # Ops backend  ->  GET/POST {gateway}:8080/ops/mcp
+    # Write tools: restart_deployment, scale_deployment (safe writes) and the
+    # SHOWCASE tool set_deployment_image (privileged). Audience narrowed to
+    # mcp-ops -> shim maps to ops:write scope.
+    # ------------------------------------------------------------------ #
+    - name: ops
+      matches:
+      - path:
+          pathPrefix: /ops/mcp
+      policies:
+        mcpAuthentication:
+          issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
+          audiences:
+          - mcp-gateway
+          jwks:
+            url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
+          resourceMetadata:
+            resource: https://mcp-gateway.localtest.me/ops/mcp
+            scopesSupported:
+            - ops:write
+            bearerMethodsSupported:
+            - header
+        # Per-tool RBAC (runs at the MCP layer where mcp.tool.name IS resolved):
+        #  - EVERY ops tool requires ops:write (the write-tier invariant).
+        #  - restart_deployment / scale_deployment: any write role (oncall OR sre).
+        #  - set_deployment_image: sre role ONLY (higher privilege — ship a new image).
+        # Tools the caller can't call are filtered from tools/list AND denied on call;
+        # a tool not matched by ANY rule is denied (default-deny).
+        mcpAuthorization:
+          rules:
+          # Tier: ops:write required for EVERY ops tool (restores the mcp-ops write-tier
+          # invariant). Per-tool role split, hierarchical (sre ⊇ oncall):
+          #  - restart/scale: any write role — on-call OR sre.
+          #  - set_deployment_image: sre only (shipping a new image is higher privilege).
+          # `roles` is propagated into the token by the Curity exchange procedure, so it
+          # is readable here as a list claim.
+          - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name in ["restart_deployment", "scale_deployment"] && ("oncall" in jwt.roles || "sre" in jwt.roles)'
+          - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name == "set_deployment_image" && "sre" in jwt.roles'
+        extAuthz:
+          host: localhost:8090
+          failureMode: deny
+          protocol:
+            http:
+              path: '"/exchange"'
+              addRequestHeaders:
+                x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
+                x-target-audience: '"mcp-ops"'
+              metadata:
+                token: json(response.body).access_token
+        transformations:
+          request:
+            set:
+              authorization: '"Bearer " + extauthz.token'
+      backends:
+      - mcp:
+          targets:
+          - name: ops
+            mcp:
+              host: mcp-ops.mcp.svc.cluster.local
+              port: 8080
+              path: /mcp
