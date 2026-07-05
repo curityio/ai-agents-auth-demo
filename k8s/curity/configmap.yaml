@@ -205,6 +205,10 @@ data:
                   <claims>email_verified</claims>
                 </scope>
                 <scope>
+                  <id>llm:invoke</id>
+                  <description>Invoke the LLM gateway on behalf of the user</description>
+                </scope>
+                <scope>
                   <id>obs:read</id>
                   <description>Allow the AI copilot to read pod status, logs, and metrics on your behalf.</description>
                 </scope>

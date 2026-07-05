@@ -65,13 +65,15 @@ var CLIENT_POLICY = {
   'https://copilot.localtest.me/.well-known/oauth-client': {
     perAudience: {
       'mcp-gateway': { scopes: ['obs:read'] },
-      'agent-specialist': { scopes: ['obs:read', 'ops:write'] }
+      'agent-specialist': { scopes: ['obs:read', 'ops:write'] },
+      'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/]
   },
   'https://specialist.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-gateway': { scopes: ['obs:read', 'ops:write'] }
+      'mcp-gateway': { scopes: ['obs:read', 'ops:write'] },
+      'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
   },
