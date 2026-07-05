@@ -160,26 +160,21 @@ binds:
             - ops:write
             bearerMethodsSupported:
             - header
-        # Per-tool RBAC (runs at the MCP layer where mcp.tool.name IS resolved).
-        # SHOW-BUT-DENY: rather than hide unauthorized tools from tools/list (which
-        # makes a denial look like a silent no-op to an LLM caller), we keep every
-        # ops tool VISIBLE to any ops:write caller and gate the CALL by role. A
-        # non-sre caller therefore SEES set_deployment_image, attempts it, and gets
-        # an explicit gateway denial the agent can relay — instead of a tool that
-        # silently doesn't exist. Rules are allow-only (OR semantics: a request is
-        # permitted iff at least one rule matches); mcp.method.name distinguishes
-        # tools/list from tools/call. `roles` is propagated by the Curity exchange
-        # procedure and readable here as a list claim.
+        # Tier gate: ops:write is required for every ops tool. The Curity exchange
+        # already requires a WRITE role (sre OR oncall) to issue ops:write, so every
+        # caller reaching this route holds one.
+        #
+        # The per-tool role SPLIT (set_deployment_image = sre only) is enforced at
+        # mcp-ops, NOT here. agentgateway couples tools/list visibility to call-authz
+        # — a tool the gateway won't let you CALL is also hidden from tools/list — so
+        # gating set_deployment_image here would make it invisible to an oncall caller,
+        # and its LLM would never attempt it (a silent no-op, not a legible denial).
+        # Keeping every ops tool visible + callable at the gateway lets mcp-ops return
+        # an explicit "requires the sre role" error the agent relays. See mcp-ops
+        # config.ts `setImageRequiredRoles` + mcp.ts.
         mcpAuthorization:
           rules:
-          # Visibility: any ops:write caller may LIST tools (and any non-call MCP
-          # method) — so set_deployment_image appears in tools/list even for oncall.
-          - '"ops:write" in (jwt.scope.split(" ")) && mcp.method.name != "tools/call"'
-          # CALL restart/scale: any write role (oncall OR sre), hierarchical sre ⊇ oncall.
-          - '"ops:write" in (jwt.scope.split(" ")) && mcp.method.name == "tools/call" && mcp.tool.name in ["restart_deployment", "scale_deployment"] && ("oncall" in jwt.roles || "sre" in jwt.roles)'
-          # CALL set_deployment_image: sre ONLY (shipping a new image is higher
-          # privilege). oncall sees it (rule 1) but this call is denied → legible.
-          - '"ops:write" in (jwt.scope.split(" ")) && mcp.method.name == "tools/call" && mcp.tool.name == "set_deployment_image" && "sre" in jwt.roles'
+          - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name in ["restart_deployment", "scale_deployment", "set_deployment_image"]'
         extAuthz:
           host: localhost:8090
           failureMode: deny

@@ -27,6 +27,7 @@ const cfg: Config = {
     /^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/,
   ],
   targetNamespace: 'prod',
+  setImageRequiredRoles: ['sre'],
   requiredAcr: 'mfa',
   resourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
   curityTokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',

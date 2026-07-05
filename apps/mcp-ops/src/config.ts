@@ -11,6 +11,14 @@ export interface Config {
   expectedActorChain: RegExp[];
   /** Target namespace for restart actions; forwarded to ops-api. */
   targetNamespace: string;
+  /**
+   * Roles allowed to call `set_deployment_image` (the privileged image-update
+   * tool). The caller needs AT LEAST ONE. The agentgateway can't express this
+   * per-tool split without hiding the tool (see agentgateway-config.yaml), so
+   * mcp-ops enforces it here and returns a legible denial. `roles` is propagated
+   * onto every OBO hop by the Curity exchange procedure.
+   */
+  setImageRequiredRoles: string[];
   requiredAcr: string;
   resourceMetadataUrl: string;
   // mcp-ops is also a confidential client that exchanges to ops-api.
@@ -47,6 +55,9 @@ export function loadConfig(): Config {
       SPIFFE_AGENT('agent-copilot'),
     ],
     targetNamespace: process.env.TARGET_NAMESPACE ?? 'prod',
+    setImageRequiredRoles: (process.env.SET_IMAGE_REQUIRED_ROLES ?? 'sre')
+      .split(/\s+/)
+      .filter(Boolean),
     requiredAcr: process.env.REQUIRED_ACR ?? 'mfa',
     resourceMetadataUrl:
       process.env.RESOURCE_METADATA_URL ??
