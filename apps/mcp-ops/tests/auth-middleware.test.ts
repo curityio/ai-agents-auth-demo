@@ -22,6 +22,7 @@ const cfg: Config = {
   expectedAudience: 'mcp-ops',
   requiredScopes: ['ops:write'],
   expectedActorChain: [
+    /^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/,
     /^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/,
     /^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/,
   ],
@@ -36,6 +37,7 @@ const cfg: Config = {
   opsApiScope: 'ops:write',
 };
 
+const GATEWAY = 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway';
 const SPECIALIST = 'spiffe://demo.curity.local/ns/agents/sa/agent-specialist';
 const COPILOT = 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot';
 const STRANGER = 'spiffe://demo.curity.local/ns/agents/sa/agent-rogue';
@@ -115,7 +117,7 @@ describe('authMiddleware', () => {
 
   it('403 insufficient_scope when ops:write missing', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+      payload: { act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } } },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['obs:read']),
     });
@@ -155,7 +157,7 @@ describe('authMiddleware', () => {
 
   it('403 act_chain_order when specialist is on the inside', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: COPILOT, act: { sub: SPECIALIST } } },
+      payload: { act: { sub: GATEWAY, act: { sub: COPILOT, act: { sub: SPECIALIST } } } },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['ops:write']),
     });
@@ -163,12 +165,12 @@ describe('authMiddleware', () => {
     const next = vi.fn();
     await authMiddleware(cfg)(mockReq('Bearer x'), res, next);
     expect(res.statusCode).toBe(403);
-    expect(res.body).toMatchObject({ error: 'act_chain_order', position: 0 });
+    expect(res.body).toMatchObject({ error: 'act_chain_order', position: 1 });
   });
 
   it('403 act_chain_unknown when an actor is not in the expected chain', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: STRANGER, act: { sub: COPILOT } } },
+      payload: { act: { sub: GATEWAY, act: { sub: STRANGER, act: { sub: COPILOT } } } },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['ops:write']),
     });
@@ -176,12 +178,15 @@ describe('authMiddleware', () => {
     const next = vi.fn();
     await authMiddleware(cfg)(mockReq('Bearer x'), res, next);
     expect(res.statusCode).toBe(403);
-    expect(res.body).toMatchObject({ error: 'act_chain_unknown', position: 0, sub: STRANGER });
+    expect(res.body).toMatchObject({ error: 'act_chain_unknown', position: 1, sub: STRANGER });
   });
 
-  it('calls next() on the canonical depth-2 chain', async () => {
+  it('calls next() on the canonical depth-3 chain', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: SPECIALIST, act: { sub: COPILOT } }, acr: 'mfa' },
+      payload: {
+        act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+        acr: 'mfa',
+      },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['ops:write']),
     });
@@ -194,7 +199,10 @@ describe('authMiddleware', () => {
 
   it('401 insufficient_user_authentication when acr is not mfa', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: SPECIALIST, act: { sub: COPILOT } }, acr: 'password' },
+      payload: {
+        act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+        acr: 'password',
+      },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['ops:write']),
     });
@@ -211,7 +219,7 @@ describe('authMiddleware', () => {
 
   it('401 insufficient_user_authentication when acr claim is absent', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
-      payload: { act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+      payload: { act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } } },
       protectedHeader: { alg: 'RS256' },
       scopes: new Set(['ops:write']),
     });

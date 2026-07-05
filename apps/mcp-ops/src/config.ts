@@ -6,7 +6,7 @@ export interface Config {
   requiredScopes: string[];
   /**
    * Required ordering of the inbound `act` chain, OUTER → INNER.
-   *   outer = agent-specialist, inner = agent-copilot
+   *   outer = agentgateway, middle = agent-specialist, inner = agent-copilot
    */
   expectedActorChain: RegExp[];
   /** Target namespace for restart actions; forwarded to ops-api. */
@@ -31,6 +31,9 @@ function required(name: string): string {
 const SPIFFE_AGENT = (name: string): RegExp =>
   new RegExp(`^spiffe://demo\\.curity\\.local/ns/agents/sa/${name}$`);
 
+const SPIFFE_ID = (ns: string, sa: string): RegExp =>
+  new RegExp(`^spiffe://demo\\.curity\\.local/ns/${ns}/sa/${sa}$`);
+
 export function loadConfig(): Config {
   return {
     port: Number(process.env.PORT ?? 8080),
@@ -38,7 +41,11 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.MCP_AUDIENCE ?? 'mcp-ops',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'ops:write').split(/\s+/).filter(Boolean),
-    expectedActorChain: [SPIFFE_AGENT('agent-specialist'), SPIFFE_AGENT('agent-copilot')],
+    expectedActorChain: [
+      SPIFFE_ID('mcp', 'agentgateway'),
+      SPIFFE_AGENT('agent-specialist'),
+      SPIFFE_AGENT('agent-copilot'),
+    ],
     targetNamespace: process.env.TARGET_NAMESPACE ?? 'prod',
     requiredAcr: process.env.REQUIRED_ACR ?? 'mfa',
     resourceMetadataUrl:

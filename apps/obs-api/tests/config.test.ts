@@ -25,10 +25,12 @@ describe('loadConfig (obs-api)', () => {
     expect(cfg.expectedActorChains.map((c) => c.map((re) => re.source))).toEqual([
       [
         '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/mcp-observability$',
+        '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/agentgateway$',
         '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/agents\\/sa\\/agent-copilot$',
       ],
       [
         '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/mcp-observability$',
+        '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/mcp\\/sa\\/agentgateway$',
         '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/agents\\/sa\\/agent-specialist$',
         '^spiffe:\\/\\/demo\\.curity\\.local\\/ns\\/agents\\/sa\\/agent-copilot$',
       ],
@@ -38,5 +40,16 @@ describe('loadConfig (obs-api)', () => {
   it('throws when a required env var is missing', () => {
     delete process.env.CURITY_JWKS_URI;
     expect(() => loadConfig()).toThrow(/CURITY_JWKS_URI/);
+  });
+
+  it('accepts the agentgateway position in both read chains', () => {
+    const cfg = loadConfig();
+    const gw = 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway';
+    // Path A: [obs-mcp, gateway, copilot]
+    expect(cfg.expectedActorChains[0]![1]!.test(gw)).toBe(true);
+    expect(cfg.expectedActorChains[0]!.length).toBe(3);
+    // Path B: [obs-mcp, gateway, specialist, copilot]
+    expect(cfg.expectedActorChains[1]![1]!.test(gw)).toBe(true);
+    expect(cfg.expectedActorChains[1]!.length).toBe(4);
   });
 });
