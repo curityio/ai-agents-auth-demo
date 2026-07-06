@@ -199,6 +199,29 @@ agent-specialist ─┤    (subject = user, actor = agent SPIFFE JWT-SVID)
   request shows the `/llm` span with `gen_ai.*` attributes attributed to the
   user.
 
+## Hardening learned during live bring-up (2026-07-06)
+
+The build-time plan captured the *shape* of the hop but under-specified two things
+that only surfaced against the live cluster. Both are now documented canonically in
+`docs/design.md` §3.6 and `CLAUDE.md` facts #23/#24:
+
+1. **`llm:invoke` propagation.** The plan granted the scope to the agent→gateway
+   exchange policy but not the rest of the delegation chain. Because the exchange
+   narrows `requested ∩ subject ∩ policy`, `llm:invoke` must be granted at **eight**
+   places (global def; each agent's `llm-gateway` policy; the web-app client; the
+   `<ephemeral-client>`; the web login scope; the **step-up re-auth scope**, which
+   overrides the login default; and — for the specialist's calls during a restart —
+   the copilot's `agent-specialist` delegation policy **and** its requested
+   `SPECIALIST_SCOPE`). Symptoms when a link is missing: `invalid_scope: no scope
+   intersects subject + policy`, or `No valid scope was requested` if a *client*
+   isn't allowed to request it.
+2. **Gateway external DNS.** agentgateway's Rust resolver can't reach the public
+   Azure host under the pod's default `ndots:5` (fails `503 NoHealthyBackend`, "DNS
+   resolution which failed", while glibc/Node succeed). Fixed with
+   `config.dns.lookupFamily: V4Only` (Azure has no AAAA) + `edns0: true` (the
+   multi-record A answer overflows 512-byte UDP without EDNS0). `ndots:1` alone is
+   insufficient.
+
 ## Docs to update (part of the work, not a follow-up)
 
 - `CLAUDE.md`: extend the topology diagram with the LLM egress hop; add a

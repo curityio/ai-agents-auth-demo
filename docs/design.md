@@ -239,7 +239,7 @@ The per-client policy as configured:
 
 | Client (`CLIENT_POLICY` key) | Audience → scopes | Allowed actor SPIFFE ID |
 |---|---|---|
-| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-copilot` |
+| `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write llm:invoke`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-copilot` |
 | `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read ops:write`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-specialist` |
 | `mcp-gateway` | `mcp-observability`→`obs:read`; `mcp-ops`→`ops:write` | `…/ns/mcp/sa/agentgateway` |
 | `mcp-ops` | `ops-api`→`ops:write` | `…/ns/mcp/sa/mcp-ops` |
@@ -364,6 +364,46 @@ Both agents route every Azure OpenAI call through agentgateway's OpenAI-compatib
   policy table in §3.2). There is **no new Curity client** for this hop —
   `llm-gateway` is just an audience the gateway validates; since the route does
   no re-exchange, it needs no client secret or shim.
+
+#### `llm:invoke` is a user-delegated scope — it must be granted at every hop that narrows it
+
+`llm:invoke` originates in the **user's** access token (the LLM call is
+on-behalf-of the user) and is then narrowed down the delegation chain by RFC 8693
+exchanges. Curity's exchange procedure computes `requested ∩ subject ∩ policy` at
+each hop (`token-exchange.js`), so the scope drops out of the chain the moment any
+one link omits it. Granting it end-to-end touches **eight** places — miss one and
+the exchange fails with `invalid_scope: no scope intersects subject + policy` (or,
+if the *client* isn't allowed to request it, Curity's `No valid scope was
+requested`). The full grant map:
+
+| # | Where | Purpose |
+|---|-------|---------|
+| 1 | `configmap.yaml` global `<scopes>` | the scope exists at all |
+| 2 | `token-exchange.js` `perAudience` `llm-gateway → llm:invoke` (both agents) | an agent may narrow to it for `aud=llm-gateway` |
+| 3 | `configmap.yaml` **web-app** client `<scope>llm:invoke` | the user's login token *may* carry it |
+| 4 | `configmap.yaml` **`<ephemeral-client>`** `<scope>llm:invoke` | the agents (CIMD clients) may *request* it in an exchange |
+| 5 | `apps/web/src/auth.ts` login `scope` | the user token *does* carry it after login |
+| 6 | `apps/web/src/app/chat.tsx` step-up re-auth `scope` | the **post-MFA** token keeps it (the step-up scope string *overrides* the login default — omitting it silently strips `llm:invoke` on the privileged path) |
+| 7 | `token-exchange.js` `perAudience` `agent-specialist → …llm:invoke` (copilot) | the copilot→specialist **delegation** token carries it |
+| 8 | copilot `SPECIALIST_SCOPE` (`agent-copilot.yaml` env + `config.ts` default) | the copilot *requests* it in the A2A delegation exchange |
+
+  Rows 1–5 cover the copilot's direct `/llm` calls (read flow); 6–8 additionally
+  cover the specialist's `/llm` calls during a privileged remediation (restart
+  flow), because the specialist's *subject* token is the `aud=agent-specialist`
+  token the copilot mints for it.
+
+- **External DNS egress for the gateway.** The `/llm` backend is a public Azure
+  host, so agentgateway must resolve an external name — unlike every other backend
+  (all in-cluster `*.svc.cluster.local`). agentgateway's Rust (hickory) resolver
+  inherits the pod's `resolv.conf` (`ndots:5`, cluster search domains) and, with
+  defaults, fails on the external host with `503 "backends required DNS resolution
+  which failed" (NoHealthyBackend)` where glibc/Node succeed. Two causes, both
+  fixed via the config schema's top-level `config.dns` block
+  (`k8s/workloads/agentgateway-config.yaml`): the Azure host has **no AAAA record**
+  (`ENODATA`) so `lookupFamily: V4Only` drops the IPv6 lookup, and its A answer is a
+  CNAME chain + several records that overflows the 512-byte UDP limit so
+  `edns0: true` lets CoreDNS return it whole (without EDNS the truncated response is
+  not recovered). In-cluster backends are unaffected (single small A records).
 
 ---
 

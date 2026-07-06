@@ -299,6 +299,34 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     client (`buildLlm` gateway mode) points `baseURL` at `.../llm` and passes the
     exchanged JWT as the OpenAI bearer. Agents no longer hold `AZURE_OPENAI_API_KEY`.
 
+23. **`llm:invoke` is user-delegated and must be granted at EVERY narrowing hop —
+    eight places.** It starts in the user's token and is narrowed down the chain by
+    RFC 8693 (`requested ∩ subject ∩ policy` in `token-exchange.js`); miss one link
+    and you get `invalid_scope: no scope intersects subject + policy` (or, if a
+    client may not request it, `No valid scope was requested`). Grant it in: (1) the
+    global `<scopes>` def; (2) each agent's `perAudience llm-gateway→llm:invoke`;
+    (3) the **web-app** client `<scope>`; (4) the **`<ephemeral-client>`** `<scope>`
+    (agents are CIMD ephemeral clients — this is what lets them *request* it); (5)
+    the web login scope (`auth.ts`); (6) the **step-up re-auth scope** (`chat.tsx` —
+    it *overrides* the login default, so the post-MFA/restart token silently loses
+    `llm:invoke` if omitted); (7) the copilot's `perAudience agent-specialist→…llm:invoke`
+    and (8) the copilot's requested `SPECIALIST_SCOPE` (env + `config.ts`) — because
+    the specialist's subject token IS the copilot's `aud=agent-specialist` delegation
+    token. 1–5 = copilot read flow; 6–8 additionally = specialist restart flow. See
+    `docs/design.md` §3.6 for the full table.
+
+24. **agentgateway's Rust resolver needs `config.dns` tuning to reach external
+    hosts (the Azure `/llm` backend).** Every other backend is in-cluster; Azure is a
+    public name. With the pod's default `resolv.conf` (`ndots:5`) agentgateway's
+    hickory resolver fails the external lookup with `503 "backends required DNS
+    resolution which failed" (NoHealthyBackend)` while glibc/Node in the same cluster
+    resolve it fine. Fix in the config's top-level `config.dns` block:
+    `lookupFamily: V4Only` (the Azure host has **no AAAA** → `ENODATA`; cluster is
+    all-IPv4) and `edns0: true` (its A answer is a CNAME chain + several records that
+    overflows the 512-byte UDP limit → truncated and unrecovered without EDNS0).
+    `ndots:1` alone does NOT fix it. In-cluster backends (single small A records) are
+    unaffected.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:

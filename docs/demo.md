@@ -231,6 +231,13 @@ make smoke-llm         # LLM egress only: positive chat completion via /llm, a
                         # (needs SMOKE_SUBJECT_TOKEN — a fresh access token for alice)
 ```
 
+> **`SMOKE_SUBJECT_TOKEN` must carry `llm:invoke`.** The LLM beat exchanges the
+> subject token down to `aud=llm-gateway`, which only works if the login token
+> already holds `llm:invoke` (the web app requests `openid obs:read llm:invoke` at
+> login; the MFA step-up re-auth keeps it). Grab the token *after* a normal alice
+> login — an older token minted before the `llm:invoke` grant will fail the
+> exchange with `invalid_scope`. See `docs/design.md` §3.6 for the full grant map.
+
 ---
 
 ## 6. Observability walkthrough
