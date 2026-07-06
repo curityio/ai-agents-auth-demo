@@ -63,6 +63,18 @@ spec:
       labels: { app: agentgateway }
     spec:
       serviceAccountName: agentgateway
+      # agentgateway's Rust (hickory) resolver inherits ndots:5 from the pod's
+      # resolv.conf. External hostnames like the Azure OpenAI endpoint
+      # (<resource>.openai.azure.com, 3 dots < 5) are then treated as non-absolute:
+      # the resolver tries the cluster search domains first and — unlike glibc —
+      # fails to fall through to the absolute name, so the /llm backend fails with
+      # "DNS resolution which failed" (NoHealthyBackend/503). ndots:1 makes any name
+      # with >=1 dot resolve as-absolute; all in-cluster backends are already FQDNs
+      # (*.svc.cluster.local), so they're unaffected.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       volumes:
         - name: spiffe-workload-api
           csi:
