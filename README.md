@@ -17,7 +17,10 @@ Built with:
   (Streamable HTTP) for tool invocation.
 - **agentgateway** — a standalone MCP front door (JWT + per-tier scope authz +
   `tools/list` filtering) whose co-located `exchange-shim` sidecar runs the
-  per-backend RFC 8693 OBO exchange for every tool call.
+  per-backend RFC 8693 OBO exchange for every tool call. It is **also the LLM
+  egress gateway**: both agents exchange for `aud=llm-gateway`/`scope=llm:invoke`
+  and call its OpenAI-compatible `/llm` route, which holds the only Azure OpenAI
+  key in the system — the agents never possess it.
 - **OpenTelemetry → Tempo → Grafana** — identity-decorated distributed tracing.
 - Modern OAuth standards: **RFC 8693** (token exchange), **RFC 9470** (step-up),
   **RFC 9728** (protected-resource metadata), and **CIMD** (Client ID Metadata
@@ -36,9 +39,12 @@ and deny by role. Three identity planes — **human** (OIDC), **workload**
 
 ```
 Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+                                                        ├─ LLM ─▶ agentgateway ─▶ Azure OpenAI
                                                         └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s
-                                                                                    └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+                                                                                    ├─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+                                                                                    └─ LLM ─▶ agentgateway ─▶ Azure OpenAI
               agentgateway = MCP front door (aud=mcp-gateway; per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
+                           + LLM egress   (/llm; aud=llm-gateway + scope=llm:invoke; injects the only Azure key — no shim, no act-chain)
               every agent/MCP hop ⇄ Curity (RFC 8693 exchange, SPIFFE actor_token)
 ```
 
@@ -65,8 +71,11 @@ make tools-check
 Two things `make tools-check` can't check for — have them ready before `make demo`:
 
 - **Curity developer license** → save it as `./license.json` at the repo root (gitignored).
-- **Azure OpenAI** endpoint + API key — both agents are LLM agents, so without it
-  they can't respond. `make demo` prompts for these (via `make seed-secrets`).
+- **Azure OpenAI** endpoint + API key — the agents' reasoning runs on it, so
+  without it they can't respond. The key is seeded **only into the agentgateway**
+  (`agentgateway-llm` secret, ns `mcp`); the agents reach Azure through the
+  gateway's `/llm` route and never hold the key themselves. `make demo` prompts
+  for these (via `make seed-secrets` → `seed-llm-secret`).
 
 `make demo` generates the local mkcert CA (via `make certs`) but, by default,
 does **not** register it in your macOS keychain / browser trust store — so the
