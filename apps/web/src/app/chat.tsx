@@ -365,7 +365,11 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                   {
                     acr_values: stepUp.acrValues,
                     prompt: 'login consent',
-                    scope: `openid obs:read ${stepUp.scope}`,
+                    // Keep llm:invoke on the step-up re-auth: this scope string
+                    // OVERRIDES the login default, so omitting it would strip
+                    // llm:invoke from the post-MFA token and break the agents' LLM
+                    // egress during the privileged remediation.
+                    scope: `openid obs:read llm:invoke ${stepUp.scope}`,
                   },
                 );
               }}
