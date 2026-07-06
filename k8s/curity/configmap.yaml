@@ -515,6 +515,7 @@ data:
                 <scopes>
                   <scope>obs:read</scope>
                   <scope>ops:write</scope>
+                  <scope>llm:invoke</scope>
                 </scopes>
                 <!-- Mandatory: restrict the dereferenceable client_id hosts. The two
                      agents publish their CIMD documents under *.localtest.me. -->
