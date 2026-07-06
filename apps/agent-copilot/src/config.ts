@@ -54,9 +54,11 @@ export function loadConfig(): Config {
       process.env.SPECIALIST_A2A_URL ??
       'http://agent-specialist.agents.svc.cluster.local:8082/a2a',
     specialistAudience: process.env.SPECIALIST_AUDIENCE ?? 'agent-specialist',
-    // Ask for BOTH scopes — copilot's policy in Curity allows them under this
-    // audience, and the specialist re-checks that ops:write is present.
-    specialistScope: process.env.SPECIALIST_SCOPE ?? 'obs:read ops:write',
+    // Ask for read + write + llm:invoke — copilot's policy in Curity allows them
+    // under this audience. The specialist re-checks ops:write, and needs
+    // llm:invoke in its delegated subject token to exchange to aud=llm-gateway
+    // for its own reasoning hop (else its LLM egress fails mid-remediation).
+    specialistScope: process.env.SPECIALIST_SCOPE ?? 'obs:read ops:write llm:invoke',
     llmProvider: provider,
     llmModel:
       process.env.LLM_MODEL ??

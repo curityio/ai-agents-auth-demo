@@ -108,7 +108,7 @@ spec:
             - name: SPECIALIST_AUDIENCE
               value: agent-specialist
             - name: SPECIALIST_SCOPE
-              value: obs:read ops:write
+              value: obs:read ops:write llm:invoke
             - name: LLM_PROVIDER
               value: gateway
             - name: LLM_MODEL
