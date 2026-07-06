@@ -73,6 +73,20 @@
 #   CLAUDE.md fact #5/#21: pods cannot resolve curity.localtest.me to the gateway.
 # ============================================================================
 
+# DNS resolver tuning for external egress (the /llm azure backend).
+# agentgateway's Rust (hickory) resolver otherwise fails to resolve the public
+# Azure host with "DNS resolution which failed" (NoHealthyBackend/503), while
+# glibc/Node in the same cluster resolves it fine. Two observed causes:
+#   - The Azure host has NO AAAA record (ENODATA); the default lookup family
+#     queries IPv6 too. This cluster is all-IPv4 → force V4Only.
+#   - The A answer is a CNAME chain + several records that overflows the 512-byte
+#     UDP limit; without EDNS0 the response is truncated and the resolver fails
+#     to recover. edns0 advertises a larger UDP buffer so CoreDNS returns it whole.
+config:
+  dns:
+    lookupFamily: V4Only
+    edns0: true
+
 binds:
 - port: 8080
   listeners:
