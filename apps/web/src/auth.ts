@@ -33,9 +33,11 @@ export const authConfig: NextAuthConfig = {
         // params win and are forwarded to Curity.  Step-up overrides acr_values
         // and prompt per-request (e.g. acr_values=mfa, prompt=login).
         params: {
-          scope: 'openid obs:read',
-          // Least-privilege: only request read-only observability at login.
-          // ops:write is obtained on-demand via RFC 9470 step-up (MFA).
+          scope: 'openid obs:read llm:invoke',
+          // Least-privilege: request read-only observability + the unprivileged
+          // LLM-egress scope at login (both are non-MFA). The user consents to
+          // llm:invoke so agents can exchange it to aud=llm-gateway on their
+          // behalf. ops:write is obtained on-demand via RFC 9470 step-up (MFA).
           acr_values: 'html-form',
           prompt: 'consent',
         },
