@@ -81,7 +81,6 @@ export function buildLastTokenHandlers(cfg: Config): {
           hop: 'mcp-observability → obs-api',
           header: decodePart(last.accessToken, 0),
           payload: decodePart(last.accessToken, 1),
-          // Raw JWT only when explicitly requested (debug inspect).
           ...(includeRaw ? { token: last.accessToken } : {}),
         });
       }

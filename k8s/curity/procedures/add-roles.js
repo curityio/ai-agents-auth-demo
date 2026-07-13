@@ -8,7 +8,6 @@
  * @returns {*}
  */
 function result(context) {
-  // the 'context.attributeMap' content comes from the configured 'attributes-location' (subject-attributes, context-attributes, or action-attributes)
   var attributes = context.attributeMap;
 
   if (attributes.subject == 'alice') {
@@ -26,6 +25,5 @@ function result(context) {
     attributes.requireSecondFactor = true;
   }
 
-  // the returned attributes will be assigned to the configured 'attributes-location'
   return attributes;
 }

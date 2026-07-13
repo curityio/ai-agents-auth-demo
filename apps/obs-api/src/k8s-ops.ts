@@ -113,8 +113,6 @@ export async function getDeployment(name: string, namespace: string): Promise<De
     headline: '→ K8s API get deployment',
     fields: { namespace, deployment: name, verb: 'get', resource: 'deployments' },
   });
-  // @kubernetes/client-node 0.22.x readNamespacedDeployment positional args:
-  //   (name, namespace, pretty?)
   const res = await appsV1().readNamespacedDeployment(name, namespace);
   return toDeploymentSummary(res.body);
 }

@@ -1,8 +1,8 @@
 # Istio-native L7 authorization for the backend resource servers (apis tier).
 #
-# Mirrors k8s/istio/mcp-l7-authz.yaml: a RequestAuthentication validates the Curity
-# JWT at the waypoint, and per-Service AuthorizationPolicies do a coarse, default-deny
-# early-deny on caller identity + audience + scope. Two complementary checks:
+# A RequestAuthentication validates the Curity JWT at the waypoint, and per-Service
+# AuthorizationPolicies do a coarse, default-deny early-deny on caller identity +
+# audience + scope. Two complementary checks:
 #
 #  1. CALLER-IDENTITY PINNING (the unique part). Each API only accepts connections
 #     whose mTLS peer identity (cluster.local SPIFFE, established by ztunnel) is the
@@ -28,8 +28,8 @@
 # the TLS-terminating edge) and inlines it into the waypoint Envoy, refreshing
 # automatically — no snapshot step.
 #
-# Prereqs: the k8s Gateway API CRDs (already installed for the mcp waypoint — see
-# CLAUDE.md #21) and the apis namespace enrolled in ambient (k8s/namespaces.yaml).
+# Prereqs: the k8s Gateway API CRDs (this waypoint is their only remaining consumer)
+# and the apis namespace enrolled in ambient (k8s/namespaces.yaml).
 # The obs-api / ops-api Services opt in via `istio.io/use-waypoint: apis-waypoint`
 # (added to k8s/workloads/{obs,ops}-api.yaml).
 apiVersion: gateway.networking.k8s.io/v1

@@ -20,7 +20,8 @@
 # NOTE: `agentgateway-curity` Secret (CURITY_CLIENT_SECRET) is created out-of-band
 # via `make seed-gateway-secret`. The `agentgateway-config` ConfigMap is generated
 # from k8s/workloads/agentgateway-config.yaml by `make apply` (do not hand-duplicate).
-# Do NOT add the `istio.io/use-waypoint` label — the waypoint is removed in Task 7.
+# Do NOT add the `istio.io/use-waypoint` label — MCP L7 authz runs in this gateway
+# itself; there is no waypoint in front of the mcp namespace anymore.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -64,13 +65,12 @@ spec:
     spec:
       serviceAccountName: agentgateway
       # agentgateway's Rust (hickory) resolver inherits ndots:5 from the pod's
-      # resolv.conf. External hostnames like the Azure OpenAI endpoint
-      # (<resource>.openai.azure.com, 3 dots < 5) are then treated as non-absolute:
-      # the resolver tries the cluster search domains first and — unlike glibc —
-      # fails to fall through to the absolute name, so the /llm backend fails with
-      # "DNS resolution which failed" (NoHealthyBackend/503). ndots:1 makes any name
-      # with >=1 dot resolve as-absolute; all in-cluster backends are already FQDNs
-      # (*.svc.cluster.local), so they're unaffected.
+      # resolv.conf, which makes it walk the cluster search domains for external
+      # names like the Azure OpenAI endpoint. ndots:1 avoids those wasted lookups,
+      # but is NOT sufficient on its own for the /llm backend — the actual fix for
+      # the "DNS resolution which failed" (NoHealthyBackend/503) error is the
+      # `config.dns` block (lookupFamily: V4Only + edns0) in agentgateway-config.yaml.
+      # In-cluster backends are FQDNs (*.svc.cluster.local) and unaffected either way.
       dnsConfig:
         options:
           - name: ndots

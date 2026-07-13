@@ -196,7 +196,6 @@ async function stepUpFromMetadata(cfg: Config, deps: RemediationDeps): Promise<R
     scope = md.scopes_supported?.[0] ?? scope;
     acrValues = md.acr_values_supported?.[0] ?? acrValues;
   } catch (e) {
-    // fall back to cfg defaults, but leave a breadcrumb
     console.error('[agent-specialist] RFC 9728 metadata fetch failed, using defaults', e);
   }
   const err = new StepUpRequiredError({

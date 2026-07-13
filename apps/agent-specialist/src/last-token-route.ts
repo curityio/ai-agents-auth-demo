@@ -101,8 +101,6 @@ export function buildLastTokenHandlers(cfg: Config): {
         // mcp-ops → ops-api hop fetched with the ops:write-bound token.
         const ops = peekLastExchange();
         if (ops) {
-          // aud=mcp-gateway now (reached via the gateway); the gateway → mcp-ops +
-          // mcp-ops → ops-api legs come from the downstream passthrough walk.
           chain.push(decode('agent-specialist → agentgateway (ops:write)', ops.accessToken, includeRaw));
           const opsUrl = cfg.mcpOpsUrl.replace(/\/mcp\/?$/, '') + '/last-token';
           chain.push(...(await fetchDownstreamChain('mcp-ops', opsUrl, ops.accessToken, includeRaw)));

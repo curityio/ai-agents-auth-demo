@@ -22,8 +22,6 @@ export type Intent =
 
 // "restart"/"reboot"/"kick"/"bounce" (restart), "scale" (replicas),
 // "deploy"/"roll out"/"rollout"/"update image"/"set image"/"upgrade" (image).
-// All route to the privileged specialist; the discriminant stays `restart` for
-// back-compat — it means "any privileged write goal", not literally a restart.
 // The captured deployment name must be a DNS-1123 label. The `(update|set) …
 // image` alternative tolerates a filler word ("update the image of …").
 // Accepted limitation: a status phrasing that contains a privileged verb + a

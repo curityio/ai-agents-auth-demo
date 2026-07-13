@@ -47,7 +47,9 @@ gen_intermediate() {
   openssl req -new -key "$dir/ca-key.pem" \
     -subj "/O=$ORG/CN=$ORG $name intermediate CA" \
     -out "$dir/ca.csr"
-  # pathlen:0 — these intermediates sign leaf/lower-CA certs but not further CA tiers.
+  # pathlen:1 — leaves room for ONE lower CA tier: SPIRE's UpstreamAuthority signs
+  # SPIRE's own downstream signing CA from this intermediate. (istiod signs leaf
+  # workload certs directly, so the extra tier is unused but harmless there.)
   openssl x509 -req -in "$dir/ca.csr" -sha256 -days "$DAYS" \
     -CA "$OUT/root-cert.pem" -CAkey "$OUT/root-key.pem" -CAcreateserial \
     -extfile <(printf 'basicConstraints=critical,CA:TRUE,pathlen:1\nkeyUsage=critical,keyCertSign,cRLSign\n') \

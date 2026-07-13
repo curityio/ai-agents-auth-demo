@@ -25,9 +25,7 @@ beforeAll(async () => {
       res.end();
     });
   });
-  // Bind to an ephemeral port on loopback; the OS assigns a free one.
   await new Promise<void>((resolve) => collector!.listen(0, '127.0.0.1', resolve));
-  // Read the assigned port and steer this worker's OTLPTraceExporter at it.
   // The trace exporter appends `/v1/traces`; the sink accepts any path.
   const { port } = collector!.address() as AddressInfo;
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${port}`;

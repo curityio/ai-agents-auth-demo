@@ -31,7 +31,6 @@ export function buildIdentityAttributes(verified: VerifiedJwt): Attributes {
   if (verified.scopes.size > 0) attrs['auth.scope'] = [...verified.scopes].join(' ');
   if (typeof payload.acr === 'string') attrs['auth.acr'] = payload.acr;
 
-  // Audience — normalize to array
   if (payload.aud) {
     attrs['auth.aud'] = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   }

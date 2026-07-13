@@ -1,77 +1,24 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
-# agentgateway config — federated MCP front door for mcp-observability + mcp-ops.
-# Validated against agentgateway v1.3.1 (ghcr.io/agentgateway/agentgateway:latest,
-# git dbaaf7e). See .superpowers/sdd/task-5-report.md for the full spike record.
+# agentgateway config — path-routed MCP front door for mcp-observability +
+# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.3.1.
 #
-# ============================================================================
-# SPIKE OUTCOME (Task 5 Step 1): OUTCOME B — PATH-ROUTED. VERIFIED locally.
-# ----------------------------------------------------------------------------
-# The `mcp` CEL context (`mcp.tool.target` / `mcp.tool.name`) is NOT available
-# inside the `extAuthz` policy. extAuthz runs at the HTTP layer *before* MCP
-# tool multiplexing resolution, so any `mcp.*` reference in extAuthz
-# `addRequestHeaders` evaluates to undefined and agentgateway silently drops the
-# ENTIRE computed header map (including mcp-free headers in the same block).
+# Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
+# (`mcp.tool.target` / `mcp.tool.name`) is NOT available inside `extAuthz` — it
+# runs at the HTTP layer before MCP tool multiplexing, and any `mcp.*` reference
+# in extAuthz `addRequestHeaders` evaluates to undefined and silently drops the
+# ENTIRE computed header map. Per-backend audience narrowing therefore needs one
+# route per backend, each with a STATIC x-target-audience; callers pick the path.
+# (`mcpAuthorization`, by contrast, runs at the MCP layer where `mcp.tool.name`
+# IS available.)
 #
-# Proven with a local run (agentgateway v1.3.1 + two stdio `server-everything`
-# stubs + an echo authz server):
-#   - `x-static-test: '"STATIC_OK"'`  -> arrived at the shim  (addRequestHeaders works)
-#   - `x-req-path: request.path`      -> arrived (`/mcp`)      (request.* works)
-#   - `x-mcp-toolname: has(mcp.tool) ? mcp.tool.name : "NO_MCP_CTX"` -> "NO_MCP_CTX"
-#   - a header referencing `mcp.tool.target` -> dropped, and dropped its siblings too
-#   Meanwhile the gateway's own request log DID resolve `mcp.target=ops` — the
-#   target is known internally but not exposed to the extAuthz CEL scope.
-# => Federation-with-dynamic-audience is impossible on v1.3.1. We path-route:
-#    one route per backend, each with a STATIC x-target-audience. The single
-#    external MCP endpoint is preserved *logically* (one gateway, one listener,
-#    :8080) but split into /observability/mcp and /ops/mcp. Callers pick the path.
-#    The federated single-endpoint variant is kept at
-#    k8s/workloads/agentgateway-config.federated.yaml for when/if a future
-#    agentgateway release exposes mcp.* to extAuthz (re-run the spike to confirm).
+# YAML foot-gun: an unquoted CEL ternary `A ? B : C` parses as a YAML complex
+# mapping key and fails as "expected a string" — keep all CEL single-quoted.
 #
-# VERIFIED behaviors of THIS design (local run, same harness):
-#   - JWT validation (issuer/aud=mcp-gateway/jwks) gates every request (200 vs 401).
-#   - mcpAuthorization runs at the MCP layer where mcp.tool.name IS available:
-#     tools/list with a read-only token OMITS the gated tool; an ops:write token
-#     includes it (12 vs 13 tools in the stub). call is denied without ops:write.
-#   - Static `x-target-audience: mcp-ops` / `mcp-observability` reaches the shim.
-#   - The caller token reaches the shim via `jwt.rawToken.unredacted()` — NOT via
-#     `request.headers["authorization"]`, which the JWT layer strips before extAuthz
-#     (verified: request.headers["authorization"] arrived ABSENT; the rawToken form
-#     arrived byte-identical to the original bearer). This corrects the brief.
-#
-# ============================================================================
-# SCHEMA NOTES (what is CONFIRMED vs ASSUMED)
-# ----------------------------------------------------------------------------
-# CONFIRMED against v1.3.1 schema/config.json + examples + a passing --validate-only:
-#   - binds[].listeners[].routes[].matches[].path.pathPrefix
-#   - route policies: mcpAuthentication, mcpAuthorization, extAuthz, transformations
-#     (all keys on the FilterOrPolicy schema def)
-#   - mcpAuthentication REQUIRES `resourceMetadata` (issuer/audiences/jwks.url|file,
-#     resourceMetadata.{resource,scopesSupported,bearerMethodsSupported})
-#   - mcpAuthorization.rules: []CEL over `mcp.tool.name`, `jwt.<claim>`
-#   - extAuthz: `host: <hostname:port>` (schema oneOf: host | service | backend),
-#     failureMode, protocol.http.{path,addRequestHeaders,metadata} (all CEL),
-#     metadata exposed under the `extauthz` var, cache.{key[],ttl,maxEntries}
-#   - transformations.request.set.<header>: CEL  (LocalTransformationConfig/LocalTransform)
-#   - backends[].mcp.targets[].mcp.{host,port,path}
-# CAVEAT / to re-verify on the deployed build:
-#   - `metadata.token`/`expires` var wiring past a REAL shim response was not run to
-#     completion (the echo stub returned a token and the transformation applied it;
-#     `unvalidatedJwtPayload(...).exp` for cache TTL was schema-valid but its runtime
-#     value was not asserted — see report). Left OUT of the primary config's cache to
-#     avoid an unproven expression; a simple duration TTL is used instead.
-#   - YAML FOOT-GUN: a CEL ternary `A ? B : C` written UNQUOTED is parsed by YAML as a
-#     complex mapping key (`?`/`:`) and fails as "expected a string". All CEL here is
-#     single-quoted. (Not triggered in this file — no ternaries remain — but noted.)
-#
-# ============================================================================
-# DEPLOYMENT
-#   Mount this file into the agentgateway pod and run `agentgateway --file <path>`.
-#   The exchange-shim runs co-located (same pod, localhost:8090) — see apps/exchange-shim.
-#   In-cluster JWKS URL is istiod-style loopback-safe (plain-HTTP Service DNS), per
-#   CLAUDE.md fact #5/#21: pods cannot resolve curity.localtest.me to the gateway.
-# ============================================================================
+# Deployment: mounted into the agentgateway pod, run with `agentgateway --file`.
+# The exchange-shim runs co-located (same pod, localhost:8090) — see
+# apps/exchange-shim. JWKS uses the plain-HTTP in-cluster Service URL because
+# pods cannot resolve curity.localtest.me (CLAUDE.md facts #5/#21).
 
 # DNS resolver tuning for external egress (the /llm azure backend).
 # agentgateway's Rust (hickory) resolver otherwise fails to resolve the public
@@ -133,7 +80,7 @@ binds:
                 # the JWT auth layer strips request.headers["authorization"] before
                 # extAuthz runs (VERIFIED). The shim strips the "Bearer " prefix.
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
-                # Static per-route audience — no mcp.* dependency (Outcome B).
+                # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
                 x-target-audience: '"mcp-observability"'
               metadata:

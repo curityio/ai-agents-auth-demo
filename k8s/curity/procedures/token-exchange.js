@@ -51,11 +51,20 @@ var EXPECTED_ACTOR_AUD = 'https://curity.localtest.me/oauth/v2/oauth-token';
 // the line that's less strict than that MCP's own middleware.
 //
 // Exchange paths the procedure must support:
-//   - agent-copilot      ─exch→ audience=mcp-observability   scope=obs:read
-//   - agent-copilot      ─exch→ audience=agent-specialist    scope=obs:read ops:write
-//     (the token copilot forwards over A2A; act.sub=copilot)
-//   - agent-specialist   ─exch→ audience=mcp-ops             scope=ops:write
+//   - agent-copilot      ─exch→ audience=mcp-gateway         scope=obs:read
+//   - agent-copilot      ─exch→ audience=agent-specialist    scope=obs:read ops:write llm:invoke
+//     (the token copilot forwards over A2A; act.sub=copilot; llm:invoke rides
+//     along because this token becomes the specialist's subject token)
+//   - agent-copilot      ─exch→ audience=llm-gateway         scope=llm:invoke
+//   - agent-specialist   ─exch→ audience=mcp-gateway         scope=obs:read ops:write
 //     (subject is the just-received Bearer, so act nests automatically)
+//   - agent-specialist   ─exch→ audience=llm-gateway         scope=llm:invoke
+//   - mcp-gateway        ─exch→ audience=mcp-observability   scope=obs:read
+//   - mcp-gateway        ─exch→ audience=mcp-ops             scope=ops:write
+//     (the agentgateway's exchange-shim narrowing the aud=mcp-gateway caller
+//     token per tool-target; act gains the gateway's SPIFFE ID)
+//   - mcp-observability  ─exch→ audience=obs-api             scope=obs:read
+//   - mcp-ops            ─exch→ audience=ops-api             scope=ops:write
 var CLIENT_POLICY = {
   // agent-copilot and agent-specialist are CIMD ephemeral clients: their client
   // ID is the HTTPS URL Curity dereferenced for the metadata document, so the
@@ -307,7 +316,7 @@ function result(context) {
   // 5a. Role gate — ops:write requires a WRITE role: `sre` OR `oncall`. This is the
   //     coarse tier gate (may this user touch the ops write-tier at all). The finer
   //     per-tool split (on-call may restart/scale; only sre may set_deployment_image)
-  //     is enforced at the agentgateway, where the MCP tool name is resolved.
+  //     is enforced downstream at mcp-ops, NOT at the agentgateway.
   //     `subjectToken.get('roles')` may be a Java Set, JS array, space-delimited
   //     string (e.g. "sre oncall"), or null. claimToArray() handles all four shapes;
   //     setToArray alone would iterate a string character-by-character.

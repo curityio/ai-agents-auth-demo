@@ -25,7 +25,6 @@ set -euo pipefail
 MODE="${1:-apply}"
 
 CURITY_HOST="${CURITY_HOST:-curity.localtest.me}"
-# The edge is the Istio ingress gateway.
 INGRESS_NS="${INGRESS_NS:-istio-ingress}"
 INGRESS_SVC="${INGRESS_SVC:-istio-ingress}"
 
@@ -119,7 +118,6 @@ if [[ -z "$INGRESS_IP" ]]; then
 fi
 echo "    $INGRESS_NS/$INGRESS_SVC = $INGRESS_IP"
 
-# Read-only drift check: verify and exit, no patching or rollouts.
 if [[ "$MODE" == "check" ]]; then
   verify_routing
   exit $?
@@ -140,7 +138,6 @@ for entry in "${TARGETS[@]}"; do
   echo ""
   echo "==> $ns/$deploy"
 
-  # Secret: mkcert root CA bundle.
   kubectl -n "$ns" create secret generic mkcert-ca \
     --from-file=rootCA.pem="$ROOTCA" \
     --dry-run=client -o yaml | kubectl apply -f -

@@ -204,7 +204,6 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           return;
         }
 
-        // Untyped error — fall back to a generic message
         setError(
           `${r.status}: ${body && typeof body === 'object' ? JSON.stringify(body) : String(body ?? '')}`,
         );
@@ -356,7 +355,6 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               type="button"
               size="sm"
               onClick={() => {
-                // Preserve the prompt across the redirect and auto-retry on return.
                 sessionStorage.setItem(PENDING_KEY, message);
                 sessionStorage.setItem(RETRY_KEY, '1');
                 void signIn(

@@ -15,7 +15,6 @@ want() {
   return 0
 }
 
-# Required
 want node       "install Node 20+ (https://nodejs.org or via volta/asdf)"          || true
 want pnpm       "enable via corepack: corepack enable pnpm && corepack prepare pnpm@9.15.0 --activate" || true
 want docker     "install Docker Desktop or OrbStack"                                || true
@@ -24,7 +23,6 @@ want kubectl    "brew install kubectl"                                          
 want helm       "brew install helm"                                                 || true
 want mkcert     "brew install mkcert"                                               || true
 
-# Node version
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]')"
   if [[ "$node_major" -lt 20 ]]; then
@@ -32,7 +30,6 @@ if command -v node >/dev/null 2>&1; then
   fi
 fi
 
-# pnpm version
 if command -v pnpm >/dev/null 2>&1; then
   pnpm_major="$(pnpm -v | cut -d. -f1)"
   if [[ "$pnpm_major" -lt 9 ]]; then
