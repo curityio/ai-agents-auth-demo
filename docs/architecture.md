@@ -256,7 +256,7 @@ sequenceDiagram
     A2->>GW: MCP set_deployment_image / restart_deployment /ops/mcp (aud=mcp-gateway)
     Note over GW: coarse ops:write tier gate + shim OBO<br/>(lists ALL ops tools) exchange → aud=mcp-ops, act +gateway
     GW->>M2: MCP set_deployment_image / restart_deployment (narrowed token)
-    Note over M2: enforces scope + act-chain + acr=mfa;<br/>set_deployment_image requires role sre (denies non-sre)
+    Note over M2: enforces scope + act-chain + acr=mfa<br/>set_deployment_image requires role sre (denies non-sre)
     M2->>Cu: exchange → aud=ops-api, scope=ops:write
     Cu-->>M2: token act=[ops-mcp, gateway, specialist, copilot]
     M2->>B2: POST /set-image then POST /restart (re-exchanged)

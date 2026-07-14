@@ -379,7 +379,8 @@ exists when tsc reads it; don't remove that dependency.
   (`token-procedure` vs `transformation-procedure`).
 - **Mermaid diagrams in `/docs`** must use quoted subgraph names and quoted node
   labels containing parens/special chars (GitHub's renderer is stricter than
-  mermaid-cli).
+  mermaid-cli). A bare `;` in sequence-diagram message/Note text is a statement
+  terminator and breaks the parse — use `,` or `<br/>` instead.
 - **macOS bash is 3.2.** No `declare -A`; use parallel arrays or IFS-split
   strings (see `scripts/apply-tls-secrets.sh`).
 - **`.next/types/`** is auto-generated; keep it in `apps/web/tsconfig.json`'s
