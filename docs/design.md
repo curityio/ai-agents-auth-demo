@@ -512,6 +512,30 @@ one. And for route-level policies `extAuthz` runs *before* `authorization`
 privileged token is minted and then discarded unused. The deny stops the request
 reaching mcp-ops; it is not a way to avoid minting the token.
 
+**Buying back the legible denial.** Enforcing at the edge costs something the
+downstream check gave for free. agentgateway answers with a bare HTTP 403 and
+cannot put a message in the body, so the denial arrives at the client as a
+*transport* error rather than an MCP tool result. Left to propagate, the AI SDK
+reports only "tool call failed" and the model fills the gap — the observed answer
+was *"I do not have permissions… run kubectl yourself"*, which is both vague and
+wrong about who lacked permission (the user, not the agent), and which coaches the
+user around the control that just fired. Restoring legibility took two changes, and
+both were necessary:
+
+1. `openMcpToolset` catches a 403 and returns a factual
+   `{ error: 'forbidden', tool }` result instead of throwing.
+2. The specialist's system prompt requires it to name the refused tool, attribute
+   the refusal to the user's authorization, and never offer a bypass route.
+
+(1) alone did not work: the model ignored guidance embedded in the tool payload.
+That failure is worth keeping in mind rather than working around — **tool output is
+untrusted data**, and a system that obeys imperatives smuggled through it is the
+prompt-injection weakness this architecture exists to argue against. Behavioural
+policy belongs in the system prompt; tool results carry facts. The result carol
+(`oncall`) now sees: *"The set_deployment_image tool was refused with a 403
+authorization error. You are not authorized to update the image of the
+order-service deployment in the prod namespace. No changes were made."*
+
 **Response caching.** Revision 2026-07-28 adds cacheable results (`ttlMs` /
 `cacheScope`). It is inert here: the client default TTL is `0`, so nothing is served
 from cache unless a server sends an explicit hint, and `tools/call` is never

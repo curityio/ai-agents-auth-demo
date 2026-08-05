@@ -73,7 +73,37 @@ export async function openMcpToolset(opts: {
       description: t.description ?? `MCP tool: ${t.name}`,
       parameters,
       execute: async (args: Record<string, unknown>) => {
-        const result = await client.callTool({ name: t.name, arguments: args });
+        let result;
+        try {
+          result = await client.callTool({ name: t.name, arguments: args });
+        } catch (e: unknown) {
+          // A policy denial at the gateway arrives as a TRANSPORT error (plain
+          // HTTP 403), not an MCP tool result — agentgateway's `authorization`
+          // rules cannot put a message in the response body. Left to throw, the AI
+          // SDK reports only "tool call failed" and the model invents an
+          // explanation: observed output was "I do not have permissions… run
+          // kubectl yourself", which is vague AND wrong about who lacked
+          // permission. Turn it into a factual tool result instead.
+          //
+          // Deliberately NO instructions to the model in this payload: tool output
+          // is untrusted data, and a system that obeys imperatives smuggled through
+          // it is the prompt-injection hole this whole demo argues against. How to
+          // relay a refusal belongs in the agent's system prompt — see
+          // apps/agent-specialist/src/system-prompt.ts.
+          //
+          // Denials raised by the MCP server itself (e.g. mcp-ops's role gate)
+          // already come back as isError results and never reach this branch.
+          const msg = e instanceof Error ? e.message : String(e);
+          const denied = /\b403\b|forbidden|authorization failed/i.test(msg);
+          if (!denied) throw e;
+          return JSON.stringify({
+            error: 'forbidden',
+            tool: t.name,
+            message:
+              `Authorization policy refused the '${t.name}' call for this user (HTTP 403 at the gateway). ` +
+              `The user is not authorized to invoke this tool.`,
+          });
+        }
         const content = (result.content ?? []) as Array<{ type: string; text?: string }>;
         return content
           .map((c) => (c.type === 'text' ? (c.text ?? '') : JSON.stringify(c)))

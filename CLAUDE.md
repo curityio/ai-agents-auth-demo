@@ -462,6 +462,21 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
       evaluate true if the `roles` claim is missing, so it fails open. The downstream
       `imageRoleDenial` check is what makes the split unconditional.
+    - **A gateway denial costs the legible error, and that has to be bought back.**
+      agentgateway answers with a bare HTTP 403 — it cannot put a message in the body
+      — so the denial reaches the client as a TRANSPORT error, not an MCP tool result.
+      Left to throw, the AI SDK reports "tool call failed" and the LLM *invents* a
+      reason: the observed answer was "I do not have permissions… run kubectl
+      yourself", which is vague and wrong about who lacked permission (it is the USER,
+      not the agent). Two changes fix it, and **both are needed**:
+      (a) `openMcpToolset` converts a 403 into a factual `{error:'forbidden', tool}`
+      result; (b) the specialist's system prompt says to name the refused tool and
+      never offer a bypass route. (a) alone does NOT work — the model ignored guidance
+      embedded in the tool payload. **Keep instructions OUT of tool results:** tool
+      output is untrusted data, and obeying imperatives smuggled through it is exactly
+      the prompt-injection hole this demo argues against. Verified end to end: carol
+      (oncall) now gets *"The set_deployment_image tool was refused with a 403
+      authorization error. You are not authorized… No changes were made."*
 
 ## Commands
 
