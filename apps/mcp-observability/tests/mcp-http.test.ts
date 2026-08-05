@@ -117,6 +117,22 @@ describe('MCP HTTP route', () => {
     await client.close();
   });
 
+  // SEP-2243. The gateway's namespace-confinement rule authorizes on the
+  // `Mcp-Param-Namespace` header, which only exists because the tool declares
+  // `x-mcp-header` here. Dropping the declaration would not fail any call — it
+  // would silently remove the gateway's authz input, so assert it explicitly.
+  it('declares x-mcp-header on namespace so clients mirror Mcp-Param-Namespace', async () => {
+    const { client } = await connect('auto');
+    const listed = await client.listTools();
+    for (const tool of listed.tools) {
+      const props = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      expect(props.namespace, `${tool.name}.namespace`).toMatchObject({
+        'x-mcp-header': 'Namespace',
+      });
+    }
+    await client.close();
+  });
+
   it('routes the per-request bearer from AuthInfo through to the tool', async () => {
     seenSubjectTokens.length = 0;
     const { client } = await connect('auto');
