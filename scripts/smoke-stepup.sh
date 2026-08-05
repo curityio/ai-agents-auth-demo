@@ -127,9 +127,12 @@ build_gateway_ops_token() {
 }
 
 # gw_mcp: drive an MCP request through the gateway from the specialist pod; echoes
-# "<status>:<body-slice>" (or "INIT_<status>:<www-authenticate>|<body>" if the
-# initialize handshake is rejected — used to observe the RFC 9470 step-up challenge
-# which mcp-ops returns on the first authenticated request, relayed by the gateway).
+# "<status>:<www-authenticate>|<body-slice>". Speaks protocol revision 2026-07-28:
+# ONE request, no initialize handshake and no session (the revision removed both).
+# The RFC 9470 step-up challenge that mcp-ops returns therefore arrives on THIS
+# request rather than on a preceding initialize, so it now shows up as a plain
+# "401:" instead of the "INIT_401:" this helper used to emit — the assertions below
+# match both spellings.
 #   $1 url  $2 bearer  $3 method  $4 params-json
 gw_mcp() {
   kubectl -n agents exec deploy/agent-specialist -c agent -- \
@@ -137,14 +140,27 @@ gw_mcp() {
 (async () => {
   const url = process.env.U, bearer = process.env.B, method = process.env.M;
   const params = process.env.P ? JSON.parse(process.env.P) : {};
-  const base = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + bearer };
-  const initBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "smoke", version: "0" }, capabilities: {} } });
-  const r1 = await fetch(url, { method: "POST", headers: base, body: initBody });
-  if (!r1.ok) { process.stdout.write("INIT_" + r1.status + ":" + ((r1.headers.get("www-authenticate") || "").slice(0, 300)) + "|" + (await r1.text()).slice(0, 200)); return; }
-  const sid = r1.headers.get("mcp-session-id");
-  const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
-  if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
-  const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
+  // Per-request _meta envelope. All THREE reserved keys are required: the server
+  // rejects a partial envelope with -32602 naming the missing one.
+  params._meta = Object.assign({
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "smoke", version: "0" },
+    "io.modelcontextprotocol/clientCapabilities": {}
+  }, params._meta || {});
+  const headers = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    authorization: "Bearer " + bearer,
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": method
+  };
+  // Mcp-Name is what the gateway per-tool authz rules key on, and Mcp-Param-Namespace
+  // is the SEP-2243 mirror its namespace-confinement rule reads. A real client emits
+  // both, so this helper must too or it would exercise a different policy path.
+  if (method === "tools/call" && params.name) headers["mcp-name"] = params.name;
+  const ns = params.arguments && params.arguments.namespace;
+  if (ns) headers["mcp-param-namespace"] = ns;
+  const r2 = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
   // NOTE: this cap is a CORRECTNESS constraint, not just display. Callers pattern-match
   // the returned string (e.g. `200*set_deployment_image*`), so anything cut here reads as
   // absent and fails a passing system. A full ops tools/list is ~2KB — restart_deployment
