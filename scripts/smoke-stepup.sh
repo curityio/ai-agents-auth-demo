@@ -25,7 +25,17 @@
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
 #   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; roles sre+oncall). REQUIRED.
-#   SMOKE_TOKEN_ALICE_PWD  — alice, password only (acr=password). Optional → skips [2/4].
+#   SMOKE_TOKEN_ALICE_PWD  — alice with ops:write BUT acr!=mfa. Optional → skips [2/4].
+#         NOT obtainable by signing in without MFA: the web login scope is
+#         `openid obs:read llm:invoke` (no ops:write), and ops:write is only ever
+#         requested by the step-up re-auth, which demands acr_values=mfa in the same
+#         request — so no UI journey yields ops:write with acr=password. Supplying a
+#         plain non-MFA login token instead fails EARLIER than this assertion intends,
+#         at scope narrowing: `invalid_scope no scope intersects subject + policy`.
+#         To exercise [2/4] you must hand-drive the authorize endpoint with
+#         scope=...ops:write and NO acr_values (alice/sre passes the role gate, and
+#         acr stays html-form). Until then this assertion stays skipped, and the
+#         RFC 9470 challenge itself is covered only by the UI demo.
 #   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
 #   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
 #                            Optional → the carol half of [4/4] is skipped.
@@ -135,7 +145,12 @@ gw_mcp() {
   const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
   if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
   const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
-  process.stdout.write(String(r2.status) + ":" + ((r2.headers.get("www-authenticate") || "")) + "|" + (await r2.text()).slice(0, 500));
+  // NOTE: this cap is a CORRECTNESS constraint, not just display. Callers pattern-match
+  // the returned string (e.g. `200*set_deployment_image*`), so anything cut here reads as
+  // absent and fails a passing system. A full ops tools/list is ~2KB — restart_deployment
+  // alone carries a ~300-char description — so keep this far above any real response.
+  // Truncate for DISPLAY at the print site (${VAR:0:80}), never here.
+  process.stdout.write(String(r2.status) + ":" + ((r2.headers.get("www-authenticate") || "")) + "|" + (await r2.text()).slice(0, 20000));
 })().catch(e => process.stdout.write("ERR:" + e.message));
 ' 2>/dev/null || true
 }
@@ -197,7 +212,8 @@ esac
 # [2/4] alice + acr=password → gateway/mcp-ops path returns 401 step-up challenge
 # ===========================================================================
 if [[ -z "${SMOKE_TOKEN_ALICE_PWD:-}" ]]; then
-  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — sign in as alice WITHOUT MFA to obtain."
+  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — needs ops:write WITH acr!=mfa, which no"
+  yellow "            UI login produces (see the header). Hand-drive /authorize to obtain."
 else
   note "[2/4] alice-pwd: full chain, then gateway/mcp-ops must return 401 step-up challenge"
   GATEWAY_BEARER_PWD=$(build_gateway_ops_token "$SMOKE_TOKEN_ALICE_PWD") \

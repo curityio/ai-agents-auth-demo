@@ -97,7 +97,9 @@ mcp_call() {
   const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
   if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
   const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
-  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 400));
+  // Correctness constraint, not display — see the note in smoke-stepup.sh: callers
+  // pattern-match this string, so a truncated body reads as a missing value.
+  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 20000));
 })().catch(e => process.stdout.write("ERR:" + e.message));
 ' 2>/dev/null || true
 }

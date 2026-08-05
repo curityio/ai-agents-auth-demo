@@ -52,6 +52,21 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | The deployments the copilot observes and restarts (e.g. a CrashLoopBackOff target). |
 
+> **Naming: one workload, two OAuth roles.** The gateway appears under two names on
+> purpose, and they answer different questions. **`agentgateway`** is the *workload* —
+> one pod, one Kubernetes ServiceAccount, and therefore one SPIFFE ID
+> (`spiffe://demo.curity.local/ns/mcp/sa/agentgateway`, derived mechanically from the
+> SA by SPIRE). That is the name you see in every `act` chain, because `act` records
+> which *workload* acted. **`mcp-gateway`** and **`llm-gateway`** are *audiences* —
+> the two OAuth roles that single workload plays (MCP front door, LLM egress). That is
+> why a token can read `aud=mcp-gateway` while the chain reads
+> `act: … ▸ agentgateway`: same box, different question. The split is deliberate —
+> workload identity is attested by SPIRE from pod attributes, whereas the OAuth role is
+> asserted by Curity from configured policy, and the demo's whole argument is that these
+> are two independent facts stapled together at each hop. Renaming the SPIFFE ID to
+> `mcp-gateway` would be wrong, not merely churn: it would deny that the same workload
+> also fronts `llm-gateway`.
+
 The two MCP servers (`mcp-observability`, `mcp-ops`) are **thin clients**: they
 authenticate the caller and re-exchange the token to a backend resource server
 (`obs-api`, `ops-api`). The backend servers live in their own `apis` namespace —

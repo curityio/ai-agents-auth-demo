@@ -1,18 +1,32 @@
 #!/usr/bin/env bash
-# Mint a ready-to-paste Bearer token for an MCP server, for use with MCP Inspector.
+# Mint a ready-to-paste Bearer token for MCP Inspector, aimed at the agentgateway.
 #
 # This performs the SAME RFC 8693 token-exchange chain the agents perform at
 # runtime (CIMD private_key_jwt client auth + SPIFFE JWT-SVID actor_token),
-# so the resulting token passes the MCP server's full enforcement: scope,
-# audience, exact `act` actor-chain, and (mcp-ops) acr=mfa step-up.
+# so the resulting token passes the gateway's full enforcement: issuer, audience
+# and per-tier scope.
+#
+# IMPORTANT — the token is `aud=mcp-gateway`, NOT aud=mcp-observability/mcp-ops,
+# and Inspector must therefore point at the GATEWAY, not at an MCP server:
+#   obs -> http://localhost:<port>/observability/mcp
+#   ops -> http://localhost:<port>/ops/mcp
+# `make inspect-obs` / `make inspect-ops` port-forward svc/agentgateway and print
+# the right URL. Minting aud=mcp-observability / aud=mcp-ops directly is IMPOSSIBLE
+# for these clients — Curity refuses it ("audience ... not allowed for client ..."),
+# which smoke-token-exchange [3/5] and smoke-a2a [D3] assert on purpose. Only the
+# gateway's own exchange-shim may mint those, using the gateway's SPIFFE SVID.
+#
+# Talking to an MCP server directly is not possible by design either: mcp-ops
+# requires the exact act-chain [agentgateway, agent-specialist, agent-copilot], so
+# a token that skipped the gateway is rejected on chain length regardless of scope.
 #
 # It only PRINTS the token (to stdout) — the actual MCP call happens in
 # Inspector. Diagnostic notes go to stderr so `TOKEN=$(... obs)` is clean.
 #
 # Usage:
 #   export SMOKE_SUBJECT_TOKEN='eyJ...'        # a fresh Curity access token for Alice
-#   scripts/mint-mcp-token.sh obs              # -> token for mcp-observability
-#   scripts/mint-mcp-token.sh ops              # -> token for mcp-ops
+#   scripts/mint-mcp-token.sh obs              # -> aud=mcp-gateway, scope=obs:read
+#   scripts/mint-mcp-token.sh ops              # -> aud=mcp-gateway, scope=ops:write
 #
 # Getting SMOKE_SUBJECT_TOKEN:
 #   1. Open https://app.localtest.me and sign in as Alice.
@@ -114,18 +128,18 @@ exchange() {
 }
 
 if [[ "$TARGET" == "obs" ]]; then
-  note "Minting mcp-observability token (user -> agent-copilot -> mcp-observability)"
+  note "Minting aud=mcp-gateway token for the READ tier (user -> agent-copilot -> gateway)"
   COPILOT_PEM=$(read_pem agent-copilot-curity)
   COPILOT_SVID=$(read_svid agent-copilot)
   [[ -n "$COPILOT_PEM" && -n "$COPILOT_SVID" ]] || { red "missing copilot key/SVID"; exit 1; }
 
   TOKEN=$(exchange "$COPILOT_CLIENT_ID" "$COPILOT_PEM" "$COPILOT_SVID" \
-    "$SUBJECT_TOKEN" "mcp-observability" "obs:read")
+    "$SUBJECT_TOKEN" "mcp-gateway" "obs:read")
 
   P=$(echo "$TOKEN" | decode_jwt_payload)
-  green "  OK  aud=$(echo "$P" | jq -r '.aud') scope=$(echo "$P" | jq -r '.scope') act.sub=$(echo "$P" | jq -r '.act.sub')"
+  green "  OK  aud=$(echo "$P" | jq -r '.aud') scope=$(echo "$P" | jq -r '.scope') act.sub=$(echo "$P" | jq -r '.act.sub') may_act=$(echo "$P" | jq -r '.may_act.sub // "<none>"')"
 else
-  note "Minting mcp-ops token (user -> agent-specialist -> mcp-ops); requires acr=mfa subject token"
+  note "Minting aud=mcp-gateway token for the WRITE tier (user -> specialist -> gateway); needs acr=mfa"
   SUB_ACR=$(echo "$SUBJECT_TOKEN" | decode_jwt_payload | jq -r '.acr // "<none>"')
   if [[ "$SUB_ACR" != "mfa" ]]; then
     red "subject token acr=$SUB_ACR (need 'mfa'). mcp-ops enforces RFC 9470 step-up;"
@@ -144,12 +158,12 @@ else
     "$SUBJECT_TOKEN" "agent-specialist" "obs:read ops:write")
   green "  OK  act.sub=$(echo "$SPECIALIST_BEARER" | decode_jwt_payload | jq -r '.act.sub')"
 
-  note "[B] agent-specialist -> mcp-ops (specialist client + specialist SVID)"
+  note "[B] agent-specialist -> mcp-gateway (specialist client + specialist SVID)"
   TOKEN=$(exchange "$SPECIALIST_CLIENT_ID" "$SPECIALIST_PEM" "$SPECIALIST_SVID" \
-    "$SPECIALIST_BEARER" "mcp-ops" "ops:write")
+    "$SPECIALIST_BEARER" "mcp-gateway" "ops:write")
 
   P=$(echo "$TOKEN" | decode_jwt_payload)
-  green "  OK  aud=$(echo "$P" | jq -r '.aud') scope=$(echo "$P" | jq -r '.scope') acr=$(echo "$P" | jq -r '.acr') act.sub=$(echo "$P" | jq -r '.act.sub') act.act.sub=$(echo "$P" | jq -r '.act.act.sub')"
+  green "  OK  aud=$(echo "$P" | jq -r '.aud') scope=$(echo "$P" | jq -r '.scope') acr=$(echo "$P" | jq -r '.acr') act.sub=$(echo "$P" | jq -r '.act.sub') act.act.sub=$(echo "$P" | jq -r '.act.act.sub') may_act=$(echo "$P" | jq -r '.may_act.sub // "<none>"')"
 fi
 
 # The token, and ONLY the token, on stdout.

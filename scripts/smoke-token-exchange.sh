@@ -85,7 +85,11 @@ mcp_call() {
   const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
   if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
   const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
-  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 600));
+  // Correctness constraint, not display — see the note in smoke-stepup.sh. At 600 the
+  // `200*order-service*` assertion below could silently fall through to its weaker
+  // "call succeeded but body did not name it" fallback.
+  // (No apostrophes in this comment: the whole script is a single-quoted shell string.)
+  process.stdout.write(String(r2.status) + ":" + (await r2.text()).slice(0, 20000));
 })().catch(e => process.stdout.write("ERR:" + e.message));
 ' 2>/dev/null || true
 }

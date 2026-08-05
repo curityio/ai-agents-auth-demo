@@ -73,7 +73,8 @@ llm_call() {
   const url = process.env.U, bearer = process.env.B, data = process.env.D;
   const headers = { "content-type": "application/json", authorization: "Bearer " + bearer };
   const r = await fetch(url, { method: "POST", headers, body: data });
-  process.stdout.write(String(r.status) + ":" + (await r.text()).slice(0, 600));
+  // Correctness constraint, not display — see the note in smoke-stepup.sh.
+  process.stdout.write(String(r.status) + ":" + (await r.text()).slice(0, 20000));
 })().catch(e => process.stdout.write("ERR:" + e.message));
 ' 2>/dev/null || true
 }

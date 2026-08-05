@@ -469,30 +469,34 @@ smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm 
 	bash scripts/smoke-llm.sh
 
 # ============================================================================
-# MCP Inspector (tool tour) — see docs/mcp-inspector.md
+# MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why
+# Inspector connects to the agentgateway rather than to an MCP server directly.
 # ============================================================================
 OBS_INSPECT_PORT ?= 8080
 OPS_INSPECT_PORT ?= 8081
 
 # Mint a token + port-forward, then print the Inspector connect details.
-# Args: $(1)=target (obs|ops) $(2)=svc $(3)=local port
+# Forwards the AGENTGATEWAY, not the MCP server: the minted token is
+# aud=mcp-gateway, and the MCP servers require an act-chain that only the
+# gateway's exchange-shim can produce. See scripts/mint-mcp-token.sh header.
+# Args: $(1)=target (obs|ops) $(2)=gateway route path $(3)=local port
 define inspect-tmpl
 	@token=$$(bash scripts/mint-mcp-token.sh $(1)) || exit $$?; \
 	printf '\n\033[36m=== MCP Inspector connect details ===\033[0m\n'; \
-	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s/mcp\n' "$(3)"; \
+	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s%s\n' "$(3)" "$(2)"; \
 	printf '  Bearer:    %s\n\n' "$$token"; \
 	printf 'In another terminal run:  \033[32mnpx @modelcontextprotocol/inspector\033[0m\n'; \
 	printf 'then paste the URL + Bearer above. Port-forward holds this terminal (Ctrl-C to stop).\n\n'; \
-	kubectl -n mcp port-forward svc/$(2) $(3):8080
+	kubectl -n mcp port-forward svc/agentgateway $(3):8080
 endef
 
 .PHONY: inspect-obs
-inspect-obs: ## Inspect mcp-observability tools (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,obs,mcp-observability,$(OBS_INSPECT_PORT))
+inspect-obs: ## Inspect the read tier via the gateway (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,obs,/observability/mcp,$(OBS_INSPECT_PORT))
 
 .PHONY: inspect-ops
-inspect-ops: ## Inspect mcp-ops tools (mint token + port-forward). Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,ops,mcp-ops,$(OPS_INSPECT_PORT))
+inspect-ops: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,ops,/ops/mcp,$(OPS_INSPECT_PORT))
 
 # ============================================================================
 # End-to-end orchestration
