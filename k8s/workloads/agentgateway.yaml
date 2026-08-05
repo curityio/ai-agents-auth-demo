@@ -120,7 +120,20 @@ spec:
             periodSeconds: 5
         # containers[1] — the agentgateway binary.
         - name: agentgateway
-          image: ghcr.io/agentgateway/agentgateway:latest
+          # Pinned, NOT :latest. agentgateway-config.yaml is validated against this
+          # version, and `latest` has since rolled to v1.4.x — a fresh cluster would
+          # silently get a different gateway than the one this repo was tested with.
+          #
+          # Upgrading to v1.4.x is a deliberate step, not a free one. Its release notes
+          # say top-level standalone `llm` and `mcp` listeners may no longer share a
+          # port, and our single :8080 listener carries both the MCP routes and the
+          # `/llm` ai route — verify that first. v1.4 also adds MCP 2026-07-28 support
+          # (harmless for us: it keeps the upstream hop on the old protocol while our
+          # clients remain on MCP SDK v1) and a native `backendAuth.oauthTokenExchange`
+          # that still CANNOT replace apps/exchange-shim, because `actorToken.source`
+          # only reads from the request — there is no file source for the rotating
+          # SPIFFE JWT-SVID. See experiments/agentgateway-cel-probe/README.md.
+          image: ghcr.io/agentgateway/agentgateway:v1.4.1
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
           env:

@@ -235,10 +235,30 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     longer carry `istio.io/use-waypoint`). Hard-won details:
     - **Path-routed, not federated.** ONE listener (`:8080`) with TWO path-scoped
       routes: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops. It is
-      path-routed (not a single federated `/mcp`) because agentgateway v1.3.1 (latest
-      OSS) does **not** expose `mcp.tool.target` inside its `extAuthz` CEL scope — so
-      per-backend audience narrowing can't be done on a single federated endpoint.
-      Callers pick the path.
+      path-routed (not a single federated `/mcp`) because agentgateway does **not**
+      expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
+      narrowing can't be done on a single federated endpoint. Callers pick the path.
+      **Re-verified on v1.4.1 (2026-08-05): still true, and it is structural, not a
+      timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
+      field is a plain `Option<&MCPInfo>` while its neighbours (`jwt`, `llm`, `extauthz`,
+      `backend`, …) are `ExtensionOrDirect`; `set_request()` wires up all thirteen of
+      those and never touches `mcp`. `ext_authz.rs` builds its context with
+      `Executor::new_request(req)` at every call site, which therefore leaves
+      `mcp: None`. Only `new_mcp`/`new_mcp_request` (the MCP-layer policies, e.g.
+      `mcpAuthorization`) populate it. v1.4.1's `schema/cel.md` calling `mcp.tool.*`
+      "request-time" refers to those policies, NOT to extAuthz — don't be misled into
+      federating on the strength of that doc.
+      Two things DID change, and both are escape hatches if federation is ever wanted:
+      (a) an undefined `mcp.*` reference no longer silently drops the ENTIRE computed
+      header map — as of v1.4 only the undefined value is omitted (it still fails *open*,
+      so any consumer must fail closed on a missing header; `exchange-shim` already does,
+      `server.ts` `typeof targetAudience !== 'string'` → 400);
+      (b) `request.headers["mcp-name"]` (the 2026-07-28 standard header) and
+      `json(request.body).params.name` BOTH resolve inside extAuthz and both yield the
+      tool name — the latter works on today's protocol, including the multiplexed
+      `<target>_<tool>` form needed to derive an audience. The body route costs a ~2 MB
+      CEL buffer ceiling (bodies ≥2 MB evaluate to nothing while our MCP servers accept
+      4 MB), so prefer the header once clients speak 2026-07-28.
     - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
       gateway validates the caller's
       `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
