@@ -137,6 +137,28 @@ if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
   yellow "    so she cannot demonstrate the denial — sign in as carol (oncall, per"
   yellow "    docs/curity-seed.md) to exercise it."
 else
+  # A plain carol LOGIN is not enough and the failure downstream is opaque
+  # ("could not mint an ops token"), so diagnose it here. Signing in normally
+  # yields acr=html-form and scope WITHOUT ops:write; only completing the RFC 9470
+  # step-up — ask the copilot to restart something, then re-authenticate with MFA —
+  # produces a token carrying both.
+  CAROL_ACR=$(printf '%s' "$SMOKE_TOKEN_CAROL" | cut -d. -f2 | python3 -c "
+import sys, base64, json
+s = sys.stdin.read().strip(); s += '=' * (-len(s) % 4)
+p = json.loads(base64.urlsafe_b64decode(s))
+print(p.get('acr', '<none>'), 'ops:write' in str(p.get('scope', '')).split())
+" 2>/dev/null)
+  if [[ "$CAROL_ACR" != "mfa True" ]]; then
+    yellow "  SKIP [4/4-carol]: the supplied carol token cannot reach the ops tier"
+    yellow "    (acr / has-ops:write = '$CAROL_ACR'; need 'mfa True')."
+    yellow "    A plain login gives acr=html-form and no ops:write. Sign in as carol,"
+    yellow "    ask the copilot to restart a deployment, complete the MFA step-up, then"
+    yellow "    grab the token that flow produces."
+    echo
+    green "ALL GATEWAY AUTHZ SMOKE CHECKS COMPLETED"
+    exit 0
+  fi
+
   note "      set_deployment_image as carol (oncall, no sre) → refused at the gateway"
   CAROL_OPS=$(SMOKE_SUBJECT_TOKEN="$SMOKE_TOKEN_CAROL" bash "$SCRIPT_DIR/mint-mcp-token.sh" ops 2>/dev/null)
   [[ -n "$CAROL_OPS" ]] || { red "  could not mint an ops token for carol"; exit 1; }
