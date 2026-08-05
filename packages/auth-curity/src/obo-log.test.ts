@@ -83,3 +83,41 @@ describe('formatOboLog', () => {
     expect(out).not.toContain('note');
   });
 });
+
+describe('may_act (RFC 8693 §4.4)', () => {
+  const enc = (o: unknown) =>
+    `x.${Buffer.from(JSON.stringify(o)).toString('base64url')}.y`;
+
+  it('surfaces may_act.sub shortened to its service account', () => {
+    const jwt = enc({
+      sub: 'alice',
+      may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
+    });
+    expect(summarizeJwt(jwt).mayAct).toBe('agentgateway');
+  });
+
+  it('is undefined on terminal tokens that carry no may_act', () => {
+    expect(summarizeJwt(enc({ sub: 'alice' })).mayAct).toBeUndefined();
+  });
+
+  it('distinguishes who DID act from who MAY act next', () => {
+    // The specialist has acted (act chain); the gateway is permitted next.
+    const s = summarizeJwt(
+      enc({
+        sub: 'alice',
+        act: {
+          sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-specialist',
+          act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+        },
+        may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
+      }),
+    );
+    expect(s.act).toBe('agent-copilot ▸ agent-specialist');
+    expect(s.mayAct).toBe('agentgateway');
+  });
+
+  it('ignores a malformed may_act rather than throwing', () => {
+    expect(summarizeJwt(enc({ may_act: 'not-an-object' })).mayAct).toBeUndefined();
+    expect(summarizeJwt(enc({ may_act: {} })).mayAct).toBeUndefined();
+  });
+});

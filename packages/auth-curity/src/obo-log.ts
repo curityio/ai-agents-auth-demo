@@ -30,6 +30,12 @@ export interface JwtSummary {
   acr?: string;
   /** act chain flattened oldest→newest, e.g. 'agent-copilot ▸ agent-specialist'. */
   act?: string;
+  /**
+   * RFC 8693 §4.4 `may_act.sub`, shortened to its SA — who this token PERMITS to
+   * act next, as opposed to `act` which records who already did. Absent on
+   * terminal tokens (nothing exchanges them onward).
+   */
+  mayAct?: string;
   roles?: string;
 }
 
@@ -53,6 +59,7 @@ export function summarizeJwt(jwt: string | undefined | null): JwtSummary {
       scope: payload.scope != null ? String(payload.scope) : undefined,
       acr: payload.acr != null ? String(payload.acr) : undefined,
       act: flattenAct(payload.act),
+      mayAct: mayActSub(payload.may_act),
       roles: formatList(payload.roles),
     };
   } catch {
@@ -81,6 +88,17 @@ export function flattenAct(act: unknown): string | undefined {
   }
   if (chain.length === 0) return undefined;
   return chain.reverse().join(' ▸ ');
+}
+
+/**
+ * Pull `sub` out of an RFC 8693 §4.4 `may_act` claim and shorten it to its SA.
+ * Unlike `act`, `may_act` is a flat single-level object — it grants the next hop,
+ * it doesn't accumulate a history.
+ */
+export function mayActSub(mayAct: unknown): string | undefined {
+  if (!mayAct || typeof mayAct !== 'object') return undefined;
+  const sub = (mayAct as { sub?: unknown }).sub;
+  return sub != null ? shortSpiffe(String(sub)) : undefined;
 }
 
 /** spiffe://demo.curity.local/ns/agents/sa/agent-copilot → agent-copilot */

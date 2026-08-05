@@ -347,6 +347,31 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `ndots:1` alone does NOT fix it. In-cluster backends (single small A records) are
     unaffected.
 
+25. **`may_act` (RFC 8693 §4.4) is enforced BEHIND `allowedActors`, which makes naive
+    negative tests worthless.** The exchange procedure stamps `may_act` on every issued
+    token naming the single workload permitted to present it next (`perAudience.mayAct`
+    in `token-exchange.js`; the login token's is stamped by `authorization-code.js`), and
+    enforces the subject token's `may_act` against the verified actor SVID. Gotchas:
+    - **Gate ordering.** `allowedActors` (step 3) runs *before* the `may_act` check
+      (step 3b). Because the `mayAct` map mirrors each consuming client's `allowedActors`,
+      the two gates agree on every happy path — so "present the wrong SVID" is refused by
+      `allowedActors` and proves NOTHING about `may_act`. To exercise it you need a case
+      where `allowedActors` PASSES and only `may_act` objects: take an
+      `aud=agent-specialist` token (its `may_act` names the specialist) and replay it as
+      the **copilot** with the copilot's own SVID. Verified 2026-08-05: refused with
+      `actor … is not authorized by the subject token may_act (…)`. That case was
+      **issued** before this claim existed — the copilot mints the specialist's token to
+      send over A2A, so it holds a copy and could spend that delegation itself.
+    - **Claim shape varies.** `subjectToken.get('may_act')` comes back as a Java Map, a
+      JSON string, or a plain object depending on how Curity hydrated the introspected
+      token. `act` dodges this by being forwarded opaquely; `may_act` must be read into,
+      hence the `mayActSub()` normaliser. Same hazard, different mitigation.
+    - **Enforce-if-present.** Terminal audiences (`llm-gateway`, `obs-api`, `ops-api`)
+      carry no `may_act` — nothing exchanges them onward — and absent means unconstrained,
+      so tokens minted before the claim existed still work out their lifetime.
+    - Surfaced for demos via `summarizeJwt().mayAct`. `act` = who **did** act (audit);
+      `may_act` = who **may** act next (authorization).
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:

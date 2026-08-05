@@ -244,6 +244,20 @@ On each exchange the token-exchange procedure:
 5. **Nests `act`:** if the subject token already carries an `act`, wrap it under
    the new actor (`{sub: thisActor, act: priorChain}`); else `{sub: thisActor}`.
    Innermost = oldest.
+5b. **Enforces and re-stamps `may_act`** (RFC 8693 §4.4). The subject token names
+   the single workload permitted to act for it; the procedure requires the verified
+   actor SVID to match before issuing, then stamps a **narrowed** `may_act` on the
+   issued token naming whoever legitimately presents it next (`perAudience.mayAct`).
+   This is a second, independent source of truth alongside `allowedActors`: that one
+   is server config keyed by the *requesting client*, this one is a grant carried in
+   the token and keyed by the *subject*, so a config mistake alone cannot widen
+   delegation. `act` records who **did** act (audit); `may_act` grants who **may**
+   act next (authorization). Terminal audiences (`llm-gateway`, `obs-api`, `ops-api`)
+   carry none — nothing exchanges those onward — and an absent claim means
+   unconstrained, so tokens minted before the claim existed still work out their
+   lifetime. The login token's `may_act` (naming `agent-copilot`) is stamped by
+   `authorization-code.js`. Surfaced in OBO logs via `summarizeJwt().mayAct`.
+
 6. **Propagates** `acr` and `roles` onto the issued token so step-up and the
    role gate work at every hop of the chain.
 
