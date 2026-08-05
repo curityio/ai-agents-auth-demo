@@ -479,6 +479,39 @@ than the origin. Note this also binds **external** clients: MCP Inspector
 (`make inspect-obs`/`inspect-ops`) must speak 2026-07-28 or it is refused at
 connect.
 
+### 3.7.1 Gateway-side authorization unlocked by the new revision
+
+Two rules moved *to the front door* once the 2025 fallback was gone, because both
+key on headers that exist only on 2026-07-28. They live in agentgateway's
+`authorization` policy and are covered by `make smoke-gateway-authz`.
+
+| Rule | Keyed on | Previously enforced |
+|---|---|---|
+| `set_deployment_image` requires role `sre` | `Mcp-Name` | only at mcp-ops |
+| namespace must be `prod` | `Mcp-Param-Namespace` (SEP-2243) | only by ops-api/obs-api RBAC, two hops later |
+
+**Why `authorization` and not `mcpAuthorization`.** The MCP-layer policy couples
+call-denial to `tools/list` visibility — a tool the gateway will not let you call
+is also hidden from listing. Gating `set_deployment_image` there would make it
+invisible to an `oncall` caller, and the specialist's LLM, never seeing the tool,
+would loop silently rather than relay a denial. `authorization` is the HTTP-layer
+policy and takes no part in `tools/list`, so the call is refused while the tool
+stays visible — the distinction that made this possible at all.
+
+**`Mcp-Param-Namespace` is opt-in on the server.** The tools declare
+`x-mcp-header: Namespace` on their `namespace` input (zod 4 `.meta()`), which is
+what makes a conforming client mirror the argument into a header. Removing that
+declaration breaks no call — it silently removes the gateway's authorization
+input, so the MCP servers' tests assert it explicitly.
+
+**Two honest limits.** The role rule cannot evaluate true when the `roles` claim
+is absent, so it *fails open* — mcp-ops's `imageRoleDenial` remains the
+authoritative check, and the gateway rule is a first line rather than the only
+one. And for route-level policies `extAuthz` runs *before* `authorization`
+(measured on v1.4.1), so a denied tool-call still performs the OBO exchange: the
+privileged token is minted and then discarded unused. The deny stops the request
+reaching mcp-ops; it is not a way to avoid minting the token.
+
 **Response caching.** Revision 2026-07-28 adds cacheable results (`ttlMs` /
 `cacheScope`). It is inert here: the client default TTL is `0`, so nothing is served
 from cache unless a server sends an explicit hint, and `tools/call` is never

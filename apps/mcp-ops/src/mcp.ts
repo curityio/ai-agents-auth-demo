@@ -24,10 +24,14 @@ export interface ToolContext {
 
 /**
  * Per-tool role gate for `set_deployment_image`. Returns null when the caller may
- * update images, or a human-readable denial reason otherwise. The gateway can't
- * enforce this without hiding the tool (see agentgateway-config.yaml), so mcp-ops
- * is the authoritative point — the returned message is surfaced to the caller
- * (and relayed by the specialist LLM) instead of a silent no-op.
+ * update images, or a human-readable denial reason otherwise.
+ *
+ * agentgateway now enforces the same split at the front door (an `authorization`
+ * deny rule keyed on `Mcp-Name` — see agentgateway-config.yaml), so in practice a
+ * non-sre caller is usually refused before reaching here. This check remains the
+ * AUTHORITATIVE one: the gateway rule cannot evaluate true when the `roles` claim
+ * is absent, so it fails open, and only this one makes the split unconditional.
+ * The two must agree — change the required role in both places together.
  */
 export function imageRoleDenial(callerRoles: string[], requiredRoles: string[]): string | null {
   if (requiredRoles.some((r) => callerRoles.includes(r))) return null;
