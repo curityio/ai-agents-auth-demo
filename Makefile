@@ -449,7 +449,7 @@ status: ## Show pod health across every demo namespace
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol ## Run all auth/authz smoke tests
+smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
 
 .PHONY: smoke-obo
@@ -471,6 +471,10 @@ smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm 
 .PHONY: smoke-mcp-protocol
 smoke-mcp-protocol: ## Smoke: MCP revision negotiated across agentgateway + tier filtering. Needs SMOKE_SUBJECT_TOKEN.
 	bash scripts/smoke-mcp-protocol.sh
+
+.PHONY: smoke-gateway-authz
+smoke-gateway-authz: ## Smoke: gateway-side per-tool role split + namespace confinement. Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-gateway-authz.sh
 
 # ============================================================================
 # MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why

@@ -17,10 +17,14 @@
 #   [3/4] bob (role=developer, no write role) → Curity returns access_denied at
 #         the FIRST exchange hop (copilot→specialist, scope ops:write) — the role
 #         gate is (sre OR oncall); bob has neither.
-#   [4/4] per-tool ROLE SPLIT at the gateway (sre ⊇ oncall):
+#   [4/4] per-tool ROLE SPLIT (sre ⊇ oncall). Visibility is deliberately NOT the
+#         gate — hiding a tool makes an LLM loop silently instead of relaying a
+#         denial — so both callers SEE every ops tool and only the CALL differs:
 #         - alice (sre): tools/list on /ops/mcp INCLUDES set_deployment_image.
-#         - carol (oncall, optional token): tools/list OMITS set_deployment_image;
-#           a call to it is DENIED by gateway RBAC; restart_deployment is allowed.
+#         - carol (oncall, optional token): tools/list ALSO includes it, but the
+#           call is DENIED — by the gateway's `authorization` rule today, or by
+#           mcp-ops's role gate if that rule is ever removed (the assertion accepts
+#           either). restart_deployment stays allowed.
 #
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
@@ -304,7 +308,7 @@ esac
 if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
   yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set — seed carol (oncall) per docs/curity-seed.md and sign in to obtain."
 else
-  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied by mcp-ops; restart allowed"
+  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied; restart allowed"
   CAROL_GW=$(build_gateway_ops_token "$SMOKE_TOKEN_CAROL") \
     || { red "  failed to build aud=mcp-gateway token for carol (does carol have the oncall role?)"; exit 1; }
 
@@ -319,15 +323,23 @@ else
     *) red "  tools/list failed for carol: $LIST"; exit 1 ;;
   esac
 
-  note "    call set_deployment_image as carol → expect mcp-ops role denial (requires sre)"
+  note "    call set_deployment_image as carol → expect denial (gateway 403, or mcp-ops role error)"
   CALL=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/call" \
     '{"name":"set_deployment_image","arguments":{"name":"order-service","namespace":"prod","image":"nginx:1.27"}}')
-  # mcp-ops denies BEFORE the ops-api hop and returns an isError tool result; the
-  # gateway relays it as HTTP 200 with a JSON-RPC body of {"error":"forbidden",
-  # "message":"...requires one of these roles: sre; you have: oncall"}.
+  # TWO layers may answer, and either is a pass — which one does is deliberate:
+  #   - The gateway's `authorization` deny rule (keyed on Mcp-Name + jwt.roles) is
+  #     the first line and refuses with a plain HTTP 403 "authorization failed".
+  #     This is what fires today.
+  #   - mcp-ops's `imageRoleDenial` is the authoritative backstop; it denies BEFORE
+  #     the ops-api hop and returns an isError tool result, which the gateway relays
+  #     as HTTP 200 with {"error":"forbidden","message":"...requires one of these
+  #     roles: sre; you have: oncall"}. It answers if the gateway rule is ever
+  #     removed or fails open (it cannot evaluate true when `roles` is absent).
+  # Accepting both keeps this test honest about WHERE the split is enforced without
+  # pinning it to one layer. What must never happen is the image actually changing.
   case "$CALL" in
-    *forbidden*|*"requires one of these roles"*|*requires*sre*)
-      green "    OK (mcp-ops denied set_deployment_image for oncall: ${CALL:0:200})" ;;
+    403*|*forbidden*|*"requires one of these roles"*|*requires*sre*)
+      green "    OK (denied for oncall: ${CALL:0:200})" ;;
     200*busybox*|200*replicas*|200*restartedAt*|200*updatedReplicas*)
       red "  carol (oncall) appears to have UPDATED the image — role split not enforced: ${CALL:0:220}"; exit 1 ;;
     *) red "  unexpected response calling set_deployment_image as carol: ${CALL:0:240}"; exit 1 ;;
