@@ -58,7 +58,7 @@ You need **Docker running** (Docker Desktop or OrbStack), a few CLIs, a Curity
 developer license, and an Azure OpenAI endpoint/key for the agent LLM.
 
 ```bash
-# 1. CLIs via Homebrew (Node 20+ is required; the rest are tools the Makefile drives).
+# 1. CLIs via Homebrew (Node 22+ is required; the rest are tools the Makefile drives).
 brew install node kind kubectl helm mkcert
 
 # 2. pnpm — NO separate install. It ships with Node via corepack:

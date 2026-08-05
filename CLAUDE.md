@@ -483,7 +483,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 `make help` prints the canonical list. The ones that matter day-to-day:
 
 ```bash
-make tools-check     # preflight: node>=20, pnpm, docker, kind, kubectl, helm, mkcert
+make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, Azure LLM key
 make images          # build all 7 app images and `kind load` them
