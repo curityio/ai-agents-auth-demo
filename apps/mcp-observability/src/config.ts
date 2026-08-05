@@ -4,6 +4,8 @@ export interface Config {
   curityJwksUri: string;
   expectedAudience: string;
   requiredScopes: string[];
+  /** RFC 9728 document URL, advertised in `WWW-Authenticate` on scope challenges. */
+  resourceMetadataUrl: string;
   /** Compiled regex matching allowed inbound actor SPIFFE IDs. */
   actorPattern: RegExp;
   // mcp-observability is also a confidential client (exchange to obs-api).
@@ -29,6 +31,9 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.MCP_AUDIENCE ?? 'mcp-observability',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'obs:read').split(/\s+/).filter(Boolean),
+    resourceMetadataUrl:
+      process.env.RESOURCE_METADATA_URL ??
+      'https://mcp-observability.localtest.me/.well-known/oauth-protected-resource',
     // The immediate (outermost) actor calling mcp-observability is now the
     // agentgateway (mcp ns) — all agent traffic is fronted by it. The deeper
     // chain (copilot / specialist) is validated downstream by obs-api's full

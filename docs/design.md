@@ -119,7 +119,9 @@ which holds the only Azure OpenAI credential in the system (§3.6).
 
 1. **Bearer present** → else 401 `invalid_token`.
 2. **`verifyJwt`** (sig/iss/aud/exp) → decorate the active span with identity.
-3. **Required scope** (`obs:read` or `ops:write`) → else 403 `insufficient_scope`.
+3. **Required scope** (`obs:read` or `ops:write`) → else 403 `insufficient_scope`,
+   with `scope` **and** `resource_metadata` on the challenge (MCP 2026-07-28 asks for
+   the latter "for consistency with 401 responses").
 4. **`act` present** → else 403 `act_required` (no direct user invocation allowed).
 5. **Exact actor chain** — `walkActChain()` flattens the nested `act` outer→inner;
    length and per-position SPIFFE-ID regex must match the expected chain. Most
@@ -131,6 +133,16 @@ which holds the only Azure OpenAI credential in the system (§3.6).
    (per-position diagnostics are ambiguous when several chains are valid).
 6. **(Privileged tier only) RFC 9470 step-up** — `acr === 'mfa'` → else 401
    `insufficient_user_authentication` with `acr_values=mfa` + `resource_metadata`.
+
+> **Note — step-up is ours, not MCP's.** MCP's authorization chapter (through
+> `2026-07-28`) defines step-up purely in terms of *scopes*: a 403
+> `insufficient_scope` challenge and a client-side scope union. It has no notion of
+> authentication strength. Step 6 is RFC 9470 layered on top, and the
+> `acr_values_supported` field our RFC 9728 documents advertise is likewise
+> non-standard — it is borrowed from OpenID Provider metadata, which RFC 9728 does
+> not define for protected resources. Both are deliberate demo-local extensions: an
+> off-the-shelf MCP client will honour the 403/`scope` path but will not know what to
+> do with `acr_values`. See `apps/mcp-*/src/protected-resource-metadata.ts`.
 
 Expected chain(s) per service (outer = most recent actor):
 

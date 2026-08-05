@@ -26,6 +26,8 @@ const cfg: Config = {
   curityJwksUri: 'https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks',
   expectedAudience: 'mcp-observability',
   requiredScopes: ['obs:read'],
+  resourceMetadataUrl:
+    'https://mcp-observability.localtest.me/.well-known/oauth-protected-resource',
   actorPattern: /^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/,
   curityTokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
   clientId: 'mcp-observability',
@@ -115,5 +117,21 @@ describe('mcp-observability authMiddleware', () => {
     await authMiddleware(cfg)(baseReq, res, next);
     expect(next).not.toHaveBeenCalled();
     expect(peek()._status).toBe(403);
+  });
+
+  // MCP 2026-07-28 asks the insufficient_scope challenge to advertise the RFC 9728
+  // document too, so a client can reach the AS from the 403 without a prior 401.
+  it('advertises scope and resource_metadata on the insufficient_scope challenge', async () => {
+    verifyJwt.mockResolvedValue({
+      payload: { sub: 'alice', act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' } },
+      protectedHeader: {},
+      scopes: new Set(['ops:read']),
+    });
+    const { res, headers } = mockRes();
+    await authMiddleware(cfg)(baseReq, res, vi.fn());
+    const challenge = headers['www-authenticate'];
+    expect(challenge).toContain('error="insufficient_scope"');
+    expect(challenge).toContain('scope="obs:read"');
+    expect(challenge).toContain(`resource_metadata="${cfg.resourceMetadataUrl}"`);
   });
 });

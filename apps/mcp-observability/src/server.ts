@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   app.get(
     '/.well-known/oauth-protected-resource',
     resourceMetadataHandler({
-      resource: 'https://mcp-observability.localtest.me',
+      resource: cfg.resourceMetadataUrl.replace('/.well-known/oauth-protected-resource', ''),
       authorizationServer: cfg.curityIssuer,
       scopesSupported: cfg.requiredScopes,
     }),

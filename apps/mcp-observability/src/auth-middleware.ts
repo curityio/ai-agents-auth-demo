@@ -45,7 +45,11 @@ export function authMiddleware(cfg: Config) {
           .status(403)
           .set(
             'www-authenticate',
-            `Bearer error="insufficient_scope", scope="${missing.join(' ')}"`,
+            // MCP 2026-07-28 §"Runtime Insufficient Scope Errors": the challenge
+            // SHOULD carry resource_metadata as well, "for consistency with 401
+            // responses", so a client can discover the AS from the 403 alone.
+            `Bearer error="insufficient_scope", scope="${missing.join(' ')}", ` +
+              `resource_metadata="${cfg.resourceMetadataUrl}"`,
           )
           .json({ error: 'insufficient_scope', missing_scopes: missing });
         return;
