@@ -105,10 +105,10 @@ which holds the only Azure OpenAI credential in the system (§3.6).
 | **web** | Next.js App Router, Auth.js | Browser (session cookie) | `agent-copilot` (Bearer user token) | BFF; OIDC client `web-app`. No SPIFFE ID (not a workload actor). |
 | **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`; `LLM_PROVIDER` `gateway` default, also `anthropic`/`ollama`) | Bearer user token | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`), `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Reaches `mcp-observability` **through the agentgateway** (no longer directly). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. Also exchanges a token to `aud=llm-gateway`/`scope=llm:invoke` (single exchange, no shim/act-chain) and drives its tool-calling loop against agentgateway's `/llm` route rather than Azure directly (§3.6). |
 | **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires one `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens both toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route (§3.6). |
-| **agentgateway** | agentgateway v1.3.1 (OSS) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp`; Bearer (`aud=llm-gateway`) on `/llm` | `mcp-observability`, `mcp-ops`, Azure OpenAI | MCP front door **and** LLM egress gateway. For MCP: validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. For `/llm`: validates `aud=llm-gateway` + `llm:invoke`, then injects the Azure API key upstream — no shim, no `act`-chain (§3.6). |
+| **agentgateway** | agentgateway v1.4.1 (OSS, pinned) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp`; Bearer (`aud=llm-gateway`) on `/llm` | `mcp-observability`, `mcp-ops`, Azure OpenAI | MCP front door **and** LLM egress gateway. For MCP: validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. For `/llm`: validates `aud=llm-gateway` + `llm:invoke`, then injects the Azure API key upstream — no shim, no `act`-chain (§3.6). |
 | **exchange-shim** | Node/TypeScript (Express); `@ai-agents-demo/auth-curity` + `@ai-agents-demo/spiffe` | `extAuthz` from agentgateway (`:8090`, same pod) | Curity token endpoint | Performs the RFC 8693 exchange: reads the gateway's rotating SPIFFE JWT-SVID (`/run/spiffe/curity-actor.jwt`) as `actor_token`, subject = the caller's `aud=mcp-gateway` token, audience/scope derived **server-side** from an audience→scope allow-list (never caller-supplied). Returns a token-endpoint-shaped JSON body. Exists because agentgateway's CEL cannot read the rotating SVID file. |
-| **mcp-observability** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
-| **mcp-ops** | Express + MCP Streamable HTTP | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't: denies `set_deployment_image` for callers whose `roles` lack `sre` (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`), returning a legible role-denial before the ops-api hop. |
+| **mcp-observability** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
+| **mcp-ops** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't: denies `set_deployment_image` for callers whose `roles` lack `sre` (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`), returning a legible role-denial before the ops-api hop. |
 | **obs-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `GET /pods`, `GET /pods/:name/logs`, `GET /deployments/:name` (image/replicas/rollout status). RBAC `get,list` on pods and deployments. Accepts **two** actor chains (see §2 middleware). |
 | **ops-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `POST /restart`, `POST /set-image` (strategic-merge patch; container name == deployment name), `POST /scale` — each patches a deployment. |
 
@@ -430,6 +430,62 @@ requested`). The full grant map:
   CNAME chain + several records that overflows the 512-byte UDP limit so
   `edns0: true` lets CoreDNS return it whole (without EDNS the truncated response is
   not recovered). In-cluster backends are unaffected (single small A records).
+
+### 3.7 MCP protocol revision (2026-07-28) and era negotiation
+
+The MCP servers and clients run the **v2 SDK** —
+`@modelcontextprotocol/server`, `/client` and `/node`, which replaced the single
+`@modelcontextprotocol/sdk` package. The wire protocol is revision **2026-07-28**,
+whose relevant change here is that it **removes sessions**: no `initialize`
+handshake, no `Mcp-Session-Id`, and a per-request `_meta` envelope instead. A
+client opens with a `server/discover` probe and every subsequent request carries
+`MCP-Protocol-Version`, `Mcp-Method` and — on `tools/call` — `Mcp-Name: <tool>`.
+
+**Serving.** Each MCP server builds one `createMcpHandler(factory, { legacy:
+'reject' })` and mounts it through `toNodeHandler`. The factory runs **once per
+HTTP request** and is handed the caller's `AuthInfo`, which is where the
+per-request `subject_token` comes from — nothing is shared between requests, so a
+token can never outlive the exchange it was minted for.
+
+**Authentication seam.** The SDK deliberately never reads credentials from
+headers; it takes them as pass-through `AuthInfo` on `req.auth`. `authMiddleware`
+therefore publishes the validated bearer (and, for mcp-ops, the caller's `roles`,
+which the `set_deployment_image` gate needs) there after its own checks pass. The
+authorization model is unchanged by the migration — scope, `act`-chain and step-up
+are all still enforced in the middleware, ahead of any MCP dispatch.
+
+**No 2025 fallback — and the absence is load-bearing.** Servers reject 2025-era
+callers and clients pin `versionNegotiation: { mode: { pin: '2026-07-28' } }`. This
+is not housekeeping: a 2025 hop carries **no `Mcp-Name` header**, and the gateway's
+per-tool authorization rules key on exactly that header. A silent downgrade would
+therefore not merely lose features, it would open an authorization gap — the tool
+name the gateway is meant to gate on would simply cease to exist, while every call
+kept succeeding. Pinning converts that into a loud connect failure.
+
+During the migration both sides *did* run permissive (`legacy: 'stateless'` +
+`mode: 'auto'`), because agentgateway sat in the middle and its support was
+unverified; a gateway that only spoke 2025 had to degrade the hop rather than break
+it. Once v1.4.1 was confirmed to negotiate 2026-07-28 on both tiers, the permissive
+setting became pure downside and was removed. The lesson worth keeping: *a
+compatibility fallback that silently disables an authorization input is a
+vulnerability, not a courtesy.*
+
+`make smoke-mcp-protocol` (`scripts/smoke-mcp-protocol.sh`) is the only check that
+observes the revision negotiated *end to end*, through the gateway, with the real
+v2 client — it hard-fails on anything but 2026-07-28 and re-checks tier filtering
+and cross-tier denial. Because the servers' own support is pinned by
+`apps/mcp-*/tests/mcp-http.test.ts`, a mismatch there indicts the gateway rather
+than the origin. Note this also binds **external** clients: MCP Inspector
+(`make inspect-obs`/`inspect-ops`) must speak 2026-07-28 or it is refused at
+connect.
+
+**Response caching.** Revision 2026-07-28 adds cacheable results (`ttlMs` /
+`cacheScope`). It is inert here: the client default TTL is `0`, so nothing is served
+from cache unless a server sends an explicit hint, and `tools/call` is never
+cacheable at all. `tools/list` *is* cacheable and *is* identity-dependent in this
+topology (the gateway filters it per tier), so `openMcpToolset` sets
+`cachePartition` to the token's `sub` — belt-and-braces, to keep the identity
+boundary correct if a shared cache store or a server-side hint is ever introduced.
 
 ---
 

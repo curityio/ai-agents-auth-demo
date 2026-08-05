@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 import { obtainObsApiToken, callListPods, callGetPodLogs, callGetDeployment } from './obs-api-client.js';
@@ -16,14 +16,17 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     version: '0.0.1',
   });
 
-  server.tool(
+  server.registerTool(
     'list_pods',
-    'List pods in a namespace. Returns name, status, restart count, age, and image.',
     {
-      namespace: z
-        .string()
-        .optional()
-        .describe('Kubernetes namespace. Defaults to the demo prod namespace.'),
+      description:
+        'List pods in a namespace. Returns name, status, restart count, age, and image.',
+      inputSchema: z.object({
+        namespace: z
+          .string()
+          .optional()
+          .describe('Kubernetes namespace. Defaults to the demo prod namespace.'),
+      }),
     },
     async ({ namespace }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -49,19 +52,24 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'get_pod_logs',
-    'Fetch recent log entries for a pod by name.',
     {
-      pod_name: z.string().describe('Exact pod name (e.g., "order-service-7f6c9d8b6-x4n2p")'),
-      namespace: z.string().optional().describe('Namespace. Defaults to the demo prod namespace.'),
-      tail_lines: z
-        .number()
-        .int()
-        .positive()
-        .max(1000)
-        .optional()
-        .describe('Number of recent lines to return (default 50, max 1000)'),
+      description: 'Fetch recent log entries for a pod by name.',
+      inputSchema: z.object({
+        pod_name: z.string().describe('Exact pod name (e.g., "order-service-7f6c9d8b6-x4n2p")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe('Namespace. Defaults to the demo prod namespace.'),
+        tail_lines: z
+          .number()
+          .int()
+          .positive()
+          .max(1000)
+          .optional()
+          .describe('Number of recent lines to return (default 50, max 1000)'),
+      }),
     },
     async ({ pod_name, namespace, tail_lines }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -99,12 +107,18 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'get_deployment',
-    'Get a Deployment\'s current image, replica count, and ready/updated rollout status.',
     {
-      name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
-      namespace: z.string().optional().describe('Namespace. Defaults to the demo prod namespace.'),
+      description:
+        "Get a Deployment's current image, replica count, and ready/updated rollout status.",
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe('Namespace. Defaults to the demo prod namespace.'),
+      }),
     },
     async ({ name, namespace }) => {
       const ns = namespace ?? cfg.targetNamespace;

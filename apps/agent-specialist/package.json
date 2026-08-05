@@ -22,7 +22,6 @@
     "@ai-agents-demo/otel-bootstrap": "workspace:*",
     "@ai-agents-demo/spiffe": "workspace:*",
     "@ai-sdk/anthropic": "^1.0.6",
-    "@modelcontextprotocol/sdk": "^1.0.4",
     "ai": "^4.0.21",
     "express": "^4.21.2",
     "jose": "^5.9.6",

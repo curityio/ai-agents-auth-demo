@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 import { obtainOpsApiToken, callOpsApiRestart, callOpsApiSetImage, callOpsApiScale } from './ops-api-client.js';
@@ -33,25 +33,28 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     version: '0.0.1',
   });
 
-  server.tool(
+  server.registerTool(
     'restart_deployment',
-    `Trigger a rolling restart of a Deployment. The backend ops-api enforces ` +
-      `that only the '${cfg.targetNamespace}' namespace is reachable; calls into ` +
-      `other namespaces will fail with 403 regardless of OBO chain.`,
     {
-      name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
-      namespace: z
-        .string()
-        .optional()
-        .describe(
-          `Namespace. Defaults to the demo's '${cfg.targetNamespace}' namespace; ` +
-            `any other value will be rejected by RBAC.`,
-        ),
-      reason: z
-        .string()
-        .max(512)
-        .optional()
-        .describe('Human-readable reason recorded on the Deployment annotation.'),
+      description:
+        `Trigger a rolling restart of a Deployment. The backend ops-api enforces ` +
+        `that only the '${cfg.targetNamespace}' namespace is reachable; calls into ` +
+        `other namespaces will fail with 403 regardless of OBO chain.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(
+            `Namespace. Defaults to the demo's '${cfg.targetNamespace}' namespace; ` +
+              `any other value will be rejected by RBAC.`,
+          ),
+        reason: z
+          .string()
+          .max(512)
+          .optional()
+          .describe('Human-readable reason recorded on the Deployment annotation.'),
+      }),
     },
     async ({ name, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -94,16 +97,22 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'set_deployment_image',
-    `Update a Deployment's container image to a new version (rolling update). ` +
-      `Only the '${cfg.targetNamespace}' namespace is reachable; the container is ` +
-      `assumed to share the deployment's name.`,
     {
-      name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
-      image: z.string().min(1).describe('Fully-qualified image ref incl. tag (e.g., "ghcr.io/demo/order-service:v1.2")'),
-      namespace: z.string().optional().describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
-      reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      description:
+        `Update a Deployment's container image to a new version (rolling update). ` +
+        `Only the '${cfg.targetNamespace}' namespace is reachable; the container is ` +
+        `assumed to share the deployment's name.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
+        image: z.string().min(1).describe('Fully-qualified image ref incl. tag (e.g., "ghcr.io/demo/order-service:v1.2")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
+        reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      }),
     },
     async ({ name, image, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -131,14 +140,19 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'scale_deployment',
-    `Set the replica count of a Deployment. Only the '${cfg.targetNamespace}' namespace is reachable.`,
     {
-      name: z.string().min(1).describe('Deployment name'),
-      replicas: z.number().int().min(0).max(20).describe('Desired replica count (0–20)'),
-      namespace: z.string().optional().describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
-      reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      description: `Set the replica count of a Deployment. Only the '${cfg.targetNamespace}' namespace is reachable.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name'),
+        replicas: z.number().int().min(0).max(20).describe('Desired replica count (0–20)'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
+        reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      }),
     },
     async ({ name, replicas, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;

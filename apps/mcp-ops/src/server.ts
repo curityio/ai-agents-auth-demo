@@ -1,9 +1,7 @@
 import express from 'express';
-import { trace } from '@opentelemetry/api';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { loadConfig } from './config.js';
-import { authMiddleware, type AuthedRequest } from './auth-middleware.js';
-import { buildMcpServer } from './mcp.js';
+import { authMiddleware } from './auth-middleware.js';
+import { buildMcpRequestHandler } from './mcp-http.js';
 import { resourceMetadataHandler } from './protected-resource-metadata.js';
 import { buildLastTokenHandlers } from './last-token-route.js';
 import { spiffeIdHandler } from './spiffe-route.js';
@@ -43,48 +41,7 @@ async function main(): Promise<void> {
   const mcpRouter = express.Router();
   mcpRouter.use(authMiddleware(cfg));
 
-  mcpRouter.post('/', async (req, res) => {
-    try {
-      const body = req.body as { method?: string; params?: { name?: string } };
-      if (body?.method === 'tools/call' && typeof body.params?.name === 'string') {
-        trace.getActiveSpan()?.setAttributes({
-          'mcp.tool': body.params.name,
-          'mcp.resource_metadata_url': cfg.resourceMetadataUrl,
-        });
-      }
-      // auth-middleware already validated this token; reuse it as subject_token
-      // for the ops-api exchange. A fresh server per request means no cross-
-      // request token leakage.
-      const authz = req.header('authorization') ?? '';
-      const subjectToken = authz.toLowerCase().startsWith('bearer ')
-        ? authz.slice('bearer '.length).trim()
-        : '';
-      const caller = (req as AuthedRequest).caller;
-      const rawRoles = (caller?.payload as { roles?: unknown } | undefined)?.roles;
-      const subjectRoles = Array.isArray(rawRoles)
-        ? rawRoles.map(String)
-        : typeof rawRoles === 'string'
-          ? rawRoles.split(/\s+/).filter(Boolean)
-          : [];
-      const server = buildMcpServer(cfg, {
-        subjectToken,
-        subjectSub: String(caller?.payload.sub ?? 'unknown'),
-        subjectRoles,
-      });
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      await server.connect(transport);
-      res.on('close', () => {
-        transport.close().catch(() => undefined);
-      });
-      await transport.handleRequest(req, res, req.body);
-    } catch (e) {
-      console.error('[mcp-ops] request handler error', e);
-      if (!res.headersSent) res.status(500).json({ error: 'server_error' });
-    }
-  });
+  mcpRouter.post('/', buildMcpRequestHandler(cfg));
 
   app.use('/mcp', mcpRouter);
 

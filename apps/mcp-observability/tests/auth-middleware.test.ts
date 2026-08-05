@@ -67,6 +67,30 @@ describe('mcp-observability authMiddleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  // The MCP SDK reads credentials only from `req.auth`, never from headers, so
+  // this hand-off IS the authentication seam: drop it and every tool would
+  // exchange an empty subject_token.
+  it('publishes the validated bearer as AuthInfo on req.auth', async () => {
+    verifyJwt.mockResolvedValue({
+      payload: {
+        sub: 'alice',
+        client_id: 'mcp-gateway',
+        act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
+      },
+      protectedHeader: {},
+      scopes: new Set(['obs:read']),
+    });
+    const req = { ...baseReq, header: baseReq.header } as Request & { auth?: unknown };
+    const { res } = mockRes();
+    await authMiddleware(cfg)(req, res, vi.fn());
+    expect(req.auth).toEqual({
+      token: 'fake.tok',
+      clientId: 'mcp-gateway',
+      scopes: ['obs:read'],
+      extra: { sub: 'alice' },
+    });
+  });
+
   it('rejects when act claim is missing', async () => {
     verifyJwt.mockResolvedValue({
       payload: { sub: 'alice' },

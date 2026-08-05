@@ -449,7 +449,7 @@ status: ## Show pod health across every demo namespace
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm ## Run all auth/authz smoke tests
+smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
 
 .PHONY: smoke-obo
@@ -468,6 +468,10 @@ smoke-stepup: ## Smoke: RFC 9470 step-up (MFA for ops:write) + role-based denial
 smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm → Azure). Needs SMOKE_SUBJECT_TOKEN.
 	bash scripts/smoke-llm.sh
 
+.PHONY: smoke-mcp-protocol
+smoke-mcp-protocol: ## Smoke: MCP revision negotiated across agentgateway + tier filtering. Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-mcp-protocol.sh
+
 # ============================================================================
 # MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why
 # Inspector connects to the agentgateway rather than to an MCP server directly.
@@ -479,12 +483,19 @@ OPS_INSPECT_PORT ?= 8081
 # Forwards the AGENTGATEWAY, not the MCP server: the minted token is
 # aud=mcp-gateway, and the MCP servers require an act-chain that only the
 # gateway's exchange-shim can produce. See scripts/mint-mcp-token.sh header.
+#
+# Protocol Era is a REQUIRED step, not a nicety: our MCP servers run
+# `legacy: 'reject'` (2026-07-28 only), while Inspector defaults its era to
+# Legacy. Left on the default it sends a 2025 `initialize`, the gateway forwards
+# that upstream verbatim, and the server refuses — the connect just fails.
 # Args: $(1)=target (obs|ops) $(2)=gateway route path $(3)=local port
 define inspect-tmpl
 	@token=$$(bash scripts/mint-mcp-token.sh $(1)) || exit $$?; \
 	printf '\n\033[36m=== MCP Inspector connect details ===\033[0m\n'; \
 	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s%s\n' "$(3)" "$(2)"; \
 	printf '  Bearer:    %s\n\n' "$$token"; \
+	printf '\033[33m  Options ▸ Protocol Era: set to "Modern" (or "Auto") — NOT the\n'; \
+	printf '  default "Legacy", which this server refuses.\033[0m\n\n'; \
 	printf 'In another terminal run:  \033[32mnpx @modelcontextprotocol/inspector\033[0m\n'; \
 	printf 'then paste the URL + Bearer above. Port-forward holds this terminal (Ctrl-C to stop).\n\n'; \
 	kubectl -n mcp port-forward svc/agentgateway $(3):8080

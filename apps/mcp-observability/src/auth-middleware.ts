@@ -1,8 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
+import type { AuthInfo } from '@modelcontextprotocol/server';
 import { CurityAuthError, verifyJwt, decorateSpanWithIdentity, type VerifiedJwt } from '@ai-agents-demo/auth-curity';
 import type { Config } from './config.js';
 
-export type AuthedRequest = Request & { caller?: VerifiedJwt };
+export type AuthedRequest = Request & { caller?: VerifiedJwt; auth?: AuthInfo };
 
 export function authMiddleware(cfg: Config) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -55,6 +56,16 @@ export function authMiddleware(cfg: Config) {
         return;
       }
       (req as AuthedRequest).caller = verified;
+      // The MCP SDK never reads credentials from headers itself — it takes them
+      // as pass-through `AuthInfo` on `req.auth`, which `toNodeHandler` hands to
+      // the per-request server factory. This is the seam that carries the
+      // validated bearer forward as the next hop's `subject_token`.
+      (req as AuthedRequest).auth = {
+        token,
+        clientId: String(verified.payload.client_id ?? verified.payload.act?.sub ?? 'unknown'),
+        scopes: [...verified.scopes],
+        extra: { sub: String(verified.payload.sub ?? 'unknown') },
+      };
       decorateSpanWithIdentity(verified);
       next();
     } catch (e: unknown) {

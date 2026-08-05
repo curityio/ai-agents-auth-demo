@@ -76,7 +76,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   `act` present → exact actor-chain (length + per-position SPIFFE-ID regex) →
   (privileged tier) `acr=mfa` step-up. The role gate (`sre` for `ops:write`)
   is enforced by Curity's procedure at exchange time.
-- **MCP transport is Streamable HTTP** (`@modelcontextprotocol/sdk`), stateless.
+- **MCP transport is Streamable HTTP** (`@modelcontextprotocol/{client,server,node}@2`),
+  stateless, protocol revision **2026-07-28 only** (no 2025 fallback — the absence is
+  load-bearing) — see hard-won fact #26 before touching any MCP wiring.
 
 ## Critical hard-won facts (don't relearn these the hard way)
 
@@ -258,7 +260,11 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       tool name — the latter works on today's protocol, including the multiplexed
       `<target>_<tool>` form needed to derive an audience. The body route costs a ~2 MB
       CEL buffer ceiling (bodies ≥2 MB evaluate to nothing while our MCP servers accept
-      4 MB), so prefer the header once clients speak 2026-07-28.
+      4 MB), so prefer the header once clients speak 2026-07-28. **Our clients now do**
+      (see #26): the v2 client emits `Mcp-Name: <tool>` on every `tools/call` whenever it
+      negotiates the modern revision — verified in the spike, so the header route is live
+      the moment the gateway offers 2026-07-28. It is NOT unconditional: on a 2025-era
+      fallback there is no `Mcp-Name`, so any CEL keyed on it must still fail closed.
     - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
       gateway validates the caller's
       `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
@@ -372,6 +378,91 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     - Surfaced for demos via `summarizeJwt().mayAct`. `act` = who **did** act (audit);
       `may_act` = who **may** act next (authorization).
 
+26. **The MCP SDK is v2 (`@modelcontextprotocol/{client,server,node}@2`) and the wire
+    revision is 2026-07-28 ONLY — there is no 2025 fallback anywhere.** The v1
+    `@modelcontextprotocol/sdk` umbrella package is gone; it split into three.
+    Consequences that bite:
+    - **`server.tool(name, desc, shape, cb)` no longer exists** — only
+      `registerTool(name, { description, inputSchema }, cb)`, and `inputSchema` must be a
+      *wrapped* `z.object({...})`, not a raw shape. It must also expose
+      `~standard.jsonSchema`, which **zod 3 does not have on either entry point** (neither
+      `zod` nor `zod/v4` in 3.25). So `mcp-observability`/`mcp-ops` are on **zod 4** while
+      `agent-runtime` and the agents stay on **zod 3** (AI SDK v4 peers on it). Divergent
+      zod majors in one pnpm workspace is deliberate, not drift.
+    - **Serving is `createMcpHandler(factory, …)` + `toNodeHandler`,** replacing the
+      per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`. The
+      factory runs once per HTTP request and receives `authInfo`, which is where the
+      per-caller `subject_token` now comes from. **The SDK never reads credentials from
+      headers** — `authMiddleware` must publish them on `req.auth` as `AuthInfo`
+      (mcp-ops also passes `roles` in `extra`, because the factory has no express `req`
+      and the `set_deployment_image` gate needs it).
+    - **`toNodeHandler` ignores a function 3rd argument** (express's `next`). Mounting it
+      as bare middleware after `express.json()` therefore makes it re-read an already
+      drained stream and every request classifies as *legacy* with an empty body. You MUST
+      call it as `nodeHandler(req, res, req.body)`. This fails silently — the symptom is
+      "the modern revision never negotiates", not an error.
+    - **No 2025 fallback, on purpose, and it is a SECURITY property — not tidiness.**
+      Servers run `legacy: 'reject'` and clients pin
+      `versionNegotiation: { mode: { pin: '2026-07-28' } }`. A 2025-era hop carries no
+      `Mcp-Name` header, and the gateway's per-tool authz rules key on exactly that
+      header, so a silent downgrade would open an authz gap rather than merely losing
+      features. Pinning converts that into a loud connect failure. **Do not "helpfully"
+      restore `legacy: 'stateless'` or `mode: 'auto'`** to fix a connect error — that
+      trades a visible failure for an invisible bypass. (Both were used during the
+      migration precisely because agentgateway sat in the middle unverified; v1.4.1 was
+      then confirmed to speak 2026-07-28 on both tiers, which is what made the pin safe.)
+    - **`make smoke-mcp-protocol`** (`scripts/smoke-mcp-protocol.sh`) is the only thing
+      that observes the revision actually negotiated *end to end*; it hard-fails on
+      anything but 2026-07-28 and re-checks tier filtering + cross-tier denial. The
+      servers' own support is pinned by `apps/mcp-*/tests/mcp-http.test.ts`, so a
+      mismatch there indicts the gateway, not the origin.
+    - **External MCP clients must speak 2026-07-28** — including MCP Inspector
+      (`make inspect-obs`/`inspect-ops`). An older Inspector will be refused at connect
+      rather than silently served on the old revision.
+    - **Client-side response caching (SEP-2549) is off by default and `tools/call` is
+      never cacheable** — `defaultCacheTtlMs` is `0`, so nothing is served from cache
+      unless a *server* sends `ttlMs`. `tools/list` IS cacheable and IS identity-dependent
+      here (the gateway filters it per tier), so `openMcpToolset` sets `cachePartition` to
+      the token `sub` to keep the boundary right if that ever changes.
+    - **The smoke scripts hand-roll the wire protocol** and had to move with it: no
+      `initialize`, no `mcp-session-id`, and a per-request `_meta` envelope whose
+      **three** reserved keys (`protocolVersion`, `clientInfo`, `clientCapabilities`)
+      are ALL required — a partial envelope is rejected with `-32602` naming the
+      missing one. They also send `Mcp-Name` and `Mcp-Param-Namespace`, because those
+      headers are the gateway rules' inputs (#27); a helper that omitted them would
+      silently exercise a different policy path than production traffic.
+
+27. **Two authorization rules now run AT the gateway, in the `authorization` policy —
+    NOT `mcpAuthorization`.** `set_deployment_image` requires the `sre` role (keyed on
+    `Mcp-Name`), and any explicit namespace other than `prod` is refused (keyed on
+    `Mcp-Param-Namespace`, SEP-2243). Covered by `make smoke-gateway-authz`. Details
+    that are easy to get wrong:
+    - **`authorization` ≠ `mcpAuthorization`.** The MCP-layer policy couples
+      call-denial to `tools/list` visibility (v1.4.x has a test literally named
+      *"deny policy … filters only that tool from list_tools"*), so gating a tool
+      there HIDES it — and an LLM that never sees a tool loops silently instead of
+      relaying a denial. `authorization` is the HTTP-layer policy
+      (`crates/agentgateway/src/http/authorization.rs`) and takes no part in
+      `tools/list`, so the call is refused while the tool stays visible.
+    - **Deny-only ⇒ denylist semantics.** With no `allow` rule present every
+      unmatched request still passes; add one `allow` and the route silently becomes
+      an allowlist that denies everything else. See `PolicySet::validate`.
+    - **extAuthz runs BEFORE authorization for ROUTE-level policies** (measured on
+      v1.4.1), so a denied tool-call still performs the OBO exchange — the privileged
+      token is minted and discarded. Do not conclude otherwise from `httpproxy.rs`:
+      it has three policy application sites with *different* orders.
+    - **`Mcp-Param-Namespace` only exists because the tools declare
+      `x-mcp-header`** on their `namespace` input (`z.…meta({'x-mcp-header':
+      'Namespace'})`, zod 4). Deleting that declaration breaks no call — it silently
+      removes the gateway's authz input, so `apps/mcp-*/tests/mcp-http.test.ts`
+      assert it explicitly.
+    - The namespace rule is written **"present AND not prod"** so that *omitting* the
+      argument (the common case — the server defaults it) can never trip it,
+      whichever way a missing header evaluates in CEL.
+    - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
+      evaluate true if the `roles` claim is missing, so it fails open. The downstream
+      `imageRoleDenial` check is what makes the split unconditional.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -384,7 +475,7 @@ make images          # build all 7 app images and `kind load` them
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace
-make smoke           # OBO + A2A + step-up/role-denial smoke tests
+make smoke           # OBO + A2A + step-up/role-denial + LLM + MCP-revision smoke tests
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit

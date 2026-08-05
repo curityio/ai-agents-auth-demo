@@ -1,5 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
@@ -33,10 +32,26 @@ export async function openMcpToolset(opts: {
     },
     ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
   });
-  const client = new Client({ name: opts.clientName, version: '0.0.1' });
+  const tok = summarizeJwt(opts.bearerToken);
+  const client = new Client(
+    { name: opts.clientName, version: '0.0.1' },
+    {
+      // Pinned, NOT `auto`. `auto` would fall back to the 2025 handshake if any
+      // hop stopped offering 2026-07-28 — and that fallback is silent: the demo
+      // would keep working one revision older, without `Mcp-Name`, which is the
+      // header the gateway's per-tool authz rules key on. Pinning turns that
+      // degradation into a loud connect failure instead of a quiet authz gap.
+      versionNegotiation: { mode: { pin: '2026-07-28' } },
+      // Response caching (SEP-2549) is keyed by [serverIdentity, cachePartition].
+      // Our `tools/list` is identity-dependent — agentgateway filters it by the
+      // caller's tier scope — so partition by subject. Today nothing is actually
+      // served from cache (no server sends `ttlMs`, and `tools/call` is never
+      // cacheable), but this keeps the boundary right if that ever changes.
+      cachePartition: tok.sub ?? '',
+    },
+  );
   await client.connect(transport);
 
-  const tok = summarizeJwt(opts.bearerToken);
   oboLog({
     service: opts.clientName,
     kind: 'CALL',
