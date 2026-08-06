@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
 # agentgateway config — path-routed MCP front door for mcp-observability +
-# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.3.1.
+# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.4.1.
 #
 # Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
 # (`mcp.tool.target` / `mcp.tool.name`) is NOT available inside `extAuthz` — it

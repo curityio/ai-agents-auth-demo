@@ -69,8 +69,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   (`obs-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
   hold Kubernetes credentials, behind minimal RBAC in `prod` (obs-api: get/list
   pods + logs **and** get/list deployments; ops-api: patch deployments). obs-api
-  accepts **two** actor chains (`expectedActorChains`/`chainMatchesAny`):
-  `[obs-mcp, copilot]` (copilot reads directly) and `[obs-mcp, specialist, copilot]`
+  accepts **two** actor chains (`expectedActorChains`/`chainMatchesAny`), both of
+  which include the gateway: `[mcp-observability, agentgateway, agent-copilot]`
+  (copilot reads directly) and
+  `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`
   (specialist reads while remediating).
 - **Resource servers enforce, in order:** Bearer → JWT valid → required scope →
   `act` present → exact actor-chain (length + per-position SPIFFE-ID regex) →
@@ -552,7 +554,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, Azure LLM key
-make images          # build all 7 app images and `kind load` them
+make images          # build all 8 app images and `kind load` them
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace

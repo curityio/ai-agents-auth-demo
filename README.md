@@ -64,7 +64,7 @@ brew install node kind kubectl helm mkcert
 # 2. pnpm — NO separate install. It ships with Node via corepack:
 corepack enable          # provisions the repo-pinned pnpm (9.15.0)
 
-# 3. Verify the toolchain (node>=20, pnpm, docker, kind, kubectl, helm, mkcert):
+# 3. Verify the toolchain (node>=22, pnpm, docker, kind, kubectl, helm, mkcert):
 make tools-check
 ```
 

@@ -367,7 +367,7 @@ Boundary properties worth calling out:
   `oncall` caller and the specialist LLM would loop silently rather than surface a
   denial; that finer split is therefore enforced downstream at `mcp-ops`.) It is
   path-routed — `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops —
-  because agentgateway v1.3.1 does not expose `mcp.tool.target` in its `extAuthz`
+  because agentgateway (re-verified on v1.4.1) does not expose `mcp.tool.target` in its `extAuthz`
   CEL scope, so per-backend audience narrowing can't be done on a single federated
   endpoint. For each tool-call the gateway drives an `extAuthz` call to the
   co-located **exchange-shim** (`apps/exchange-shim`, same pod), which performs the
@@ -416,6 +416,8 @@ flowchart LR
     W["web (@vercel/otel)"]
     A["agent-copilot / agent-specialist"]
     M["MCP servers + obs-api / ops-api"]
+    GW["agentgateway (native OTLP)"]
+    SH["exchange-shim (OBO sidecar)"]
   end
   subgraph obs_ns["observability namespace (out of mesh)"]
     COL["OTel Collector"]
@@ -425,6 +427,8 @@ flowchart LR
   W -- "OTLP/HTTP :4318" --> COL
   A -- "OTLP/HTTP :4318" --> COL
   M -- "OTLP/HTTP :4318" --> COL
+  SH -- "OTLP/HTTP :4318" --> COL
+  GW -- "OTLP/gRPC :4317" --> COL
   COL -- "OTLP/gRPC :4317" --> T
   G -- "TraceQL" --> T
   P["presenter"] -- "https://grafana.localtest.me" --> G
@@ -434,14 +438,31 @@ flowchart LR
 |---|---|---|---|
 | **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain |
 | **Workload** | resource attribute | `spiffe.id` | `packages/otel-bootstrap`, read from the SVID file at SDK init |
-| **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope` | `exchangeToken()` in `packages/auth-curity` |
+| **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope`, `…token_endpoint` (plus `server.address` / `url.path`) | `exchangeToken()` in `packages/auth-curity` |
+| **Gateway** | span attributes | `mcp.method.name`, `mcp.target`, `gen_ai.tool.name`, `gen_ai.usage.*`, `route`, `http.path`, `url.full`, `endpoint` (upstream, HTTP backends only) | agentgateway's native OTLP tracing (`config.tracing`) |
 | **MCP** | span attributes | `mcp.tool`, `mcp.resource_metadata_url` | the MCP `POST /` handler |
 
-The six plain-Node services (both agents, both MCP servers, both backend APIs)
-load `@ai-agents-demo/otel-bootstrap` via `node --import`; `apps/web` (Next
-standalone, CommonJS) uses `@vercel/otel`.
+The seven plain-Node services (both agents, both MCP servers, both backend APIs,
+and the gateway's `exchange-shim` sidecar) load `@ai-agents-demo/otel-bootstrap`
+via `node --import`; `apps/web` (Next standalone, CommonJS) uses `@vercel/otel`.
+`agentgateway` itself exports natively (`config.tracing`), so the MCP/LLM front
+door is a first-class hop rather than a gap between the agent and its backend.
+The `net`/`dns`/`fs` auto-instrumentations are switched **off**
+(`packages/otel-bootstrap/src/instrumentation-config.ts`): `tcp.connect` /
+`tls.connect` were a third of a read-path waterfall and say nothing about
+delegation. Connection failures still surface on the enclosing HTTP span.
 Trace context propagates on the wire via a composite W3C + B3 propagator, so
-the spans stitch into a single trace.
+the spans stitch into a single trace. agentgateway does not propagate context to
+its `extAuthz` callout on its own, so each extAuthz block forwards `traceparent`
+explicitly — that value is already the *gateway's own* span, which is what nests
+the shim's exchange underneath it.
+
+> **Reading the waterfall.** On the two MCP routes the origin span
+> (`mcp-observability` / `mcp-ops`) renders as a *sibling* of the agentgateway
+> span rather than its child: agentgateway forwards the inbound `traceparent`
+> verbatim on `mcp:` backends while rewriting it correctly for HTTP backends
+> ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904)).
+> Durations still nest correctly — only the indentation misleads.
 
 ---
 

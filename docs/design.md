@@ -285,7 +285,13 @@ After `verifyJwt`, every service calls `decorateSpanWithIdentity(verified)`,
 stamping `auth.sub/scope/acr/aud/roles/act[]` onto the active HTTP span.
 `spiffe.id` is a resource attribute (same for all of a service's spans).
 `exchangeToken` opens an `auth.token_exchange` child span recording the
-requested vs issued scope — making scope narrowing visible in the trace.
+requested vs issued scope — making scope narrowing visible in the trace — plus
+the authorization server it called (`auth.exchange.token_endpoint`, split into
+`server.address` / `url.path` so TraceQL can filter on them). The endpoint is on
+the span itself so it can be read without expanding the child HTTP span. The
+subject and actor tokens are deliberately **not** recorded: they are credentials
+and spans leave the process. Attributes are built by the pure
+`buildExchangeAttributes` (`exchange-span.ts`), mirroring `buildIdentityAttributes`.
 
 ### 3.5 The agentgateway + exchange-shim (MCP front door)
 
@@ -300,8 +306,9 @@ MCP servers, replacing the former Istio ambient waypoint.
   in-cluster plain-HTTP URL `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`).
 - **Path-routed, not federated.** ONE listener (`:8080`) exposes TWO path-scoped
   routes — `/observability/mcp` → mcp-observability and `/ops/mcp` → mcp-ops. It is
-  path-routed (not a single federated `/mcp`) because agentgateway **v1.3.1** (latest
-  OSS) does not expose `mcp.tool.target` inside its `extAuthz` CEL scope, so
+  path-routed (not a single federated `/mcp`) because agentgateway (pinned at
+  **v1.4.1**, and re-verified there) does not expose `mcp.tool.target` inside its
+  `extAuthz` CEL scope, so
   per-backend audience narrowing can't be done on one federated endpoint. Callers
   pick the path.
 - **Coarse tier authorization (per-tier scope, not per-tool role).**
@@ -332,7 +339,20 @@ MCP servers, replacing the former Istio ambient waypoint.
   `exchangeToken` + `@ai-agents-demo/spiffe`. It returns a token-endpoint-shaped JSON
   body; the gateway swaps the returned narrowed token onto the request and forwards
   to the origin MCP server. **The shim exists because agentgateway's CEL cannot read
-  the rotating SVID file**, so the exchange is done in a co-located sidecar.
+  the rotating SVID file**, so the exchange is done in a co-located sidecar. It is
+  also the reason there is an open upstream request to let `oauthTokenExchange`
+  source an actor token from a file
+  ([agentgateway#2905](https://github.com/agentgateway/agentgateway/issues/2905));
+  until then the sidecar stands in.
+- **The shim serves over Express, and that is load-bearing for telemetry.**
+  `@opentelemetry/instrumentation-http` patches the **CJS** `http` module, which
+  Express reaches through a `require` hooked synchronously at SDK start. A bare ESM
+  `import { createServer } from 'node:http'` instead races the ESM hook registration
+  and frequently loses, leaving the server unpatched — and the failure is silent and
+  misleading: client spans keep working (undici uses diagnostics_channel, not module
+  patching), but with no server span nothing calls `propagation.extract`, so the
+  shim's `auth.token_exchange` span roots its own orphan trace instead of joining the
+  caller's. See CLAUDE.md fact #28 for the one-command diagnosis.
 - **`act`-chain position.** The exchange nests the gateway's SPIFFE ID
   (`spiffe://demo.curity.local/ns/mcp/sa/agentgateway`) as one new `act` position, so
   every downstream chain grows by it (see the actor-chain table in §2).
@@ -561,6 +581,7 @@ Representative variables (see `k8s/workloads/*.yaml` for the authoritative set):
 | `*_AUDIENCE` / `MCP_AUDIENCE` / `API_AUDIENCE` | validators | the audience this server accepts |
 | `REQUIRED_SCOPES` | resource servers | scope gate |
 | `REQUIRED_ACR` | `mcp-ops`, `ops-api` | step-up requirement (`mfa`) |
+| `MCP_OPS_METADATA_URL` | `agent-specialist` | in-cluster URL the RFC 9728 document is *fetched* from when building a step-up challenge. Distinct from `MCP_OPS_RESOURCE_METADATA_URL` (the public identifier put in the challenge) and from `MCP_OPS_URL` (the agentgateway front door, which serves no `/.well-known`). |
 | `<DOWNSTREAM>_URL` / `_AUDIENCE` / `_SCOPE` | exchange clients | the next hop's address, exchange audience, requested scope |
 | `AGENT_CLIENT_ID` + `CURITY_AGENT_PRIVATE_KEY_PEM` | the two agents | CIMD client_id URL + RSA key for `private_key_jwt` |
 | `*_CLIENT_ID` + secret | MCP exchange clients | `client_secret_basic` credentials |
@@ -605,7 +626,11 @@ in the `agentgateway-llm` Secret (`make seed-llm-secret`, folded into
   mounts the mkcert root CA (pods can't reach the public `localtest.me` loopback,
   and must trust the gateway cert to fetch JWKS). It also gives the **Curity** pod
   a hostAlias for `copilot`/`specialist.localtest.me` so Curity can dereference the
-  agents' CIMD documents. Curity trusts those hosts' TLS via the mkcert CA embedded
+  agents' CIMD documents, and the **web** pod aliases for
+  `mcp-ops`/`mcp-observability.localtest.me` — on a step-up challenge the BFF
+  fetches the RFC 9728 metadata at its *public* identifier (rewriting that to an
+  internal name would defeat the point of a stable resource identifier).
+  `make routing-check` verifies every one of these and fails on drift. Curity trusts those hosts' TLS via the mkcert CA embedded
   in its config server-truststore (`make curity-truststore`, run by `make apply`) —
   not `NODE_EXTRA_CA_CERTS`, which only reaches the Node app pods.
 
