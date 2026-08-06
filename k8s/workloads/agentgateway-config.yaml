@@ -33,6 +33,31 @@ config:
   dns:
     lookupFamily: V4Only
     edns0: true
+  # Native OTLP tracing. Without it the gateway is a HOLE in every trace: it
+  # generates a span per request (it logs `trace.id`/`span.id`) and propagates
+  # that context downstream, but exports nothing — so the hop that authorizes the
+  # call and re-mints the token is invisible, which is the one hop these traces
+  # exist to show. With it you also get `mcp.method.name` / `mcp.target` /
+  # `gen_ai.tool.name`, and the full `gen_ai.usage.*` token accounting on /llm —
+  # available nowhere else.
+  # grpc/4317 (the collector exposes 4317 gRPC and 4318 HTTP; the Node services
+  # use the latter).
+  tracing:
+    otlpEndpoint: http://otel-collector.observability.svc.cluster.local:4317
+    otlpProtocol: grpc
+    # The gateway span already carries `http.path`, `route` and `http.host`, plus
+    # `endpoint` (upstream host:port) for plain HTTP backends like /llm. It does
+    # NOT set `endpoint` for the two MCP routes, because those use a named-target
+    # `mcp:` backend rather than a single address — there `mcp.target` names the
+    # backend logically instead. Add the absolute URL under the standard semconv
+    # key so a gateway span states its endpoint the same way every Node span does.
+    # (VERIFIED to resolve: request.uri / request.path / request.method /
+    # request.host. `backend` and `route` do NOT resolve as CEL roots here, and
+    # --validate-only does not check CEL, so an unknown root silently yields
+    # nothing rather than erroring.)
+    fields:
+      add:
+        url.full: 'request.uri'
 
 binds:
 - port: 8080
@@ -92,6 +117,17 @@ binds:
                 # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
                 x-target-audience: '"mcp-observability"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -199,6 +235,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -285,6 +332,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-observability"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -318,6 +376,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
