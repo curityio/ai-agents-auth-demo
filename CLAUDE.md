@@ -290,7 +290,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       (`[sre]`) may call it; bob (`[developer]`) is denied `ops:write` at the exchange.
     - **extAuthz → co-located `exchange-shim` = the OBO hop.** For each tool-call the
       gateway makes an `extAuthz` call to `exchange-shim` (`apps/exchange-shim`,
-      Node/TS, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693
+      Node/TS + express — see #28, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693
       exchange: it reads the gateway's rotating SPIFFE JWT-SVID from
       `/run/spiffe/curity-actor.jwt` (spiffe-helper sidecar) as the `actor_token`, uses
       the caller's `aud=mcp-gateway` token as the subject, and derives audience/scope
@@ -477,6 +477,72 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       the prompt-injection hole this demo argues against. Verified end to end: carol
       (oncall) now gets *"The set_deployment_image tool was refused with a 403
       authorization error. You are not authorized… No changes were made."*
+
+28. **A bare ESM `import { createServer } from 'node:http'` is NOT reliably patched
+    by OTel — that is why `exchange-shim` serves through express.**
+    `@opentelemetry/instrumentation-http` patches the **CJS** `http` module.
+    Require-in-the-middle installs those hooks synchronously at SDK start, so
+    anything reaching `http` via a CJS `require` — which is what **express** does,
+    and why every other service here is fine — is instrumented. A bare ESM import of
+    a builtin instead depends on the ESM hook registration winning a race against the
+    app's own import, and it frequently LOSES even with `node --import`. Symptoms, in
+    increasing order of how misleading they are:
+    - No HTTP **server** span from the service, while **client** spans keep working
+      perfectly (`instrumentation-undici` uses diagnostics_channel, not module
+      patching). The service therefore *looks* instrumented.
+    - No server span ⇒ nothing calls `propagation.extract` ⇒ any span the handler
+      creates becomes a **root**, starting its own orphan trace. This is what made the
+      shim's `auth.token_exchange` spans — the hop that inserts agentgateway into the
+      downstream `act` chain — vanish from the caller's trace.
+    - **Intermittent across rebuilds** with identical source: unrelated dependency
+      changes shift module-load timing and flip the outcome. This cost two wrong
+      diagnoses that blamed agentgateway's extAuthz propagation instead.
+    **Diagnose in one command: send a request with NO `traceparent`.** A root span is
+    always sampled, so if no span appears it is not sampling and not parenting — the
+    server is simply unpatched. Beware the false negative: a one-off
+    `node --import @ai-agents-demo/otel-bootstrap -e "…"` in the same container CAN
+    export a manual span (CJS `require`), making the SDK look healthy while the
+    long-running ESM server is unpatched. Fix is `apps/exchange-shim/src/app.ts`
+    (express), pinned by `apps/exchange-shim/tests/app.test.ts`. Don't "simplify" it
+    back to `createServer`. Relatedly, `otel-bootstrap` disables the `net`/`dns`/`fs`
+    auto-instrumentations (`packages/otel-bootstrap/src/instrumentation-config.ts`):
+    `tcp.connect`/`tls.connect` were a third of a read-path waterfall and say nothing
+    about delegation. Failures still surface on the enclosing HTTP span.
+
+29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
+    `traceparent`, and MCP backends mis-parent the origin span.** Three separate
+    things, all verified on v1.4.1:
+    - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
+      `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
+      gateway generates a span per request (it logs `trace.id`/`span.id`) and
+      propagates context, but exports nothing — the hop that authorizes the call and
+      re-mints the token is missing from every trace. It is also the ONLY source of
+      `gen_ai.usage.*` token accounting on `/llm`, plus `mcp.method.name`,
+      `mcp.target`, `gen_ai.tool.name`, `route`, `http.path` and `endpoint` (upstream
+      host:port — HTTP backends only; `mcp:` backends use named targets so
+      `mcp.target` names the backend instead). `fields.add: {url.full: 'request.uri'}`
+      adds the absolute URL under the standard key.
+    - **Validate offline** with `docker run …/agentgateway:v1.4.1 -f cfg.yaml
+      --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
+      fetch, which is past schema validation). It does **NOT** check CEL — an unknown
+      CEL root passes validation and silently yields nothing at runtime.
+    - **extAuthz gets no trace context unless you forward it.** The gateway propagates
+      to routed backends but not to the callout, so each extAuthz block sets
+      `traceparent: 'request.headers["traceparent"]'`. Counter-intuitively that value
+      is NOT the caller's: the gateway has already rewritten the header to its OWN span
+      (`httpproxy.rs` `tp.new_span()` + `ns.insert_header(req)`, at the listener stage
+      before route policies), so forwarding it parents the shim's exchange directly
+      under the gateway span — exactly right. Confirmed by echoing the callout's
+      headers from a throwaway listener in the pod.
+    - **Known upstream bug — the MCP origin span is a SIBLING of the gateway span,**
+      not a child. For HTTP backends the gateway forwards its rewritten `traceparent`
+      and nesting is correct; for `mcp:` backends the upstream request is built fresh
+      (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
+      headers only where absent, carrying the ORIGINAL inbound traceparent. So
+      `mcp-observability`/`mcp-ops` parent to the CALLER, and the gateway looks like a
+      bystander to a call that went around it. Not configurable, and still present on
+      `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
+      the indentation lies.
 
 ## Commands
 
