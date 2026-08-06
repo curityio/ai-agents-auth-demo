@@ -87,7 +87,7 @@ warnings, run `make trust-ca` (undo anytime with `mkcert -uninstall`).
 
 ```bash
 # 1. Clone the repo and cd into it:
-git clone https://github.com/Curity-PS/ai-agents-auth-demo.git
+git clone https://github.com/curityio/ai-agents-auth-demo.git
 cd ai-agents-auth-demo
 
 # 2. Put your Curity license at the repo root (gitignored); make demo will
