@@ -7,14 +7,17 @@ WORKDIR /app
 FROM base AS build
 COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/auth-curity/package.json packages/auth-curity/
+COPY packages/otel-bootstrap/package.json packages/otel-bootstrap/
 COPY packages/spiffe/package.json packages/spiffe/
 COPY apps/exchange-shim/package.json apps/exchange-shim/
 RUN pnpm install --frozen-lockfile=false --filter "@ai-agents-demo/exchange-shim..."
 COPY packages/auth-curity packages/auth-curity
+COPY packages/otel-bootstrap packages/otel-bootstrap
 COPY packages/spiffe packages/spiffe
 COPY apps/exchange-shim apps/exchange-shim
 RUN pnpm --filter "@ai-agents-demo/auth-curity" build \
  && pnpm --filter "@ai-agents-demo/spiffe" build \
+ && pnpm --filter "@ai-agents-demo/otel-bootstrap" build \
  && pnpm --filter "@ai-agents-demo/exchange-shim" build
 
 FROM base AS runtime
@@ -23,4 +26,9 @@ COPY --from=build /app /app
 WORKDIR /app/apps/exchange-shim
 EXPOSE 8090
 USER node
-CMD ["node", "dist/server.js"]
+# Wait (≤30s) for the spiffe-helper sidecar to write the SVID before starting,
+# so otel-bootstrap reads a real spiffe.id at SDK init instead of "unknown"
+# (the resource attribute is captured once and never re-read). `exec` keeps
+# node as PID 1 so SIGTERM still reaches the OTel shutdown handler. Proceeds
+# after the timeout rather than hanging if SVID issuance is broken.
+CMD ["sh", "-c", "n=0; until [ -s \"${SPIFFE_SVID_PATH:-/run/spiffe/curity-actor.jwt}\" ] || [ $n -ge 60 ]; do n=$((n+1)); sleep 0.5; done; exec node --import @ai-agents-demo/otel-bootstrap dist/server.js"]
