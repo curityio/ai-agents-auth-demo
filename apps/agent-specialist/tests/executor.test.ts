@@ -42,9 +42,13 @@ function makeStepUp(): StepUpRequiredError {
 
 const cfg = {
   requiredAcr: 'mfa',
-  mcpOpsUrl: 'http://mcp-ops/mcp',
-  mcpObservabilityUrl: 'http://mcp-observability/mcp',
+  // Both MCP URLs are the agentgateway, as in production — the fixture used to
+  // carry the pre-gateway direct-to-mcp-ops URL, which is why deriving the
+  // RFC 9728 origin from `mcpOpsUrl` looked fine in tests and 404'd in the cluster.
+  mcpOpsUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp',
+  mcpObservabilityUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp',
   mcpOpsResourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
+  mcpOpsMetadataUrl: 'http://mcp-ops.mcp.svc.cluster.local:8080/.well-known/oauth-protected-resource',
   mcpOpsScope: 'ops:write',
   llmProvider: 'gateway',
   llmModel: 'gpt-4.1',
@@ -118,6 +122,32 @@ describe('runRemediation', () => {
     expect(out.kind).toBe('step-up');
     expect(d.runLlm).not.toHaveBeenCalled();
     expect(d.openMcpToolset).not.toHaveBeenCalled();
+  });
+
+  it('fetches RFC 9728 metadata from mcp-ops itself, not from the agentgateway origin', async () => {
+    // `mcpOpsUrl` points at the gateway (it is the MCP front door), and the
+    // gateway serves no /.well-known/oauth-protected-resource — deriving the
+    // metadata origin from it 404s and silently drops us onto hardcoded
+    // defaults. The document lives on mcp-ops, so that is what must be fetched.
+    const gatewayCfg = {
+      ...(cfg as object),
+      mcpOpsUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp',
+      mcpOpsMetadataUrl: 'http://mcp-ops.mcp.svc.cluster.local/.well-known/oauth-protected-resource',
+    } as never;
+    const d = deps({
+      obtainOpsToken: vi.fn().mockRejectedValue(new CurityAuthError('needs mfa', 'invalid_scope')),
+    });
+    const out = await runRemediation({
+      cfg: gatewayCfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
+    });
+    expect(out.kind).toBe('step-up');
+    expect(d.fetchResourceMetadata).toHaveBeenCalledWith(
+      'http://mcp-ops.mcp.svc.cluster.local/.well-known/oauth-protected-resource',
+    );
   });
 
   it('maps a generic CurityAuthError on the write-token exchange to an error result', async () => {
