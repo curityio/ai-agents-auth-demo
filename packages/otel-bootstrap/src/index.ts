@@ -15,3 +15,4 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 
 export { startTelemetry } from './telemetry.js';
 export { buildResource } from './resource.js';
+export { INSTRUMENTATION_CONFIG, NOISY_INSTRUMENTATIONS } from './instrumentation-config.js';
