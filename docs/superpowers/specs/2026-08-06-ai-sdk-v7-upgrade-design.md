@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-06
 **Branch:** `chore/ai-sdk-upgrade-analysis`
-**Status:** design approved, awaiting implementation plan
+**Status:** implemented. Unit + characterization tests green, agents healthy in
+cluster. Two token-gated end-to-end checks still outstanding — see
+[Verification status](#verification-status).
 
 ## Goal
 
@@ -78,18 +80,28 @@ step-up case observes the real behaviour.
 
 Replacement mechanism, per remediation call:
 
-1. `runRemediation` allocates a mutable box: `const stepUp: { err?: StepUpRequiredError } = {}`.
-2. `buildStepUpInterceptingFetch` records onto the box in addition to throwing.
-   It keeps throwing, so the tool call still fails rather than returning a bogus
-   success to the model.
-3. `runLlm` passes `stopWhen: [isStepCount(8), () => stepUp.err !== undefined]`,
-   which halts the loop at the first step-up instead of letting the model retry
-   into the same 401.
-4. After `generateText` resolves, `runRemediation` checks the box **before**
-   returning `{ kind: 'ok' }`, and returns `{ kind: 'step-up' }` if set.
-5. The `catch` block keeps `findStepUp` as a belt-and-braces path (harmless, and
-   still correct if a step-up ever surfaces outside a tool `execute`, e.g. from
-   the `ops:write` exchange).
+1. `runRemediation` allocates a mutable sink:
+   `const stepUpSink: { err?: StepUpRequiredError } = {}`.
+2. `buildStepUpInterceptingFetch(scope, sink?)` records onto the sink in addition
+   to throwing. It keeps throwing, so the tool call still fails rather than
+   returning a bogus success to the model.
+3. `runLlm` gains a `stopEarly?: () => boolean` parameter, which the real
+   implementation passes as `stopWhen: [isStepCount(8), stopEarly]`. That halts
+   the loop at the first step-up instead of letting the model retry into the same
+   401. It is named `stopEarly` rather than `stopWhen` so the injected dep does
+   not have to know the SDK's `Arrayable<StopCondition>` type — `RemediationDeps`
+   stays SDK-agnostic apart from `ToolSet`.
+4. `runRemediation` checks the sink in both exits from the LLM block: before
+   returning `{ kind: 'ok' }`, and in the `catch` before returning
+   `specialist_failure`. The second is not redundant — the SDK swallows the
+   step-up throw, but an unrelated later failure could still escape with the sink
+   already set, and a genuine step-up must win over a generic error.
+5. **`findStepUp` is deleted.** Now that nothing wraps the error, walking a
+   `.cause` chain has no reachable input; keeping it would be a path no test
+   could honestly exercise and a false suggestion that the throw route still
+   works. The `ops:write` exchange's own step-up is already handled separately
+   and deterministically by `stepUpFromMetadata` at step 1 of `runRemediation`,
+   so nothing is left uncovered.
 
 This is a better fit for the architecture than what it replaces: CLAUDE.md states
 that the specialist's authz gates run outside the LLM loop, and this moves the
@@ -109,17 +121,30 @@ Since v5, calling the provider instance as a function uses the **Responses API**
 (`resourceType: openAI`), and it is the only source of `gen_ai.usage.*` token
 accounting (CLAUDE.md fact #29), which parses that shape.
 
-Fix: `createOpenAI({ baseURL, apiKey }).chat(cfg.llmModel)`. The provider docs
-name this exact case — a custom `baseURL` pointing at an OpenAI-compatible
-endpoint that implements Chat Completions but not Responses.
+Fix: replace `@ai-sdk/openai` with `@ai-sdk/openai-compatible` and build the
+gateway model with `createOpenAICompatible({ name, baseURL, apiKey })(model)`.
+That provider targets Chat Completions unconditionally — it has no Responses
+implementation to fall back to — so the endpoint cannot drift again on a future
+major. It is also the honest description of what the gateway is: an
+OpenAI-compatible proxy in front of Azure, not OpenAI.
 
-`@ai-sdk/openai-compatible`'s `createOpenAICompatible` was considered and
-rejected for this change: it is arguably the more honest provider for a proxy
-that is not OpenAI, but it is a fourth dependency and a second behavioural
-variable in a diff that already has one. Note it as a follow-up.
+`createOpenAI(...).chat(model)` was the alternative and is a smaller diff, but it
+keeps a provider whose default is wrong for us and whose correctness depends on
+remembering `.chat()` at every call site. Since `buildLlm` is the single
+construction point either way, taking the compatible provider now avoids touching
+this file twice.
 
-Verification is in-cluster only: confirm the request reaching agentgateway is
-still `POST /llm/chat/completions` and that `gen_ai.usage.*` still appears on the
+The `anthropic` branch keeps `@ai-sdk/anthropic` unchanged — it talks to
+Anthropic directly and is unaffected.
+
+**`buildLlm`'s unit test must assert the request path**, not just the provider
+name. A test that only checks `model.provider` cannot distinguish
+`/chat/completions` from `/responses`, which is exactly how this regression would
+have shipped. Inject a stub `fetch` through the provider's `fetch` option, call
+`doGenerate`, and assert the URL ends in `/chat/completions`.
+
+Also verify in-cluster: confirm the request reaching agentgateway is still
+`POST /llm/chat/completions` and that `gen_ai.usage.*` still appears on the
 gateway span in Grafana. Nothing about CLAUDE.md fact #24 (`config.dns` tuning
 for the external Azure host) changes.
 
@@ -213,6 +238,45 @@ In order. Each step must pass before the next.
 6. Grafana: confirm `gen_ai.usage.*` is still present on the agentgateway `/llm`
    span.
 
+## Verification status
+
+Done:
+
+- `pnpm turbo run build typecheck test` — 39/39 tasks, 244 tests, output clean.
+- `packages/agent-runtime/src/tool-errors.test.ts` characterizes the SDK itself
+  against the **real** `generateText`: a throw from a tool's `execute` resolves
+  rather than rejecting, and surfaces as a `tool-error` content part. This is the
+  premise the sink rests on, so it is now asserted rather than assumed.
+- `llm.test.ts` asserts the outbound request path is `/llm/chat/completions` and
+  that the exchanged token is the bearer. Measured out-of-tree beforehand for
+  contrast: `createOpenAI()(model)` → `/llm/responses`, `.chat()` and
+  `createOpenAICompatible()` → `/llm/chat/completions`.
+- Both agent images rebuilt, `kind load`ed, and **rolled out** (reloaded `:dev`
+  images do not restart pods on their own). Both pods `2/2 Running`, clean startup
+  logs, `/healthz` + `/.well-known/oauth-client` + `/.well-known/jwks.json` all 200.
+  This is the check that matters for v7's ESM-only requirement: the agents load
+  under `node --import @ai-agents-demo/otel-bootstrap` in the real runtime.
+- `make routing-check` — all 8 targets still wired.
+
+Outstanding, blocked on a browser-obtained user token (`SMOKE_SUBJECT_TOKEN` /
+`SMOKE_TOKEN_ALICE_MFA`). Curity has no ROPC grant here and the demo passwords are
+operator-chosen with TOTP enrolled, so these cannot be minted headlessly:
+
+1. **`make smoke`** — the full token/gateway suite.
+2. **The step-up sink, end to end.** No smoke script drives the agents' LLM loop;
+   they exercise the token and gateway layers directly. So the sink is covered by
+   unit + characterization tests but has not yet been observed against a real
+   `mcp-ops` 401. Drive a restart as alice-**pwd** in the browser and confirm the
+   MFA prompt still appears.
+3. **The step mapping, end to end.** `tc.input` / `tr.output` are read through `as`
+   casts, so a wrong field name yields `undefined` in the Trace tab rather than a
+   type error. Confirm tool calls and results still render, and that
+   `gen_ai.usage.*` is still on the agentgateway `/llm` span in Grafana.
+
+Note the gateway cannot be used to distinguish the two LLM paths directly: its JWT
+policy runs before routing, so `/llm/chat/completions` and `/llm/responses` both
+answer `403` without a token.
+
 ## Documentation
 
 - CLAUDE.md gains one hard-won fact covering both red findings: thrown tool
@@ -238,5 +302,3 @@ In order. Each step must pass before the next.
    would nest `ai.generateText` / `ai.toolCall` under each agent's server span —
    valuable for a demo whose thesis is end-to-end traceability, and currently the
    one hop visible only through the gateway's own span.
-3. **Consider `createOpenAICompatible`** for gateway mode instead of
-   `createOpenAI(...).chat()`.

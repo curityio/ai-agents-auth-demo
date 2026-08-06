@@ -68,10 +68,9 @@ export async function openMcpToolset(opts: {
 
   const tools: ToolSet = {};
   for (const t of listed.tools) {
-    const parameters = jsonSchemaToZod(t.inputSchema);
     tools[t.name] = tool({
       description: t.description ?? `MCP tool: ${t.name}`,
-      parameters,
+      inputSchema: jsonSchemaToZod(t.inputSchema),
       execute: async (args: Record<string, unknown>) => {
         let result;
         try {

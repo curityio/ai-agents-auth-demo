@@ -63,7 +63,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   adapter); both agents depend on it (copilot's `llm.ts`/`mcp-client.ts` are thin
   re-exports). Every model call is now routed through agentgateway's `/llm`
   route rather than called directly — see hard-won fact #22; the old
-  direct-to-Azure path (`@ai-sdk/azure` in `buildLlm`) is gone.
+  direct-to-Azure path (`@ai-sdk/azure` in `buildLlm`) is gone. The gateway model is
+  built with `@ai-sdk/openai-compatible`, deliberately NOT `@ai-sdk/openai` — see
+  fact #30.
 - **MCP servers are thin clients.** `mcp-observability`/`mcp-ops` (in the `mcp`
   namespace) validate the caller then re-exchange to a backend resource server
   (`obs-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
@@ -326,6 +328,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     and requires `llm:invoke`. `resourceType` is `openAI` (lowercase-o). The AI SDK
     client (`buildLlm` gateway mode) points `baseURL` at `.../llm` and passes the
     exchanged JWT as the OpenAI bearer. Agents no longer hold `AZURE_OPENAI_API_KEY`.
+    The route serves **Chat Completions**, so the client must be
+    `@ai-sdk/openai-compatible` — `@ai-sdk/openai` would POST `/llm/responses`
+    (fact #30).
 
 23. **`llm:invoke` is user-delegated and must be granted at EVERY narrowing hop —
     eight places.** It starts in the user's token and is narrowed down the chain by
@@ -545,6 +550,62 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       bystander to a call that went around it. Not configurable, and still present on
       `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
       the indentation lies.
+
+30. **The Vercel AI SDK is v7 (`ai@7`, providers `4.x`), and two of its changes are
+    silent — one converts an exception into data, the other repoints an HTTP path.**
+    Neither announces itself: the first keeps compiling and keeps tests green, the
+    second only shows up as a 404 in the cluster.
+    - **A throw from inside a tool's `execute` no longer propagates.** `ai@4` wrapped
+      it in `ToolExecutionError` and re-threw; since **ai@5** the SDK converts it to a
+      `tool-error` content part, the tool loop CONTINUES, and `generateText` **resolves**
+      — with prose the model invented about why it failed. There is no option to restore
+      abort-and-propagate. `agent-specialist` detects a mid-flight RFC 9470 challenge
+      this way, so the challenge now travels **out-of-band** on a `StepUpSink`
+      (`apps/agent-specialist/src/mcp-ops-client.ts`): `buildStepUpInterceptingFetch`
+      throws *and* records, `runRemediation` checks the sink before reporting `ok` AND
+      in its `catch`, and `stopEarly` feeds `stopWhen` so the loop halts on the first
+      401 instead of retrying into it. **Left unfixed the browser never prompts for
+      MFA** — the A2A reply is a cheerful `kind:'ok'` — and nothing fails loudly:
+      `ToolExecutionError` vanishing breaks *compilation* of the old tests, and the
+      tempting repair (swap in a plain `Error` with `.cause`) makes them green again
+      while testing a path production can no longer reach. Pinned by
+      `packages/agent-runtime/src/tool-errors.test.ts`, which characterizes the SDK
+      itself — if a future major restores propagation, that test fails and the sink
+      can be reconsidered. **Do not delete the sink because "the catch block looks
+      like it handles it".** `findStepUp`'s cause-walk was removed for exactly that
+      reason: it had no reachable input left and implied the throw route still worked.
+    - **`@ai-sdk/openai`'s provider function defaults to the Responses API** (since
+      ai@5), so `createOpenAI({baseURL})(model)` POSTs `${baseURL}/responses`.
+      agentgateway's `/llm` route is Chat-Completions-shaped and is the ONLY source of
+      `gen_ai.usage.*` accounting (#29), so that drift breaks the LLM hop *and* its
+      telemetry. `buildLlm` therefore uses **`@ai-sdk/openai-compatible`**
+      (`createOpenAICompatible`), which has no Responses implementation to drift onto
+      and is the honest description of the gateway. Measured, not inferred:
+      `createOpenAI()(m)` → `/llm/responses`; `.chat(m)` and `createOpenAICompatible()`
+      → `/llm/chat/completions`. **A unit test asserting `model.provider` cannot see
+      this** — only the request path can, which is what `llm.test.ts` now asserts.
+      Note you cannot distinguish the two paths by probing the gateway either: its JWT
+      policy runs before routing, so both answer `403` without a token.
+    - **Mechanical renames, all compiler-caught:** `parameters`→`inputSchema`,
+      `maxSteps: n`→`stopWhen: isStepCount(n)`, `toolCall.args`→`.input`,
+      `toolResult.result`→`.output`, `LanguageModelV1`→`LanguageModel`. `system:` and
+      `stepCountIs` still work (`@deprecated` alias) but were renamed for hygiene.
+      Use the **unversioned** `LanguageModel` (we export
+      `AgentLanguageModel = Exclude<LanguageModel, string>`): pinning `LanguageModelV1`
+      is what made this file part of the upgrade at all, and the named alias also
+      resolves the TS2742 the copilot's `llm.ts` re-export otherwise hits.
+    - **`{name, args}` / `{name, result}` in the `/chat` response is OUR wire contract**
+      with the web UI's Trace tab (`apps/web/src/app/chat.tsx`), not the SDK's shape.
+      It is deliberately held stable while the SDK's field names moved underneath, so
+      `apps/web` needed no edit. The mappings use `as` casts, so a wrong field name
+      yields `undefined` in the UI rather than a type error — check the Trace tab, not
+      just the typechecker.
+    - **zod, Node and ESM were all non-issues.** v7's peer range is
+      `^3.25.76 || ^4.1.8`, so the deliberate zod-3 (agents) / zod-4 (MCP servers)
+      split from #26 survives untouched; Node 22 was already the floor; every package
+      importing `ai` was already `"type": "module"` (`apps/web` isn't, and doesn't
+      import it). **`generateObject` was deprecated in v6 and we don't use it** —
+      `intent.ts` is deterministic on purpose.
 
 ## Commands
 

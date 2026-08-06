@@ -258,7 +258,7 @@ sequenceDiagram
     A2->>Cu: exchange → aud=mcp-gateway, scope=obs:read ops:write (role+scope gate)
     Cu-->>A2: token aud=mcp-gateway, act=[specialist, copilot]
     Note over A2: deterministic acr=mfa pre-check<br/>→ 401 step-up here if not MFA, LLM never runs
-    Note over A2: opens both MCP toolsets via the gateway,<br/>generateText(maxSteps=8) plans inspect→act→verify
+    Note over A2: opens both MCP toolsets via the gateway,<br/>generateText(stopWhen isStepCount 8) plans inspect→act→verify
     A2->>GW: MCP get_deployment /observability/mcp (aud=mcp-gateway)
     Note over GW: obs:read tier authz + shim OBO<br/>exchange → aud=mcp-observability, act +gateway
     GW->>M1: MCP get_deployment (narrowed token)

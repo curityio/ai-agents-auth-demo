@@ -1,5 +1,5 @@
 import express from 'express';
-import { generateText } from 'ai';
+import { generateText, isStepCount } from 'ai';
 import { loadConfig } from './config.js';
 import { authMiddleware, type AuthedRequest } from './auth-middleware.js';
 import { buildLlm } from './llm.js';
@@ -232,24 +232,27 @@ async function main(): Promise<void> {
     try {
       const result = await generateText({
         model: llm,
-        system: SYSTEM_PROMPT,
+        instructions: SYSTEM_PROMPT,
         messages: [
           { role: 'user', content: `User: ${userSub}\n\nQuestion: ${message}` },
         ],
         tools: toolset.tools,
-        maxSteps: 6,
+        stopWhen: isStepCount(6),
       });
 
       res.json({
         answer: result.text,
+        // `{name, args/result}` is OUR wire contract with the web UI's Trace tab
+        // (apps/web chat.tsx), held stable here while the SDK's own field names
+        // (input/output) move underneath.
         steps: result.steps.map((s) => {
-          const calls = s.toolCalls as Array<{ toolName: string; args: unknown }> | undefined;
+          const calls = s.toolCalls as Array<{ toolName: string; input: unknown }> | undefined;
           const results = s.toolResults as
-            | Array<{ toolName: string; result: unknown }>
+            | Array<{ toolName: string; output: unknown }>
             | undefined;
           return {
-            toolCalls: calls?.map((tc) => ({ name: tc.toolName, args: tc.args })),
-            toolResults: results?.map((tr) => ({ name: tr.toolName, result: tr.result })),
+            toolCalls: calls?.map((tc) => ({ name: tc.toolName, args: tc.input })),
+            toolResults: results?.map((tr) => ({ name: tr.toolName, result: tr.output })),
             finishReason: s.finishReason,
           };
         }),
