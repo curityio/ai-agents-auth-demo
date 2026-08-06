@@ -22,6 +22,14 @@ function result(context) {
   // require this) — but the access token doesn't need `web-app`, so we drop it
   // here. Overriding accessTokenData.aud leaves idTokenData.aud untouched.
   accessTokenData.aud = ['agent-copilot'];
+  // RFC 8693 §4.4 `may_act` — the first link of the delegation chain. This token
+  // is presented to agent-copilot, whose exchange presents the copilot workload's
+  // SPIFFE JWT-SVID as actor_token, so the copilot is the only party permitted to
+  // act for the user here. The exchange procedure enforces this and re-stamps a
+  // narrowed `may_act` on each onward hop (see token-exchange.js CLIENT_POLICY).
+  // Like `acr`, this is set directly on the token data rather than declared as a
+  // custom claim.
+  accessTokenData.may_act = { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' };
   var issuedAccessToken = context.accessTokenIssuer.issue(accessTokenData, issuedDelegation);
 
   var refreshTokenData = context.getDefaultRefreshTokenData();

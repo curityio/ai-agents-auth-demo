@@ -198,6 +198,50 @@ describe('authMiddleware', () => {
     expect(res.statusCode).toBe(0);
   });
 
+  // The MCP SDK reads credentials only from `req.auth`, never from headers, so
+  // this hand-off IS the authentication seam. `roles` must ride along too: the
+  // per-request server factory has no access to the express request, and the
+  // set_deployment_image gate reads it from here.
+  it('publishes the validated bearer and roles as AuthInfo on req.auth', async () => {
+    vi.mocked(verifyJwt).mockResolvedValueOnce({
+      payload: {
+        sub: 'alice',
+        client_id: 'mcp-gateway',
+        roles: ['sre'],
+        act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+        acr: 'mfa',
+      },
+      protectedHeader: { alg: 'RS256' },
+      scopes: new Set(['ops:write']),
+    });
+    const req = mockReq('Bearer abc') as Request & { auth?: unknown };
+    await authMiddleware(cfg)(req, mockRes(), vi.fn());
+    expect(req.auth).toEqual({
+      token: 'abc',
+      clientId: 'mcp-gateway',
+      scopes: ['ops:write'],
+      extra: { sub: 'alice', roles: ['sre'] },
+    });
+  });
+
+  // Curity emits `roles` as an array on some hops and a space-delimited string
+  // on others; the gate must see the same list either way.
+  it('normalises a space-delimited roles claim', async () => {
+    vi.mocked(verifyJwt).mockResolvedValueOnce({
+      payload: {
+        sub: 'carol',
+        roles: 'oncall sre',
+        act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+        acr: 'mfa',
+      },
+      protectedHeader: { alg: 'RS256' },
+      scopes: new Set(['ops:write']),
+    });
+    const req = mockReq('Bearer abc') as Request & { auth?: { extra?: { roles?: string[] } } };
+    await authMiddleware(cfg)(req, mockRes(), vi.fn());
+    expect(req.auth?.extra?.roles).toEqual(['oncall', 'sre']);
+  });
+
   it('401 insufficient_user_authentication when acr is not mfa', async () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
       payload: {

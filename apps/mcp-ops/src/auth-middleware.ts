@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import type { AuthInfo } from '@modelcontextprotocol/server';
 import {
   CurityAuthError,
   verifyJwt,
@@ -7,7 +8,18 @@ import {
 } from '@ai-agents-demo/auth-curity';
 import type { Config } from './config.js';
 
-export type AuthedRequest = Request & { caller?: VerifiedJwt };
+export type AuthedRequest = Request & { caller?: VerifiedJwt; auth?: AuthInfo };
+
+/**
+ * Normalise Curity's `roles` claim, which arrives as an array on some hops and
+ * a space-delimited string on others, into a plain list.
+ */
+export function readRoles(payload: unknown): string[] {
+  const raw = (payload as { roles?: unknown } | undefined)?.roles;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === 'string') return raw.split(/\s+/).filter(Boolean);
+  return [];
+}
 
 interface ActNode {
   sub?: string;
@@ -62,7 +74,11 @@ export function authMiddleware(cfg: Config) {
           .status(403)
           .set(
             'www-authenticate',
-            `Bearer error="insufficient_scope", scope="${missing.join(' ')}"`,
+            // MCP 2026-07-28 §"Runtime Insufficient Scope Errors": the challenge
+            // SHOULD carry resource_metadata as well, "for consistency with 401
+            // responses". The step-up 401 below already does.
+            `Bearer error="insufficient_scope", scope="${missing.join(' ')}", ` +
+              `resource_metadata="${cfg.resourceMetadataUrl}"`,
           )
           .json({ error: 'insufficient_scope', missing_scopes: missing });
         return;
@@ -135,6 +151,20 @@ export function authMiddleware(cfg: Config) {
       }
 
       (req as AuthedRequest).caller = verified;
+      // The MCP SDK never reads credentials from headers itself — it takes them
+      // as pass-through `AuthInfo` on `req.auth`, which `toNodeHandler` hands to
+      // the per-request server factory. `roles` rides along in `extra` because
+      // the factory has no access to the express request, and the
+      // `set_deployment_image` gate needs it before the ops-api hop.
+      (req as AuthedRequest).auth = {
+        token,
+        clientId: String(verified.payload.client_id ?? chain[0] ?? 'unknown'),
+        scopes: [...verified.scopes],
+        extra: {
+          sub: String(verified.payload.sub ?? 'unknown'),
+          roles: readRoles(verified.payload),
+        },
+      };
       next();
     } catch (e: unknown) {
       if (e instanceof CurityAuthError) {

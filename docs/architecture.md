@@ -40,8 +40,8 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **web** | `web` | 3000 | Next.js BFF. OIDC login (Auth.js + Curity), httpOnly session cookie, forwards the user token to the copilot. The access token never reaches the browser. |
 | **agent-copilot** | `agents` | 8081 | Front-line AI agent (Vercel AI SDK). Validates the user token; exchanges it for hop-scoped `aud=mcp-gateway` tokens to reach `mcp-observability` (read) **via the agentgateway** (`/observability/mcp` path), or for an `agent-specialist` token (privileged, over A2A). It no longer exchanges directly to `mcp-observability`. Every model call is also a governed hop: it exchanges for `aud=llm-gateway`/`scope=llm:invoke` and drives its tool-calling loop against agentgateway's `/llm` route — never Azure directly. |
 | **agent-specialist** | `agents` | 8082 | Privileged **LLM agent** (Vercel AI SDK). Exposes an A2A endpoint that takes a natural-language remediation goal. Acquires an `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (`/ops/mcp` + `/observability/mcp`), running a tool-using LLM loop to inspect, act, and verify (`get_deployment` to read; `restart_deployment`/`set_deployment_image`/`scale_deployment` to write). All authz gates fire **outside** the LLM loop: the `ops:write` exchange (role + scope gate) and the `acr=mfa` step-up pre-check both run **before** the model is ever invoked. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route. |
-| **mcp-observability** | `mcp` | 8080 | MCP server (Streamable HTTP), read tier. Validates the OBO token, then exchanges it again to call `obs-api`. Thin client — holds no data and no cluster credentials. |
-| **mcp-ops** | `mcp` | 8080 | MCP server, privileged tier. Validates the OBO token (incl. step-up), then exchanges it to call `ops-api`. Thin client. |
+| **mcp-observability** | `mcp` | 8080 | MCP server (Streamable HTTP, revision 2026-07-28 only), read tier. Validates the OBO token, then exchanges it again to call `obs-api`. Thin client — holds no data and no cluster credentials. |
+| **mcp-ops** | `mcp` | 8080 | MCP server (same transport + revision as above), privileged tier. Validates the OBO token (incl. step-up), then exchanges it to call `ops-api`. Thin client. |
 | **obs-api** | `apis` | 8084 | Resource server backing the read tier. Validates the token (accepting **two** actor chains — copilot reading directly, or specialist reading while remediating), then reads pods/logs and deployment state from the `prod` namespace via its own narrowly-scoped Kubernetes RBAC (`get,list` on pods and deployments). |
 | **ops-api** | `apis` | 8083 | Resource server backing the privileged tier. Validates the token (full actor chain + step-up), then `patch`es deployments in `prod` via its own RBAC. |
 | **Curity Identity Server** | `curity` | 8443 | The **sole** token issuer. OIDC for the user; RFC 8693 token exchange for every agent/MCP hop; hosts the SPIFFE-aware token-exchange procedure. |
@@ -51,6 +51,21 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers, **and** the LLM egress gateway. Three path-scoped routes on one listener: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops, `/llm` → Azure OpenAI. For MCP: validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope — it does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced downstream at mcp-ops) — and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). For `/llm`: validates a separate `aud=llm-gateway` JWT, requires `llm:invoke`, and injects the **only** Azure OpenAI API key in the system (`backendAuth.key`) — no shim, no `act`-chain (Azure is outside the trust domain, so there is no downstream workload to nest). |
 | **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | The deployments the copilot observes and restarts (e.g. a CrashLoopBackOff target). |
+
+> **Naming: one workload, two OAuth roles.** The gateway appears under two names on
+> purpose, and they answer different questions. **`agentgateway`** is the *workload* —
+> one pod, one Kubernetes ServiceAccount, and therefore one SPIFFE ID
+> (`spiffe://demo.curity.local/ns/mcp/sa/agentgateway`, derived mechanically from the
+> SA by SPIRE). That is the name you see in every `act` chain, because `act` records
+> which *workload* acted. **`mcp-gateway`** and **`llm-gateway`** are *audiences* —
+> the two OAuth roles that single workload plays (MCP front door, LLM egress). That is
+> why a token can read `aud=mcp-gateway` while the chain reads
+> `act: … ▸ agentgateway`: same box, different question. The split is deliberate —
+> workload identity is attested by SPIRE from pod attributes, whereas the OAuth role is
+> asserted by Curity from configured policy, and the demo's whole argument is that these
+> are two independent facts stapled together at each hop. Renaming the SPIFFE ID to
+> `mcp-gateway` would be wrong, not merely churn: it would deny that the same workload
+> also fronts `llm-gateway`.
 
 The two MCP servers (`mcp-observability`, `mcp-ops`) are **thin clients**: they
 authenticate the caller and re-exchange the token to a backend resource server
@@ -352,7 +367,7 @@ Boundary properties worth calling out:
   `oncall` caller and the specialist LLM would loop silently rather than surface a
   denial; that finer split is therefore enforced downstream at `mcp-ops`.) It is
   path-routed — `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops —
-  because agentgateway v1.3.1 does not expose `mcp.tool.target` in its `extAuthz`
+  because agentgateway (re-verified on v1.4.1) does not expose `mcp.tool.target` in its `extAuthz`
   CEL scope, so per-backend audience narrowing can't be done on a single federated
   endpoint. For each tool-call the gateway drives an `extAuthz` call to the
   co-located **exchange-shim** (`apps/exchange-shim`, same pod), which performs the
@@ -401,6 +416,8 @@ flowchart LR
     W["web (@vercel/otel)"]
     A["agent-copilot / agent-specialist"]
     M["MCP servers + obs-api / ops-api"]
+    GW["agentgateway (native OTLP)"]
+    SH["exchange-shim (OBO sidecar)"]
   end
   subgraph obs_ns["observability namespace (out of mesh)"]
     COL["OTel Collector"]
@@ -410,6 +427,8 @@ flowchart LR
   W -- "OTLP/HTTP :4318" --> COL
   A -- "OTLP/HTTP :4318" --> COL
   M -- "OTLP/HTTP :4318" --> COL
+  SH -- "OTLP/HTTP :4318" --> COL
+  GW -- "OTLP/gRPC :4317" --> COL
   COL -- "OTLP/gRPC :4317" --> T
   G -- "TraceQL" --> T
   P["presenter"] -- "https://grafana.localtest.me" --> G
@@ -419,14 +438,31 @@ flowchart LR
 |---|---|---|---|
 | **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain |
 | **Workload** | resource attribute | `spiffe.id` | `packages/otel-bootstrap`, read from the SVID file at SDK init |
-| **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope` | `exchangeToken()` in `packages/auth-curity` |
+| **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope`, `…token_endpoint` (plus `server.address` / `url.path`) | `exchangeToken()` in `packages/auth-curity` |
+| **Gateway** | span attributes | `mcp.method.name`, `mcp.target`, `gen_ai.tool.name`, `gen_ai.usage.*`, `route`, `http.path`, `url.full`, `endpoint` (upstream, HTTP backends only) | agentgateway's native OTLP tracing (`config.tracing`) |
 | **MCP** | span attributes | `mcp.tool`, `mcp.resource_metadata_url` | the MCP `POST /` handler |
 
-The six plain-Node services (both agents, both MCP servers, both backend APIs)
-load `@ai-agents-demo/otel-bootstrap` via `node --import`; `apps/web` (Next
-standalone, CommonJS) uses `@vercel/otel`.
+The seven plain-Node services (both agents, both MCP servers, both backend APIs,
+and the gateway's `exchange-shim` sidecar) load `@ai-agents-demo/otel-bootstrap`
+via `node --import`; `apps/web` (Next standalone, CommonJS) uses `@vercel/otel`.
+`agentgateway` itself exports natively (`config.tracing`), so the MCP/LLM front
+door is a first-class hop rather than a gap between the agent and its backend.
+The `net`/`dns`/`fs` auto-instrumentations are switched **off**
+(`packages/otel-bootstrap/src/instrumentation-config.ts`): `tcp.connect` /
+`tls.connect` were a third of a read-path waterfall and say nothing about
+delegation. Connection failures still surface on the enclosing HTTP span.
 Trace context propagates on the wire via a composite W3C + B3 propagator, so
-the spans stitch into a single trace.
+the spans stitch into a single trace. agentgateway does not propagate context to
+its `extAuthz` callout on its own, so each extAuthz block forwards `traceparent`
+explicitly — that value is already the *gateway's own* span, which is what nests
+the shim's exchange underneath it.
+
+> **Reading the waterfall.** On the two MCP routes the origin span
+> (`mcp-observability` / `mcp-ops`) renders as a *sibling* of the agentgateway
+> span rather than its child: agentgateway forwards the inbound `traceparent`
+> verbatim on `mcp:` backends while rewriting it correctly for HTTP backends
+> ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904)).
+> Durations still nest correctly — only the indentation misleads.
 
 ---
 

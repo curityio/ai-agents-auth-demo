@@ -10,9 +10,12 @@
   },
   "dependencies": {
     "@ai-agents-demo/auth-curity": "workspace:*",
-    "@ai-agents-demo/spiffe": "workspace:*"
+    "@ai-agents-demo/otel-bootstrap": "workspace:*",
+    "@ai-agents-demo/spiffe": "workspace:*",
+    "express": "^4.21.2"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }

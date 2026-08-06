@@ -17,15 +17,29 @@
 #   [3/4] bob (role=developer, no write role) → Curity returns access_denied at
 #         the FIRST exchange hop (copilot→specialist, scope ops:write) — the role
 #         gate is (sre OR oncall); bob has neither.
-#   [4/4] per-tool ROLE SPLIT at the gateway (sre ⊇ oncall):
+#   [4/4] per-tool ROLE SPLIT (sre ⊇ oncall). Visibility is deliberately NOT the
+#         gate — hiding a tool makes an LLM loop silently instead of relaying a
+#         denial — so both callers SEE every ops tool and only the CALL differs:
 #         - alice (sre): tools/list on /ops/mcp INCLUDES set_deployment_image.
-#         - carol (oncall, optional token): tools/list OMITS set_deployment_image;
-#           a call to it is DENIED by gateway RBAC; restart_deployment is allowed.
+#         - carol (oncall, optional token): tools/list ALSO includes it, but the
+#           call is DENIED — by the gateway's `authorization` rule today, or by
+#           mcp-ops's role gate if that rule is ever removed (the assertion accepts
+#           either). restart_deployment stays allowed.
 #
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
 #   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; roles sre+oncall). REQUIRED.
-#   SMOKE_TOKEN_ALICE_PWD  — alice, password only (acr=password). Optional → skips [2/4].
+#   SMOKE_TOKEN_ALICE_PWD  — alice with ops:write BUT acr!=mfa. Optional → skips [2/4].
+#         NOT obtainable by signing in without MFA: the web login scope is
+#         `openid obs:read llm:invoke` (no ops:write), and ops:write is only ever
+#         requested by the step-up re-auth, which demands acr_values=mfa in the same
+#         request — so no UI journey yields ops:write with acr=password. Supplying a
+#         plain non-MFA login token instead fails EARLIER than this assertion intends,
+#         at scope narrowing: `invalid_scope no scope intersects subject + policy`.
+#         To exercise [2/4] you must hand-drive the authorize endpoint with
+#         scope=...ops:write and NO acr_values (alice/sre passes the role gate, and
+#         acr stays html-form). Until then this assertion stays skipped, and the
+#         RFC 9470 challenge itself is covered only by the UI demo.
 #   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
 #   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
 #                            Optional → the carol half of [4/4] is skipped.
@@ -117,9 +131,12 @@ build_gateway_ops_token() {
 }
 
 # gw_mcp: drive an MCP request through the gateway from the specialist pod; echoes
-# "<status>:<body-slice>" (or "INIT_<status>:<www-authenticate>|<body>" if the
-# initialize handshake is rejected — used to observe the RFC 9470 step-up challenge
-# which mcp-ops returns on the first authenticated request, relayed by the gateway).
+# "<status>:<www-authenticate>|<body-slice>". Speaks protocol revision 2026-07-28:
+# ONE request, no initialize handshake and no session (the revision removed both).
+# The RFC 9470 step-up challenge that mcp-ops returns therefore arrives on THIS
+# request rather than on a preceding initialize, so it now shows up as a plain
+# "401:" instead of the "INIT_401:" this helper used to emit — the assertions below
+# match both spellings.
 #   $1 url  $2 bearer  $3 method  $4 params-json
 gw_mcp() {
   kubectl -n agents exec deploy/agent-specialist -c agent -- \
@@ -127,15 +144,33 @@ gw_mcp() {
 (async () => {
   const url = process.env.U, bearer = process.env.B, method = process.env.M;
   const params = process.env.P ? JSON.parse(process.env.P) : {};
-  const base = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer " + bearer };
-  const initBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "smoke", version: "0" }, capabilities: {} } });
-  const r1 = await fetch(url, { method: "POST", headers: base, body: initBody });
-  if (!r1.ok) { process.stdout.write("INIT_" + r1.status + ":" + ((r1.headers.get("www-authenticate") || "").slice(0, 300)) + "|" + (await r1.text()).slice(0, 200)); return; }
-  const sid = r1.headers.get("mcp-session-id");
-  const h2 = sid ? Object.assign({}, base, { "mcp-session-id": sid }) : base;
-  if (sid) { await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) }); }
-  const r2 = await fetch(url, { method: "POST", headers: h2, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }) });
-  process.stdout.write(String(r2.status) + ":" + ((r2.headers.get("www-authenticate") || "")) + "|" + (await r2.text()).slice(0, 500));
+  // Per-request _meta envelope. All THREE reserved keys are required: the server
+  // rejects a partial envelope with -32602 naming the missing one.
+  params._meta = Object.assign({
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "smoke", version: "0" },
+    "io.modelcontextprotocol/clientCapabilities": {}
+  }, params._meta || {});
+  const headers = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    authorization: "Bearer " + bearer,
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": method
+  };
+  // Mcp-Name is what the gateway per-tool authz rules key on, and Mcp-Param-Namespace
+  // is the SEP-2243 mirror its namespace-confinement rule reads. A real client emits
+  // both, so this helper must too or it would exercise a different policy path.
+  if (method === "tools/call" && params.name) headers["mcp-name"] = params.name;
+  const ns = params.arguments && params.arguments.namespace;
+  if (ns) headers["mcp-param-namespace"] = ns;
+  const r2 = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  // NOTE: this cap is a CORRECTNESS constraint, not just display. Callers pattern-match
+  // the returned string (e.g. `200*set_deployment_image*`), so anything cut here reads as
+  // absent and fails a passing system. A full ops tools/list is ~2KB — restart_deployment
+  // alone carries a ~300-char description — so keep this far above any real response.
+  // Truncate for DISPLAY at the print site (${VAR:0:80}), never here.
+  process.stdout.write(String(r2.status) + ":" + ((r2.headers.get("www-authenticate") || "")) + "|" + (await r2.text()).slice(0, 20000));
 })().catch(e => process.stdout.write("ERR:" + e.message));
 ' 2>/dev/null || true
 }
@@ -197,7 +232,8 @@ esac
 # [2/4] alice + acr=password → gateway/mcp-ops path returns 401 step-up challenge
 # ===========================================================================
 if [[ -z "${SMOKE_TOKEN_ALICE_PWD:-}" ]]; then
-  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — sign in as alice WITHOUT MFA to obtain."
+  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — needs ops:write WITH acr!=mfa, which no"
+  yellow "            UI login produces (see the header). Hand-drive /authorize to obtain."
 else
   note "[2/4] alice-pwd: full chain, then gateway/mcp-ops must return 401 step-up challenge"
   GATEWAY_BEARER_PWD=$(build_gateway_ops_token "$SMOKE_TOKEN_ALICE_PWD") \
@@ -272,7 +308,7 @@ esac
 if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
   yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set — seed carol (oncall) per docs/curity-seed.md and sign in to obtain."
 else
-  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied by mcp-ops; restart allowed"
+  note "  [4/4-carol] carol (oncall): SEES set_deployment_image but the CALL is denied; restart allowed"
   CAROL_GW=$(build_gateway_ops_token "$SMOKE_TOKEN_CAROL") \
     || { red "  failed to build aud=mcp-gateway token for carol (does carol have the oncall role?)"; exit 1; }
 
@@ -287,15 +323,23 @@ else
     *) red "  tools/list failed for carol: $LIST"; exit 1 ;;
   esac
 
-  note "    call set_deployment_image as carol → expect mcp-ops role denial (requires sre)"
+  note "    call set_deployment_image as carol → expect denial (gateway 403, or mcp-ops role error)"
   CALL=$(gw_mcp "$GATEWAY_OPS_URL" "$CAROL_GW" "tools/call" \
     '{"name":"set_deployment_image","arguments":{"name":"order-service","namespace":"prod","image":"nginx:1.27"}}')
-  # mcp-ops denies BEFORE the ops-api hop and returns an isError tool result; the
-  # gateway relays it as HTTP 200 with a JSON-RPC body of {"error":"forbidden",
-  # "message":"...requires one of these roles: sre; you have: oncall"}.
+  # TWO layers may answer, and either is a pass — which one does is deliberate:
+  #   - The gateway's `authorization` deny rule (keyed on Mcp-Name + jwt.roles) is
+  #     the first line and refuses with a plain HTTP 403 "authorization failed".
+  #     This is what fires today.
+  #   - mcp-ops's `imageRoleDenial` is the authoritative backstop; it denies BEFORE
+  #     the ops-api hop and returns an isError tool result, which the gateway relays
+  #     as HTTP 200 with {"error":"forbidden","message":"...requires one of these
+  #     roles: sre; you have: oncall"}. It answers if the gateway rule is ever
+  #     removed or fails open (it cannot evaluate true when `roles` is absent).
+  # Accepting both keeps this test honest about WHERE the split is enforced without
+  # pinning it to one layer. What must never happen is the image actually changing.
   case "$CALL" in
-    *forbidden*|*"requires one of these roles"*|*requires*sre*)
-      green "    OK (mcp-ops denied set_deployment_image for oncall: ${CALL:0:200})" ;;
+    403*|*forbidden*|*"requires one of these roles"*|*requires*sre*)
+      green "    OK (denied for oncall: ${CALL:0:200})" ;;
     200*busybox*|200*replicas*|200*restartedAt*|200*updatedReplicas*)
       red "  carol (oncall) appears to have UPDATED the image — role split not enforced: ${CALL:0:220}"; exit 1 ;;
     *) red "  unexpected response calling set_deployment_image as carol: ${CALL:0:240}"; exit 1 ;;

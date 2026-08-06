@@ -42,6 +42,23 @@ CERT_DIR ?= certs
 # (build + kind load) and `make clean` (removal).
 IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web exchange-shim
 
+# ---- platform chart versions (PINNED — see below) ----
+# Every `helm upgrade --install` passes an explicit --version. Without one Helm
+# silently resolves whatever is newest in the repo at install time, so two runs of
+# `make demo` weeks apart can build different clusters with no diff to blame it
+# on. That matters more here than usual: the SPIRE hardened chart's namespace
+# split and the shared Istio/SPIRE root CA (hard-won facts #8 and #18) are exactly
+# the kind of wiring a chart bump rearranges.
+#
+# Values below are what the working demo cluster runs (captured 2026-08-05).
+# To move up: bump one, `make platform`, and re-run `make status` + `make smoke`.
+ISTIO_VERSION      ?= 1.30.3
+SPIRE_VERSION      ?= 0.30.0
+SPIRE_CRDS_VERSION ?= 0.6.0
+TEMPO_VERSION      ?= 1.24.4
+GRAFANA_VERSION    ?= 10.5.15
+KIALI_VERSION      ?= 2.30.0
+
 # ============================================================================
 # Help
 # ============================================================================
@@ -180,18 +197,18 @@ istio-install: ## Install Istio Ambient (base + istiod + cni + ztunnel) via Helm
 	helm repo add istio https://istio-release.storage.googleapis.com/charts 2>/dev/null || true
 	helm repo update istio
 	kubectl apply -f k8s/istio/namespace.yaml
-	helm upgrade --install istio-base istio/base -n istio-system --wait --timeout 3m
-	helm upgrade --install istiod istio/istiod -n istio-system \
+	helm upgrade --install istio-base istio/base -n istio-system --version $(ISTIO_VERSION) --wait --timeout 3m
+	helm upgrade --install istiod istio/istiod -n istio-system --version $(ISTIO_VERSION) \
 	  -f k8s/istio/values-istiod.yaml --wait --timeout 5m
-	helm upgrade --install istio-cni istio/cni -n istio-system \
+	helm upgrade --install istio-cni istio/cni -n istio-system --version $(ISTIO_VERSION) \
 	  -f k8s/istio/values-cni.yaml --wait --timeout 3m
-	helm upgrade --install ztunnel istio/ztunnel -n istio-system \
+	helm upgrade --install ztunnel istio/ztunnel -n istio-system --version $(ISTIO_VERSION) \
 	  -f k8s/istio/values-ztunnel.yaml --wait --timeout 3m
 
 .PHONY: istio-ingress-install
 istio-ingress-install: ## Install the Istio edge gateway (terminates browser TLS, hostPort 80/443)
 	kubectl apply -f k8s/istio/namespace-ingress.yaml
-	helm upgrade --install istio-ingress istio/gateway -n istio-ingress \
+	helm upgrade --install istio-ingress istio/gateway -n istio-ingress --version $(ISTIO_VERSION) \
 	  -f k8s/istio/values-gateway.yaml --wait --timeout 3m
 	# The gateway chart doesn't expose hostPort; on KIND the pod must bind 80/443
 	# on the node (extraPortMappings forward to those ports).
@@ -213,8 +230,8 @@ spire-install: ## Install SPIRE (CRDs + server + agent + controller-manager + CS
 	kubectl apply -f k8s/spire/namespace.yaml
 	# CRDs must land before the main chart — the spire chart renders ClusterSPIFFEID
 	# CRs which fail without the CRD definitions present.
-	helm upgrade --install spire-crds spiffe/spire-crds -n spire --wait --timeout 2m
-	helm upgrade --install spire spiffe/spire -n spire \
+	helm upgrade --install spire-crds spiffe/spire-crds -n spire --version $(SPIRE_CRDS_VERSION) --wait --timeout 2m
+	helm upgrade --install spire spiffe/spire -n spire --version $(SPIRE_VERSION) \
 	  -f k8s/spire/values.yaml --wait --timeout 5m
 	kubectl apply -f k8s/spire/identities/ 2>/dev/null || true
 
@@ -229,9 +246,9 @@ observability-install: ## Install the OTel Collector + Tempo + Grafana and the t
 	kubectl apply -f k8s/observability/namespace.yaml
 	kubectl apply -f k8s/observability/collector.yaml
 	kubectl apply -f k8s/observability/grafana-dashboards-configmap.yaml
-	helm upgrade --install tempo grafana/tempo -n observability \
+	helm upgrade --install tempo grafana/tempo -n observability --version $(TEMPO_VERSION) \
 	  -f k8s/observability/values-tempo.yaml --wait --timeout 3m
-	helm upgrade --install grafana grafana/grafana -n observability \
+	helm upgrade --install grafana grafana/grafana -n observability --version $(GRAFANA_VERSION) \
 	  -f k8s/observability/values-grafana.yaml --wait --timeout 3m
 	@echo "==> Grafana: https://$(HOST_GRAFANA) (anonymous Viewer enabled)"
 
@@ -239,7 +256,7 @@ observability-install: ## Install the OTel Collector + Tempo + Grafana and the t
 kiali-install: ## (Optional) Install Kiali mesh-topology UI; port-forward 20001 to view
 	helm repo add kiali https://kiali.org/helm-charts 2>/dev/null || true
 	helm repo update kiali
-	helm upgrade --install kiali-server kiali/kiali-server -n istio-system \
+	helm upgrade --install kiali-server kiali/kiali-server -n istio-system --version $(KIALI_VERSION) \
 	  --set auth.strategy=anonymous --set deployment.service_type=ClusterIP \
 	  --wait --timeout 3m
 	@echo "==> kubectl -n istio-system port-forward svc/kiali 20001:20001 && open http://localhost:20001"
@@ -449,7 +466,7 @@ status: ## Show pod health across every demo namespace
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm ## Run all auth/authz smoke tests
+smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
 
 .PHONY: smoke-obo
@@ -468,31 +485,50 @@ smoke-stepup: ## Smoke: RFC 9470 step-up (MFA for ops:write) + role-based denial
 smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm → Azure). Needs SMOKE_SUBJECT_TOKEN.
 	bash scripts/smoke-llm.sh
 
+.PHONY: smoke-mcp-protocol
+smoke-mcp-protocol: ## Smoke: MCP revision negotiated across agentgateway + tier filtering. Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-mcp-protocol.sh
+
+.PHONY: smoke-gateway-authz
+smoke-gateway-authz: ## Smoke: gateway-side per-tool role split + namespace confinement. Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-gateway-authz.sh
+
 # ============================================================================
-# MCP Inspector (tool tour) — see docs/mcp-inspector.md
+# MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why
+# Inspector connects to the agentgateway rather than to an MCP server directly.
 # ============================================================================
 OBS_INSPECT_PORT ?= 8080
 OPS_INSPECT_PORT ?= 8081
 
 # Mint a token + port-forward, then print the Inspector connect details.
-# Args: $(1)=target (obs|ops) $(2)=svc $(3)=local port
+# Forwards the AGENTGATEWAY, not the MCP server: the minted token is
+# aud=mcp-gateway, and the MCP servers require an act-chain that only the
+# gateway's exchange-shim can produce. See scripts/mint-mcp-token.sh header.
+#
+# Protocol Era is a REQUIRED step, not a nicety: our MCP servers run
+# `legacy: 'reject'` (2026-07-28 only), while Inspector defaults its era to
+# Legacy. Left on the default it sends a 2025 `initialize`, the gateway forwards
+# that upstream verbatim, and the server refuses — the connect just fails.
+# Args: $(1)=target (obs|ops) $(2)=gateway route path $(3)=local port
 define inspect-tmpl
 	@token=$$(bash scripts/mint-mcp-token.sh $(1)) || exit $$?; \
 	printf '\n\033[36m=== MCP Inspector connect details ===\033[0m\n'; \
-	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s/mcp\n' "$(3)"; \
+	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s%s\n' "$(3)" "$(2)"; \
 	printf '  Bearer:    %s\n\n' "$$token"; \
+	printf '\033[33m  Options ▸ Protocol Era: set to "Modern" (or "Auto") — NOT the\n'; \
+	printf '  default "Legacy", which this server refuses.\033[0m\n\n'; \
 	printf 'In another terminal run:  \033[32mnpx @modelcontextprotocol/inspector\033[0m\n'; \
 	printf 'then paste the URL + Bearer above. Port-forward holds this terminal (Ctrl-C to stop).\n\n'; \
-	kubectl -n mcp port-forward svc/$(2) $(3):8080
+	kubectl -n mcp port-forward svc/agentgateway $(3):8080
 endef
 
 .PHONY: inspect-obs
-inspect-obs: ## Inspect mcp-observability tools (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,obs,mcp-observability,$(OBS_INSPECT_PORT))
+inspect-obs: ## Inspect the read tier via the gateway (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,obs,/observability/mcp,$(OBS_INSPECT_PORT))
 
 .PHONY: inspect-ops
-inspect-ops: ## Inspect mcp-ops tools (mint token + port-forward). Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,ops,mcp-ops,$(OPS_INSPECT_PORT))
+inspect-ops: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,ops,/ops/mcp,$(OPS_INSPECT_PORT))
 
 # ============================================================================
 # End-to-end orchestration

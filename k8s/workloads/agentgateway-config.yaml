@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
 # agentgateway config — path-routed MCP front door for mcp-observability +
-# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.3.1.
+# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.4.1.
 #
 # Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
 # (`mcp.tool.target` / `mcp.tool.name`) is NOT available inside `extAuthz` — it
@@ -33,6 +33,31 @@ config:
   dns:
     lookupFamily: V4Only
     edns0: true
+  # Native OTLP tracing. Without it the gateway is a HOLE in every trace: it
+  # generates a span per request (it logs `trace.id`/`span.id`) and propagates
+  # that context downstream, but exports nothing — so the hop that authorizes the
+  # call and re-mints the token is invisible, which is the one hop these traces
+  # exist to show. With it you also get `mcp.method.name` / `mcp.target` /
+  # `gen_ai.tool.name`, and the full `gen_ai.usage.*` token accounting on /llm —
+  # available nowhere else.
+  # grpc/4317 (the collector exposes 4317 gRPC and 4318 HTTP; the Node services
+  # use the latter).
+  tracing:
+    otlpEndpoint: http://otel-collector.observability.svc.cluster.local:4317
+    otlpProtocol: grpc
+    # The gateway span already carries `http.path`, `route` and `http.host`, plus
+    # `endpoint` (upstream host:port) for plain HTTP backends like /llm. It does
+    # NOT set `endpoint` for the two MCP routes, because those use a named-target
+    # `mcp:` backend rather than a single address — there `mcp.target` names the
+    # backend logically instead. Add the absolute URL under the standard semconv
+    # key so a gateway span states its endpoint the same way every Node span does.
+    # (VERIFIED to resolve: request.uri / request.path / request.method /
+    # request.host. `backend` and `route` do NOT resolve as CEL roots here, and
+    # --validate-only does not check CEL, so an unknown root silently yields
+    # nothing rather than erroring.)
+    fields:
+      add:
+        url.full: 'request.uri'
 
 binds:
 - port: 8080
@@ -69,6 +94,15 @@ binds:
         mcpAuthorization:
           rules:
           - '"obs:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
+        # Namespace confinement (SEP-2243), same construction as the ops route: the
+        # read tools declare `x-mcp-header: Namespace`, so the client mirrors that
+        # argument into `Mcp-Param-Namespace` and a cross-namespace read (e.g. pod
+        # logs from kube-system) is refused here rather than relying solely on
+        # obs-api's RBAC. "Present AND not prod" so omitting the argument — the
+        # common case, since the server defaults it — never trips the rule.
+        authorization:
+          rules:
+          - deny: 'request.headers["mcp-param-namespace"] != "" && request.headers["mcp-param-namespace"] != "prod"'
         extAuthz:
           host: localhost:8090
           failureMode: deny
@@ -83,6 +117,17 @@ binds:
                 # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
                 x-target-audience: '"mcp-observability"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -125,17 +170,62 @@ binds:
         # already requires a WRITE role (sre OR oncall) to issue ops:write, so every
         # caller reaching this route holds one.
         #
-        # The per-tool role SPLIT (set_deployment_image = sre only) is enforced at
-        # mcp-ops, NOT here. agentgateway couples tools/list visibility to call-authz
-        # — a tool the gateway won't let you CALL is also hidden from tools/list — so
-        # gating set_deployment_image here would make it invisible to an oncall caller,
-        # and its LLM would never attempt it (a silent no-op, not a legible denial).
-        # Keeping every ops tool visible + callable at the gateway lets mcp-ops return
-        # an explicit "requires the sre role" error the agent relays. See mcp-ops
-        # config.ts `setImageRequiredRoles` + mcp.ts.
+        # NOTE this is `mcpAuthorization` (the MCP layer), where a denial ALSO hides
+        # the tool from tools/list — agentgateway couples visibility to call-authz.
+        # That is why the per-tool role split is NOT expressed here: hiding
+        # set_deployment_image from an oncall caller would make its LLM never attempt
+        # the tool (a silent no-op instead of a legible denial). The split lives in
+        # the `authorization` policy below, which is the HTTP layer and does not
+        # participate in tools/list filtering.
         mcpAuthorization:
           rules:
           - '"ops:write" in (jwt.scope.split(" ")) && mcp.tool.name in ["restart_deployment", "scale_deployment", "set_deployment_image"]'
+        # Per-tool role split: set_deployment_image requires the `sre` role.
+        #
+        # Why HERE and not in mcpAuthorization above: `authorization` is an
+        # HTTP-layer policy (crates/agentgateway/src/http/authorization.rs, applied
+        # via Executor::new_request). It never runs in the MCP tools/list path, so a
+        # denial refuses the CALL while leaving the tool VISIBLE — exactly what the
+        # MCP-layer policy cannot do.
+        #
+        # ORDERING (measured, 2026-08-05, v1.4.1): for ROUTE-level policies extAuthz
+        # runs BEFORE authorization, so a denied tool-call still performs the OBO
+        # exchange — a privileged aud=mcp-ops token IS minted and then discarded
+        # unused. Do not read httpproxy.rs and conclude otherwise: it has three
+        # policy application sites with DIFFERENT orders (the backend-level site does
+        # run authorization first). Verified by counting exchange-shim EXCHANGE lines:
+        # connect-only = 1, connect + denied call = 2. Consequence: the deny stops the
+        # request reaching mcp-ops, but it is not a way to avoid minting the token.
+        #
+        # Keyed on `Mcp-Name`, the 2026-07-28 tools/call header. This is only sound
+        # because the MCP servers run `legacy: 'reject'` and the agents pin the
+        # revision — on a 2025 hop the header would not exist and this rule would
+        # silently never fire. See CLAUDE.md fact #26.
+        #
+        # Deny-only ⇒ denylist semantics: with no `allow` rules present, every other
+        # request is unaffected (agentgateway defaults to allow unless an allow rule
+        # exists but does not match). tools/list and server/discover carry no
+        # Mcp-Name, so they never match this rule.
+        #
+        # mcp-ops REMAINS AUTHORITATIVE — this is a first line, not the only one. If
+        # the `roles` claim were ever absent the expression cannot evaluate true and
+        # the deny fails open, so the downstream check in mcp-ops
+        # (`Config.setImageRequiredRoles`, apps/mcp-ops/src/mcp.ts `imageRoleDenial`)
+        # is what makes the split unconditional. Those two MUST agree: change the role
+        # here and in SET_IMAGE_REQUIRED_ROLES together.
+        #
+        # The second rule is namespace confinement (SEP-2243). The ops tools declare
+        # `x-mcp-header: Namespace` on their `namespace` input, so a conforming client
+        # mirrors that argument into `Mcp-Param-Namespace` — which lets the gateway
+        # reject a cross-namespace write at the front door instead of relying solely
+        # on ops-api's RBAC. Written as "present AND not prod" so that OMITTING the
+        # argument (the common case — the server defaults it) never trips the rule,
+        # whichever way a missing header evaluates. Keep 'prod' in step with
+        # TARGET_NAMESPACE on mcp-ops/ops-api.
+        authorization:
+          rules:
+          - deny: 'request.headers["mcp-name"] == "set_deployment_image" && !("sre" in jwt.roles)'
+          - deny: 'request.headers["mcp-param-namespace"] != "" && request.headers["mcp-param-namespace"] != "prod"'
         extAuthz:
           host: localhost:8090
           failureMode: deny
@@ -145,6 +235,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -231,6 +332,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-observability"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:
@@ -264,6 +376,17 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                # W3C trace context for the extAuthz callout. agentgateway does
+                # not propagate to extAuthz on its own, so forward it explicitly.
+                # VERIFIED by echoing the callout's headers: at this point
+                # `request.headers["traceparent"]` is NOT the caller's value — the
+                # gateway has already rewritten it to its OWN span
+                # (httpproxy.rs `tp.new_span()` + `insert_header`, applied at the
+                # listener stage before route policies run). So the shim's
+                # auth.token_exchange span — the hop that inserts agentgateway
+                # into the downstream `act` chain — nests directly under the
+                # gateway span, which is exactly where it belongs.
+                traceparent: 'request.headers["traceparent"]'
               metadata:
                 token: json(response.body).access_token
         transformations:

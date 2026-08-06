@@ -58,13 +58,13 @@ You need **Docker running** (Docker Desktop or OrbStack), a few CLIs, a Curity
 developer license, and an Azure OpenAI endpoint/key for the agent LLM.
 
 ```bash
-# 1. CLIs via Homebrew (Node 20+ is required; the rest are tools the Makefile drives).
+# 1. CLIs via Homebrew (Node 22+ is required; the rest are tools the Makefile drives).
 brew install node kind kubectl helm mkcert
 
 # 2. pnpm — NO separate install. It ships with Node via corepack:
 corepack enable          # provisions the repo-pinned pnpm (9.15.0)
 
-# 3. Verify the toolchain (node>=20, pnpm, docker, kind, kubectl, helm, mkcert):
+# 3. Verify the toolchain (node>=22, pnpm, docker, kind, kubectl, helm, mkcert):
 make tools-check
 ```
 
@@ -87,7 +87,7 @@ warnings, run `make trust-ca` (undo anytime with `mkcert -uninstall`).
 
 ```bash
 # 1. Clone the repo and cd into it:
-git clone https://github.com/Curity-PS/ai-agents-auth-demo.git
+git clone https://github.com/curityio/ai-agents-auth-demo.git
 cd ai-agents-auth-demo
 
 # 2. Put your Curity license at the repo root (gitignored); make demo will

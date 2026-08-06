@@ -13,6 +13,13 @@ export interface Config {
   mcpOpsScope: string;
   /** RFC 9728 resource metadata URL for mcp-ops (used in step-up challenges). */
   mcpOpsResourceMetadataUrl: string;
+  /**
+   * In-cluster URL the specialist actually FETCHES the RFC 9728 document from.
+   * Distinct from `mcpOpsResourceMetadataUrl` (the public identifier handed to
+   * the browser) and from `mcpOpsUrl` — the latter is the agentgateway, which
+   * fronts MCP traffic but serves no /.well-known. Only mcp-ops does.
+   */
+  mcpOpsMetadataUrl: string;
   /** Public URL where this agent's AgentCard is served. */
   publicBaseUrl: string;
   // LLM
@@ -59,6 +66,9 @@ export function loadConfig(): Config {
     mcpOpsResourceMetadataUrl:
       process.env.MCP_OPS_RESOURCE_METADATA_URL ??
       'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
+    mcpOpsMetadataUrl:
+      process.env.MCP_OPS_METADATA_URL ??
+      'http://mcp-ops.mcp.svc.cluster.local:8080/.well-known/oauth-protected-resource',
     publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'https://specialist.localtest.me',
     llmProvider: provider,
     llmModel:

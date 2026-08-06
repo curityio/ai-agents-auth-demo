@@ -109,6 +109,19 @@ spec:
               value: mcp-gateway
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
+            # OTel: the shim performs the RFC 8693 exchange on every extAuthz
+            # call — the hop that inserts `spiffe://…/sa/agentgateway` into the
+            # downstream `act` chain. Without this it is invisible, and the
+            # audience silently jumps mcp-gateway → mcp-observability/mcp-ops
+            # with nothing in the trace to account for it. With it, auth-curity's
+            # `auth.token_exchange` span shows that narrowing like every other
+            # hop. Needs the express server in app.ts to actually produce spans.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318
+            - name: OTEL_SERVICE_NAME
+              value: exchange-shim
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.namespace=mcp
           envFrom:
             - secretRef:
                 name: agentgateway-curity
@@ -120,7 +133,20 @@ spec:
             periodSeconds: 5
         # containers[1] — the agentgateway binary.
         - name: agentgateway
-          image: ghcr.io/agentgateway/agentgateway:latest
+          # Pinned, NOT :latest. agentgateway-config.yaml is validated against this
+          # version, and `latest` has since rolled to v1.4.x — a fresh cluster would
+          # silently get a different gateway than the one this repo was tested with.
+          #
+          # Upgrading to v1.4.x is a deliberate step, not a free one. Its release notes
+          # say top-level standalone `llm` and `mcp` listeners may no longer share a
+          # port, and our single :8080 listener carries both the MCP routes and the
+          # `/llm` ai route — verify that first. v1.4 also adds MCP 2026-07-28 support
+          # (harmless for us: it keeps the upstream hop on the old protocol while our
+          # clients remain on MCP SDK v1) and a native `backendAuth.oauthTokenExchange`
+          # that still CANNOT replace apps/exchange-shim, because `actorToken.source`
+          # only reads from the request — there is no file source for the rotating
+          # SPIFFE JWT-SVID. See experiments/agentgateway-cel-probe/README.md.
+          image: ghcr.io/agentgateway/agentgateway:v1.4.1
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
           env:

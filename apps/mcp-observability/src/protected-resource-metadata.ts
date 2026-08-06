@@ -12,6 +12,13 @@ export interface ProtectedResourceMetadata {
   authorization_servers: string[];
   scopes_supported: string[];
   bearer_methods_supported: string[];
+  /**
+   * NON-STANDARD. `acr_values_supported` is an OpenID Provider metadata field; RFC 9728
+   * does not define it for protected resources, and MCP's authorization chapter has no
+   * step-up story beyond scopes. mcp-ops emits it so a client that gets its RFC 9470
+   * `insufficient_user_authentication` challenge can discover which `acr` to step up to.
+   * Unused here — the read path requires no step-up. Demo-local extension either way.
+   */
   acr_values_supported?: string[];
 }
 

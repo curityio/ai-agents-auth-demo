@@ -43,6 +43,15 @@ var SPIRE_TRUST_DOMAIN = 'spiffe://demo.curity.local';
 var SPIRE_AGENT_PREFIX = SPIRE_TRUST_DOMAIN + '/ns/';
 var EXPECTED_ACTOR_AUD = 'https://curity.localtest.me/oauth/v2/oauth-token';
 
+// Workload SPIFFE IDs, named once so the `may_act` map below and the
+// `allowedActors` regexes can't drift apart. agent-copilot is absent on purpose:
+// it is the FIRST actor, so the only token naming it is the login token, stamped
+// by authorization-code.js rather than by any exchange here.
+var SPIFFE_SPECIALIST = SPIRE_TRUST_DOMAIN + '/ns/agents/sa/agent-specialist';
+var SPIFFE_GATEWAY = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/agentgateway';
+var SPIFFE_MCP_OPS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-ops';
+var SPIFFE_MCP_OBS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-observability';
+
 // Per-client policy: scopes are keyed BY AUDIENCE so a client cannot request
 // a privileged scope for an audience that doesn't accept it. Without this,
 // copilot — which legitimately needs `ops:write` when forwarding to
@@ -73,15 +82,21 @@ var CLIENT_POLICY = {
   // signs the actor_token is still the agent's K8s service account.
   'https://copilot.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-gateway': { scopes: ['obs:read'] },
-      'agent-specialist': { scopes: ['obs:read', 'ops:write', 'llm:invoke'] },
+      'mcp-gateway': { scopes: ['obs:read'], mayAct: SPIFFE_GATEWAY },
+      'agent-specialist': {
+        scopes: ['obs:read', 'ops:write', 'llm:invoke'],
+        mayAct: SPIFFE_SPECIALIST
+      },
+      // Terminal: the gateway swaps in an upstream credential for Azure rather
+      // than exchanging again, so this token is never a subject_token. No next
+      // actor to name.
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/]
   },
   'https://specialist.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-gateway': { scopes: ['obs:read', 'ops:write'] },
+      'mcp-gateway': { scopes: ['obs:read', 'ops:write'], mayAct: SPIFFE_GATEWAY },
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
@@ -90,12 +105,13 @@ var CLIENT_POLICY = {
   // narrowing the broad aud=mcp-gateway caller token per tool-target.
   'mcp-gateway': {
     perAudience: {
-      'mcp-observability': { scopes: ['obs:read'] },
-      'mcp-ops': { scopes: ['ops:write'] }
+      'mcp-observability': { scopes: ['obs:read'], mayAct: SPIFFE_MCP_OBS },
+      'mcp-ops': { scopes: ['ops:write'], mayAct: SPIFFE_MCP_OPS }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/]
   },
-  // MCPs are confidential clients exchanging to their backend API.
+  // MCPs are confidential clients exchanging to their backend API. Both are
+  // terminal: {obs,ops}-api consume the token, they never exchange onward.
   'mcp-ops': {
     perAudience: {
       'ops-api': { scopes: ['ops:write'] }
@@ -112,6 +128,43 @@ var CLIENT_POLICY = {
 
 function fail(code, description) {
   throw exceptionFactory.badRequestException(code, description);
+}
+
+/*
+ * Read the `sub` out of an RFC 8693 §4.4 `may_act` claim.
+ *
+ * The claim identifies the parties permitted to act for the subject. We emit it
+ * as `{ "sub": "<spiffe id>" }`, but on the way back IN the shape depends on how
+ * Curity hydrated the introspected token: a Java Map, a JSON string, or a plain
+ * JS object. Same hazard the `act` pass-through documents below — except `act`
+ * is forwarded opaquely and this one has to be read into, so it needs the
+ * explicit normalisation.
+ *
+ * Returns null for absent/!unparseable, which callers treat as "no constraint".
+ */
+function mayActSub(raw) {
+  if (raw === null || typeof raw === 'undefined') {
+    return null;
+  }
+  if (typeof raw === 'string') {
+    var parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+    return parsed && parsed.sub ? String(parsed.sub) : null;
+  }
+  // Java Map (Nashorn exposes .get as a function) …
+  if (typeof raw.get === 'function') {
+    var fromMap = raw.get('sub');
+    return fromMap === null || typeof fromMap === 'undefined' ? null : String(fromMap);
+  }
+  // … or a plain object.
+  if (raw.sub !== null && typeof raw.sub !== 'undefined') {
+    return String(raw.sub);
+  }
+  return null;
 }
 
 function setToArray(s) {
@@ -291,6 +344,30 @@ function result(context) {
     );
   }
 
+  // 3b. RFC 8693 §4.4 `may_act`: the SUBJECT token names who is permitted to act
+  //     for it. This is a second, independent source of truth from the
+  //     `allowedActors` check above — that one is server-side config keyed by the
+  //     REQUESTING CLIENT, this one is a grant carried in the token itself and
+  //     keyed by the subject. Both must agree, so a client-config mistake alone
+  //     can't widen delegation, and the authority is verifiable by anyone holding
+  //     the token without reading Curity's configuration.
+  //
+  //     Enforce-if-present: terminal tokens (…→llm-gateway, →obs-api, →ops-api)
+  //     carry no `may_act` because nothing exchanges them onward. Absent means
+  //     unconstrained, which keeps a token minted before this claim existed
+  //     working through its short lifetime rather than breaking mid-chain.
+  var expectedActor = mayActSub(subjectToken.get('may_act'));
+  if (expectedActor !== null && expectedActor !== actor.sub) {
+    fail(
+      'invalid_request',
+      'actor ' +
+        actor.sub +
+        ' is not authorized by the subject token may_act (' +
+        expectedActor +
+        ')'
+    );
+  }
+
   // 4. Audience: single string requested via form param. Look it up in the
   //    per-audience map — its presence is the allow-list, its `scopes` array
   //    is the per-audience scope cap.
@@ -385,6 +462,15 @@ function result(context) {
     tokenData.act = { sub: actor.sub, act: inboundAct };
   } else {
     tokenData.act = { sub: actor.sub };
+  }
+
+  // `may_act` counterpart to `act`: `act` records who DID act (audit, after the
+  // fact), `may_act` grants who MAY act next (authorization, ahead of time).
+  // Narrowed per hop exactly like scope — each issued token names only the single
+  // workload that legitimately presents it next, taken from the per-audience
+  // policy. Terminal audiences set none, so the claim is simply absent there.
+  if (audPolicy.mayAct) {
+    tokenData.may_act = { sub: audPolicy.mayAct };
   }
 
   // Propagate the standard OIDC `acr` (auth-context class) from the subject token

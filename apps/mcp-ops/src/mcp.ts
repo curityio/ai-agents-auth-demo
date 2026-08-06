@@ -1,8 +1,18 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 import { obtainOpsApiToken, callOpsApiRestart, callOpsApiSetImage, callOpsApiScale } from './ops-api-client.js';
 import type { Config } from './config.js';
+
+/**
+ * SEP-2243: declaring `x-mcp-header` on a tool input property makes a conforming
+ * 2026-07-28 client mirror that argument into an `Mcp-Param-Namespace` request
+ * header. That lifts the namespace out of the JSON-RPC body and into a header
+ * agentgateway can authorize on *before* forwarding — see the `authorization`
+ * deny rule in k8s/workloads/agentgateway-config.yaml. The server still reads the
+ * argument normally; the header is a mirror, not a replacement.
+ */
+const X_MCP_HEADER_NAMESPACE = { 'x-mcp-header': 'Namespace' } as const;
 
 /** Per-request context: the inbound (validated) Bearer to use as subject_token. */
 export interface ToolContext {
@@ -14,10 +24,14 @@ export interface ToolContext {
 
 /**
  * Per-tool role gate for `set_deployment_image`. Returns null when the caller may
- * update images, or a human-readable denial reason otherwise. The gateway can't
- * enforce this without hiding the tool (see agentgateway-config.yaml), so mcp-ops
- * is the authoritative point — the returned message is surfaced to the caller
- * (and relayed by the specialist LLM) instead of a silent no-op.
+ * update images, or a human-readable denial reason otherwise.
+ *
+ * agentgateway now enforces the same split at the front door (an `authorization`
+ * deny rule keyed on `Mcp-Name` — see agentgateway-config.yaml), so in practice a
+ * non-sre caller is usually refused before reaching here. This check remains the
+ * AUTHORITATIVE one: the gateway rule cannot evaluate true when the `roles` claim
+ * is absent, so it fails open, and only this one makes the split unconditional.
+ * The two must agree — change the required role in both places together.
  */
 export function imageRoleDenial(callerRoles: string[], requiredRoles: string[]): string | null {
   if (requiredRoles.some((r) => callerRoles.includes(r))) return null;
@@ -33,25 +47,29 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     version: '0.0.1',
   });
 
-  server.tool(
+  server.registerTool(
     'restart_deployment',
-    `Trigger a rolling restart of a Deployment. The backend ops-api enforces ` +
-      `that only the '${cfg.targetNamespace}' namespace is reachable; calls into ` +
-      `other namespaces will fail with 403 regardless of OBO chain.`,
     {
-      name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
-      namespace: z
-        .string()
-        .optional()
-        .describe(
-          `Namespace. Defaults to the demo's '${cfg.targetNamespace}' namespace; ` +
-            `any other value will be rejected by RBAC.`,
-        ),
-      reason: z
-        .string()
-        .max(512)
-        .optional()
-        .describe('Human-readable reason recorded on the Deployment annotation.'),
+      description:
+        `Trigger a rolling restart of a Deployment. The backend ops-api enforces ` +
+        `that only the '${cfg.targetNamespace}' namespace is reachable; calls into ` +
+        `other namespaces will fail with 403 regardless of OBO chain.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(
+            `Namespace. Defaults to the demo's '${cfg.targetNamespace}' namespace; ` +
+              `any other value will be rejected by RBAC.`,
+          )
+          .meta(X_MCP_HEADER_NAMESPACE),
+        reason: z
+          .string()
+          .max(512)
+          .optional()
+          .describe('Human-readable reason recorded on the Deployment annotation.'),
+      }),
     },
     async ({ name, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -94,16 +112,23 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'set_deployment_image',
-    `Update a Deployment's container image to a new version (rolling update). ` +
-      `Only the '${cfg.targetNamespace}' namespace is reachable; the container is ` +
-      `assumed to share the deployment's name.`,
     {
-      name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
-      image: z.string().min(1).describe('Fully-qualified image ref incl. tag (e.g., "ghcr.io/demo/order-service:v1.2")'),
-      namespace: z.string().optional().describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
-      reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      description:
+        `Update a Deployment's container image to a new version (rolling update). ` +
+        `Only the '${cfg.targetNamespace}' namespace is reachable; the container is ` +
+        `assumed to share the deployment's name.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name (e.g., "order-service")'),
+        image: z.string().min(1).describe('Fully-qualified image ref incl. tag (e.g., "ghcr.io/demo/order-service:v1.2")'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`)
+          .meta(X_MCP_HEADER_NAMESPACE),
+        reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      }),
     },
     async ({ name, image, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -131,14 +156,20 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
     },
   );
 
-  server.tool(
+  server.registerTool(
     'scale_deployment',
-    `Set the replica count of a Deployment. Only the '${cfg.targetNamespace}' namespace is reachable.`,
     {
-      name: z.string().min(1).describe('Deployment name'),
-      replicas: z.number().int().min(0).max(20).describe('Desired replica count (0–20)'),
-      namespace: z.string().optional().describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
-      reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      description: `Set the replica count of a Deployment. Only the '${cfg.targetNamespace}' namespace is reachable.`,
+      inputSchema: z.object({
+        name: z.string().min(1).describe('Deployment name'),
+        replicas: z.number().int().min(0).max(20).describe('Desired replica count (0–20)'),
+        namespace: z
+          .string()
+          .optional()
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`)
+          .meta(X_MCP_HEADER_NAMESPACE),
+        reason: z.string().max(512).optional().describe('Human-readable reason.'),
+      }),
     },
     async ({ name, replicas, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;

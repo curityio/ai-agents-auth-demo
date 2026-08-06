@@ -53,6 +53,24 @@ CURITY_NS="${CURITY_NS:-curity}"
 CURITY_DEPLOY="${CURITY_DEPLOY:-curity}"
 CIMD_HOSTS=("copilot.localtest.me" "specialist.localtest.me")
 
+# RFC 9728: on a step-up challenge the web BFF fetches the protected-resource
+# metadata document to learn the authorization server. The URL it fetches is the
+# PUBLIC https://mcp-*.localtest.me identifier — that is what the challenge
+# advertises, and rewriting it to a cluster-internal name would defeat the point
+# of a stable resource identifier. Inside the web pod that host resolves to
+# 127.0.0.1 (the pod itself), so web needs the same ingress alias Curity gets.
+# Without it the fetch fails, `authServer` comes back empty, and the UI silently
+# loses the discovery hint.
+RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-observability.localtest.me")
+
+# extra_hosts_for <ns> <deploy> — hostnames this target needs aliased BEYOND
+# $CURITY_HOST, one per line. (bash 3.2 on macOS: no associative arrays.)
+extra_hosts_for() {
+  case "$1/$2" in
+    web/web) printf '%s\n' "${RESOURCE_HOSTS[@]}" ;;
+  esac
+}
+
 # verify_routing: confirm every target deployment carries the hostAlias mapping
 # $CURITY_HOST -> the *current* $INGRESS_IP and the NODE_EXTRA_CA_CERTS env.
 # Both live in the Deployment spec, so this needs no mkcert binary and catches
@@ -78,6 +96,12 @@ verify_routing() {
       missing+=("$ns/$deploy (hostAlias points at stale IP, expected $INGRESS_IP)")
     elif [[ -z "$caenv" ]]; then
       missing+=("$ns/$deploy (no NODE_EXTRA_CA_CERTS / mkcert CA mount)")
+    else
+      # Per-target extras (e.g. web's RFC 9728 resource hosts) drift the same way.
+      while IFS= read -r extra_host; do
+        [[ -n "$extra_host" && "$ha" != *"$extra_host"* ]] &&
+          missing+=("$ns/$deploy (no hostAlias for $extra_host)")
+      done < <(extra_hosts_for "$ns" "$deploy")
     fi
   done
 
@@ -150,6 +174,14 @@ for entry in "${TARGETS[@]}"; do
     continue
   fi
 
+  # $CURITY_HOST plus any per-target extras (see extra_hosts_for).
+  target_hosts=("$CURITY_HOST")
+  while IFS= read -r extra_host; do
+    [[ -n "$extra_host" ]] && target_hosts+=("$extra_host")
+  done < <(extra_hosts_for "$ns" "$deploy")
+  target_hosts_json="$(printf '"%s",' "${target_hosts[@]}")"
+  target_hosts_json="[${target_hosts_json%,}]"
+
   patch="$(cat <<EOF
 {
   "spec": {
@@ -158,7 +190,7 @@ for entry in "${TARGETS[@]}"; do
         "hostAliases": [
           {
             "ip": "$INGRESS_IP",
-            "hostnames": ["$CURITY_HOST"]
+            "hostnames": $target_hosts_json
           }
         ],
         "volumes": [

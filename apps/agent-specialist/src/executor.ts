@@ -191,8 +191,7 @@ async function stepUpFromMetadata(cfg: Config, deps: RemediationDeps): Promise<R
   let acrValues = cfg.requiredAcr;
   let scope = cfg.mcpOpsScope;
   try {
-    const internalBase = new URL(cfg.mcpOpsUrl).origin;
-    const md = await deps.fetchResourceMetadata(`${internalBase}/.well-known/oauth-protected-resource`);
+    const md = await deps.fetchResourceMetadata(cfg.mcpOpsMetadataUrl);
     scope = md.scopes_supported?.[0] ?? scope;
     acrValues = md.acr_values_supported?.[0] ?? acrValues;
   } catch (e) {

@@ -9,6 +9,7 @@ import {
 import { B3Propagator, B3InjectEncoding } from '@opentelemetry/propagator-b3';
 import { readSpiffeIdSync } from '@ai-agents-demo/spiffe';
 import { buildResource } from './resource.js';
+import { INSTRUMENTATION_CONFIG } from './instrumentation-config.js';
 
 export interface StartTelemetryOptions {
   /** Path to the on-disk SVID. Defaults to SPIFFE_SVID_PATH or the helper's path. */
@@ -30,7 +31,9 @@ export function startTelemetry(opts: StartTelemetryOptions = {}): NodeSDK {
   const sdk = new NodeSDK({
     resource: buildResource(readSpiffeIdSync(svidPath)),
     traceExporter: new OTLPTraceExporter(), // reads OTEL_EXPORTER_OTLP_ENDPOINT
-    instrumentations: [getNodeAutoInstrumentations()],
+    // See instrumentation-config: net/dns/fs are off so the waterfall shows the
+    // delegation chain rather than a third of a screen of tcp/tls connects.
+    instrumentations: [getNodeAutoInstrumentations(INSTRUMENTATION_CONFIG)],
     textMapPropagator: new CompositePropagator({
       propagators: [
         new W3CTraceContextPropagator(),

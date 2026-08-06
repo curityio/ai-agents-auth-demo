@@ -69,14 +69,18 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   (`obs-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
   hold Kubernetes credentials, behind minimal RBAC in `prod` (obs-api: get/list
   pods + logs **and** get/list deployments; ops-api: patch deployments). obs-api
-  accepts **two** actor chains (`expectedActorChains`/`chainMatchesAny`):
-  `[obs-mcp, copilot]` (copilot reads directly) and `[obs-mcp, specialist, copilot]`
+  accepts **two** actor chains (`expectedActorChains`/`chainMatchesAny`), both of
+  which include the gateway: `[mcp-observability, agentgateway, agent-copilot]`
+  (copilot reads directly) and
+  `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`
   (specialist reads while remediating).
 - **Resource servers enforce, in order:** Bearer → JWT valid → required scope →
   `act` present → exact actor-chain (length + per-position SPIFFE-ID regex) →
   (privileged tier) `acr=mfa` step-up. The role gate (`sre` for `ops:write`)
   is enforced by Curity's procedure at exchange time.
-- **MCP transport is Streamable HTTP** (`@modelcontextprotocol/sdk`), stateless.
+- **MCP transport is Streamable HTTP** (`@modelcontextprotocol/{client,server,node}@2`),
+  stateless, protocol revision **2026-07-28 only** (no 2025 fallback — the absence is
+  load-bearing) — see hard-won fact #26 before touching any MCP wiring.
 
 ## Critical hard-won facts (don't relearn these the hard way)
 
@@ -235,10 +239,34 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     longer carry `istio.io/use-waypoint`). Hard-won details:
     - **Path-routed, not federated.** ONE listener (`:8080`) with TWO path-scoped
       routes: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops. It is
-      path-routed (not a single federated `/mcp`) because agentgateway v1.3.1 (latest
-      OSS) does **not** expose `mcp.tool.target` inside its `extAuthz` CEL scope — so
-      per-backend audience narrowing can't be done on a single federated endpoint.
-      Callers pick the path.
+      path-routed (not a single federated `/mcp`) because agentgateway does **not**
+      expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
+      narrowing can't be done on a single federated endpoint. Callers pick the path.
+      **Re-verified on v1.4.1 (2026-08-05): still true, and it is structural, not a
+      timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
+      field is a plain `Option<&MCPInfo>` while its neighbours (`jwt`, `llm`, `extauthz`,
+      `backend`, …) are `ExtensionOrDirect`; `set_request()` wires up all thirteen of
+      those and never touches `mcp`. `ext_authz.rs` builds its context with
+      `Executor::new_request(req)` at every call site, which therefore leaves
+      `mcp: None`. Only `new_mcp`/`new_mcp_request` (the MCP-layer policies, e.g.
+      `mcpAuthorization`) populate it. v1.4.1's `schema/cel.md` calling `mcp.tool.*`
+      "request-time" refers to those policies, NOT to extAuthz — don't be misled into
+      federating on the strength of that doc.
+      Two things DID change, and both are escape hatches if federation is ever wanted:
+      (a) an undefined `mcp.*` reference no longer silently drops the ENTIRE computed
+      header map — as of v1.4 only the undefined value is omitted (it still fails *open*,
+      so any consumer must fail closed on a missing header; `exchange-shim` already does,
+      `server.ts` `typeof targetAudience !== 'string'` → 400);
+      (b) `request.headers["mcp-name"]` (the 2026-07-28 standard header) and
+      `json(request.body).params.name` BOTH resolve inside extAuthz and both yield the
+      tool name — the latter works on today's protocol, including the multiplexed
+      `<target>_<tool>` form needed to derive an audience. The body route costs a ~2 MB
+      CEL buffer ceiling (bodies ≥2 MB evaluate to nothing while our MCP servers accept
+      4 MB), so prefer the header once clients speak 2026-07-28. **Our clients now do**
+      (see #26): the v2 client emits `Mcp-Name: <tool>` on every `tools/call` whenever it
+      negotiates the modern revision — verified in the spike, so the header route is live
+      the moment the gateway offers 2026-07-28. It is NOT unconditional: on a 2025-era
+      fallback there is no `Mcp-Name`, so any CEL keyed on it must still fail closed.
     - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
       gateway validates the caller's
       `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
@@ -264,7 +292,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       (`[sre]`) may call it; bob (`[developer]`) is denied `ops:write` at the exchange.
     - **extAuthz → co-located `exchange-shim` = the OBO hop.** For each tool-call the
       gateway makes an `extAuthz` call to `exchange-shim` (`apps/exchange-shim`,
-      Node/TS, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693
+      Node/TS + express — see #28, listens `:8090`, **same pod** as the gateway), which performs the RFC 8693
       exchange: it reads the gateway's rotating SPIFFE JWT-SVID from
       `/run/spiffe/curity-actor.jwt` (spiffe-helper sidecar) as the `actor_token`, uses
       the caller's `aud=mcp-gateway` token as the subject, and derives audience/scope
@@ -327,19 +355,210 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `ndots:1` alone does NOT fix it. In-cluster backends (single small A records) are
     unaffected.
 
+25. **`may_act` (RFC 8693 §4.4) is enforced BEHIND `allowedActors`, which makes naive
+    negative tests worthless.** The exchange procedure stamps `may_act` on every issued
+    token naming the single workload permitted to present it next (`perAudience.mayAct`
+    in `token-exchange.js`; the login token's is stamped by `authorization-code.js`), and
+    enforces the subject token's `may_act` against the verified actor SVID. Gotchas:
+    - **Gate ordering.** `allowedActors` (step 3) runs *before* the `may_act` check
+      (step 3b). Because the `mayAct` map mirrors each consuming client's `allowedActors`,
+      the two gates agree on every happy path — so "present the wrong SVID" is refused by
+      `allowedActors` and proves NOTHING about `may_act`. To exercise it you need a case
+      where `allowedActors` PASSES and only `may_act` objects: take an
+      `aud=agent-specialist` token (its `may_act` names the specialist) and replay it as
+      the **copilot** with the copilot's own SVID. Verified 2026-08-05: refused with
+      `actor … is not authorized by the subject token may_act (…)`. That case was
+      **issued** before this claim existed — the copilot mints the specialist's token to
+      send over A2A, so it holds a copy and could spend that delegation itself.
+    - **Claim shape varies.** `subjectToken.get('may_act')` comes back as a Java Map, a
+      JSON string, or a plain object depending on how Curity hydrated the introspected
+      token. `act` dodges this by being forwarded opaquely; `may_act` must be read into,
+      hence the `mayActSub()` normaliser. Same hazard, different mitigation.
+    - **Enforce-if-present.** Terminal audiences (`llm-gateway`, `obs-api`, `ops-api`)
+      carry no `may_act` — nothing exchanges them onward — and absent means unconstrained,
+      so tokens minted before the claim existed still work out their lifetime.
+    - Surfaced for demos via `summarizeJwt().mayAct`. `act` = who **did** act (audit);
+      `may_act` = who **may** act next (authorization).
+
+26. **The MCP SDK is v2 (`@modelcontextprotocol/{client,server,node}@2`) and the wire
+    revision is 2026-07-28 ONLY — there is no 2025 fallback anywhere.** The v1
+    `@modelcontextprotocol/sdk` umbrella package is gone; it split into three.
+    Consequences that bite:
+    - **`server.tool(name, desc, shape, cb)` no longer exists** — only
+      `registerTool(name, { description, inputSchema }, cb)`, and `inputSchema` must be a
+      *wrapped* `z.object({...})`, not a raw shape. It must also expose
+      `~standard.jsonSchema`, which **zod 3 does not have on either entry point** (neither
+      `zod` nor `zod/v4` in 3.25). So `mcp-observability`/`mcp-ops` are on **zod 4** while
+      `agent-runtime` and the agents stay on **zod 3** (AI SDK v4 peers on it). Divergent
+      zod majors in one pnpm workspace is deliberate, not drift.
+    - **Serving is `createMcpHandler(factory, …)` + `toNodeHandler`,** replacing the
+      per-request `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`. The
+      factory runs once per HTTP request and receives `authInfo`, which is where the
+      per-caller `subject_token` now comes from. **The SDK never reads credentials from
+      headers** — `authMiddleware` must publish them on `req.auth` as `AuthInfo`
+      (mcp-ops also passes `roles` in `extra`, because the factory has no express `req`
+      and the `set_deployment_image` gate needs it).
+    - **`toNodeHandler` ignores a function 3rd argument** (express's `next`). Mounting it
+      as bare middleware after `express.json()` therefore makes it re-read an already
+      drained stream and every request classifies as *legacy* with an empty body. You MUST
+      call it as `nodeHandler(req, res, req.body)`. This fails silently — the symptom is
+      "the modern revision never negotiates", not an error.
+    - **No 2025 fallback, on purpose, and it is a SECURITY property — not tidiness.**
+      Servers run `legacy: 'reject'` and clients pin
+      `versionNegotiation: { mode: { pin: '2026-07-28' } }`. A 2025-era hop carries no
+      `Mcp-Name` header, and the gateway's per-tool authz rules key on exactly that
+      header, so a silent downgrade would open an authz gap rather than merely losing
+      features. Pinning converts that into a loud connect failure. **Do not "helpfully"
+      restore `legacy: 'stateless'` or `mode: 'auto'`** to fix a connect error — that
+      trades a visible failure for an invisible bypass. (Both were used during the
+      migration precisely because agentgateway sat in the middle unverified; v1.4.1 was
+      then confirmed to speak 2026-07-28 on both tiers, which is what made the pin safe.)
+    - **`make smoke-mcp-protocol`** (`scripts/smoke-mcp-protocol.sh`) is the only thing
+      that observes the revision actually negotiated *end to end*; it hard-fails on
+      anything but 2026-07-28 and re-checks tier filtering + cross-tier denial. The
+      servers' own support is pinned by `apps/mcp-*/tests/mcp-http.test.ts`, so a
+      mismatch there indicts the gateway, not the origin.
+    - **External MCP clients must speak 2026-07-28** — including MCP Inspector
+      (`make inspect-obs`/`inspect-ops`). An older Inspector will be refused at connect
+      rather than silently served on the old revision.
+    - **Client-side response caching (SEP-2549) is off by default and `tools/call` is
+      never cacheable** — `defaultCacheTtlMs` is `0`, so nothing is served from cache
+      unless a *server* sends `ttlMs`. `tools/list` IS cacheable and IS identity-dependent
+      here (the gateway filters it per tier), so `openMcpToolset` sets `cachePartition` to
+      the token `sub` to keep the boundary right if that ever changes.
+    - **The smoke scripts hand-roll the wire protocol** and had to move with it: no
+      `initialize`, no `mcp-session-id`, and a per-request `_meta` envelope whose
+      **three** reserved keys (`protocolVersion`, `clientInfo`, `clientCapabilities`)
+      are ALL required — a partial envelope is rejected with `-32602` naming the
+      missing one. They also send `Mcp-Name` and `Mcp-Param-Namespace`, because those
+      headers are the gateway rules' inputs (#27); a helper that omitted them would
+      silently exercise a different policy path than production traffic.
+
+27. **Two authorization rules now run AT the gateway, in the `authorization` policy —
+    NOT `mcpAuthorization`.** `set_deployment_image` requires the `sre` role (keyed on
+    `Mcp-Name`), and any explicit namespace other than `prod` is refused (keyed on
+    `Mcp-Param-Namespace`, SEP-2243). Covered by `make smoke-gateway-authz`. Details
+    that are easy to get wrong:
+    - **`authorization` ≠ `mcpAuthorization`.** The MCP-layer policy couples
+      call-denial to `tools/list` visibility (v1.4.x has a test literally named
+      *"deny policy … filters only that tool from list_tools"*), so gating a tool
+      there HIDES it — and an LLM that never sees a tool loops silently instead of
+      relaying a denial. `authorization` is the HTTP-layer policy
+      (`crates/agentgateway/src/http/authorization.rs`) and takes no part in
+      `tools/list`, so the call is refused while the tool stays visible.
+    - **Deny-only ⇒ denylist semantics.** With no `allow` rule present every
+      unmatched request still passes; add one `allow` and the route silently becomes
+      an allowlist that denies everything else. See `PolicySet::validate`.
+    - **extAuthz runs BEFORE authorization for ROUTE-level policies** (measured on
+      v1.4.1), so a denied tool-call still performs the OBO exchange — the privileged
+      token is minted and discarded. Do not conclude otherwise from `httpproxy.rs`:
+      it has three policy application sites with *different* orders.
+    - **`Mcp-Param-Namespace` only exists because the tools declare
+      `x-mcp-header`** on their `namespace` input (`z.…meta({'x-mcp-header':
+      'Namespace'})`, zod 4). Deleting that declaration breaks no call — it silently
+      removes the gateway's authz input, so `apps/mcp-*/tests/mcp-http.test.ts`
+      assert it explicitly.
+    - The namespace rule is written **"present AND not prod"** so that *omitting* the
+      argument (the common case — the server defaults it) can never trip it,
+      whichever way a missing header evaluates in CEL.
+    - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
+      evaluate true if the `roles` claim is missing, so it fails open. The downstream
+      `imageRoleDenial` check is what makes the split unconditional.
+    - **A gateway denial costs the legible error, and that has to be bought back.**
+      agentgateway answers with a bare HTTP 403 — it cannot put a message in the body
+      — so the denial reaches the client as a TRANSPORT error, not an MCP tool result.
+      Left to throw, the AI SDK reports "tool call failed" and the LLM *invents* a
+      reason: the observed answer was "I do not have permissions… run kubectl
+      yourself", which is vague and wrong about who lacked permission (it is the USER,
+      not the agent). Two changes fix it, and **both are needed**:
+      (a) `openMcpToolset` converts a 403 into a factual `{error:'forbidden', tool}`
+      result; (b) the specialist's system prompt says to name the refused tool and
+      never offer a bypass route. (a) alone does NOT work — the model ignored guidance
+      embedded in the tool payload. **Keep instructions OUT of tool results:** tool
+      output is untrusted data, and obeying imperatives smuggled through it is exactly
+      the prompt-injection hole this demo argues against. Verified end to end: carol
+      (oncall) now gets *"The set_deployment_image tool was refused with a 403
+      authorization error. You are not authorized… No changes were made."*
+
+28. **A bare ESM `import { createServer } from 'node:http'` is NOT reliably patched
+    by OTel — that is why `exchange-shim` serves through express.**
+    `@opentelemetry/instrumentation-http` patches the **CJS** `http` module.
+    Require-in-the-middle installs those hooks synchronously at SDK start, so
+    anything reaching `http` via a CJS `require` — which is what **express** does,
+    and why every other service here is fine — is instrumented. A bare ESM import of
+    a builtin instead depends on the ESM hook registration winning a race against the
+    app's own import, and it frequently LOSES even with `node --import`. Symptoms, in
+    increasing order of how misleading they are:
+    - No HTTP **server** span from the service, while **client** spans keep working
+      perfectly (`instrumentation-undici` uses diagnostics_channel, not module
+      patching). The service therefore *looks* instrumented.
+    - No server span ⇒ nothing calls `propagation.extract` ⇒ any span the handler
+      creates becomes a **root**, starting its own orphan trace. This is what made the
+      shim's `auth.token_exchange` spans — the hop that inserts agentgateway into the
+      downstream `act` chain — vanish from the caller's trace.
+    - **Intermittent across rebuilds** with identical source: unrelated dependency
+      changes shift module-load timing and flip the outcome. This cost two wrong
+      diagnoses that blamed agentgateway's extAuthz propagation instead.
+    **Diagnose in one command: send a request with NO `traceparent`.** A root span is
+    always sampled, so if no span appears it is not sampling and not parenting — the
+    server is simply unpatched. Beware the false negative: a one-off
+    `node --import @ai-agents-demo/otel-bootstrap -e "…"` in the same container CAN
+    export a manual span (CJS `require`), making the SDK look healthy while the
+    long-running ESM server is unpatched. Fix is `apps/exchange-shim/src/app.ts`
+    (express), pinned by `apps/exchange-shim/tests/app.test.ts`. Don't "simplify" it
+    back to `createServer`. Relatedly, `otel-bootstrap` disables the `net`/`dns`/`fs`
+    auto-instrumentations (`packages/otel-bootstrap/src/instrumentation-config.ts`):
+    `tcp.connect`/`tls.connect` were a third of a read-path waterfall and say nothing
+    about delegation. Failures still surface on the enclosing HTTP span.
+
+29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
+    `traceparent`, and MCP backends mis-parent the origin span.** Three separate
+    things, all verified on v1.4.1:
+    - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
+      `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
+      gateway generates a span per request (it logs `trace.id`/`span.id`) and
+      propagates context, but exports nothing — the hop that authorizes the call and
+      re-mints the token is missing from every trace. It is also the ONLY source of
+      `gen_ai.usage.*` token accounting on `/llm`, plus `mcp.method.name`,
+      `mcp.target`, `gen_ai.tool.name`, `route`, `http.path` and `endpoint` (upstream
+      host:port — HTTP backends only; `mcp:` backends use named targets so
+      `mcp.target` names the backend instead). `fields.add: {url.full: 'request.uri'}`
+      adds the absolute URL under the standard key.
+    - **Validate offline** with `docker run …/agentgateway:v1.4.1 -f cfg.yaml
+      --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
+      fetch, which is past schema validation). It does **NOT** check CEL — an unknown
+      CEL root passes validation and silently yields nothing at runtime.
+    - **extAuthz gets no trace context unless you forward it.** The gateway propagates
+      to routed backends but not to the callout, so each extAuthz block sets
+      `traceparent: 'request.headers["traceparent"]'`. Counter-intuitively that value
+      is NOT the caller's: the gateway has already rewritten the header to its OWN span
+      (`httpproxy.rs` `tp.new_span()` + `ns.insert_header(req)`, at the listener stage
+      before route policies), so forwarding it parents the shim's exchange directly
+      under the gateway span — exactly right. Confirmed by echoing the callout's
+      headers from a throwaway listener in the pod.
+    - **Known upstream bug — the MCP origin span is a SIBLING of the gateway span,**
+      not a child. For HTTP backends the gateway forwards its rewritten `traceparent`
+      and nesting is correct; for `mcp:` backends the upstream request is built fresh
+      (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
+      headers only where absent, carrying the ORIGINAL inbound traceparent. So
+      `mcp-observability`/`mcp-ops` parent to the CALLER, and the gateway looks like a
+      bystander to a call that went around it. Not configurable, and still present on
+      `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
+      the indentation lies.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
 
 ```bash
-make tools-check     # preflight: node>=20, pnpm, docker, kind, kubectl, helm, mkcert
+make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, Azure LLM key
-make images          # build all 7 app images and `kind load` them
+make images          # build all 8 app images and `kind load` them
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace
-make smoke           # OBO + A2A + step-up/role-denial smoke tests
+make smoke           # OBO + A2A + step-up/role-denial + LLM + MCP-revision smoke tests
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit

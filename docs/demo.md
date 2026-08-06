@@ -62,7 +62,8 @@ deployments named like real microservices: **`order-service`** and
 The copilot exchanges Alice's token for an `obs:read` token scoped to
 `mcp-observability`, calls the MCP `list_pods` tool, which re-exchanges to
 `obs-api`, which lists pods via read-only RBAC. **Expected:** a list of pods,
-no MFA prompt. The trace shows `act=[obs-mcp, copilot]`, `scope=obs:read`.
+no MFA prompt. The trace shows `act=[obs-mcp, agentgateway, copilot]`,
+`scope=obs:read`.
 
 ### Act 2 — Cross-tier remediation (privileged, with step-up)
 
@@ -86,8 +87,9 @@ verbatim. The specialist is an **LLM agent** that plans across both tiers:
 
 **Expected:** an MFA challenge, then a summary of what changed. The trace shows
 the specialist fanning out to **both** `mcp-observability` (read) and `mcp-ops`
-(write): `act=[ops-mcp, specialist, copilot]` on the write hops (`scope=ops:write`,
-`acr=mfa`) and `act=[obs-mcp, specialist, copilot]` on the read hops
+(write): `act=[ops-mcp, agentgateway, specialist, copilot]` on the write hops
+(`scope=ops:write`, `acr=mfa`) and
+`act=[obs-mcp, agentgateway, specialist, copilot]` on the read hops
 (`scope=obs:read`).
 
 ### Act 3 — Denial (authn ≠ authz)
@@ -138,7 +140,7 @@ Ambient.
 
 ## 4. Prerequisites
 
-- Docker, `kind`, `kubectl`, `helm`, `mkcert`, `pnpm`, Node ≥ 20.
+- Docker, `kind`, `kubectl`, `helm`, `mkcert`, `pnpm`, Node ≥ 22.
   Run `make tools-check` to verify.
 - A **Curity developer license** — copy it to the repo root as `license.json`
   (gitignored). `make demo` will prompt and wait if it's missing.
@@ -252,9 +254,14 @@ What to point at in a single remediation trace:
   `mcp-observability → obs-api` (reads) **and** `mcp-ops → ops-api` (writes),
   plus `auth.token_exchange` spans against Curity.
 - **`auth.sub=alice`** on every span — the human identity propagates intact.
-- **`auth.act[]` grows** hop by hop and shows the specialist on *both* tiers:
-  the write hops carry `[ops-mcp, specialist, copilot]`, the read hops carry
-  `[obs-mcp, specialist, copilot]`.
+- **`auth.act[]` grows** hop by hop and shows the specialist on *both* tiers.
+  Every chain includes **`agentgateway`**, which inserts itself when the
+  exchange-shim re-mints the token at the front door:
+  `ops-api` carries `[mcp-ops, agentgateway, agent-specialist, agent-copilot]`
+  and `obs-api` carries
+  `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`.
+  (On the plain read path, where the copilot goes direct, the specialist is
+  absent: `[mcp-observability, agentgateway, agent-copilot]`.)
 - **Scope narrowing** on the `auth.token_exchange` spans
   (`auth.exchange.scope` vs `auth.exchange.issued_scope`) — `ops:write` to
   `mcp-ops`, `obs:read` to `mcp-observability`, from the same specialist.
@@ -268,11 +275,14 @@ What to point at in a single remediation trace:
   natively recognizes the LLM protocol and stamps the span with OTel GenAI
   semantic-convention attributes (`gen_ai.operation.name=chat`,
   `gen_ai.provider.name=azure`, `gen_ai.request.model=gpt-4.1`,
-  `gen_ai.usage.*`) *and* the same `auth.sub=alice`/`auth.scope=llm:invoke` as
-  every other hop — the model call is attributed to the user, not an anonymous
-  service credential. The `auth.token_exchange` span right before it shows
-  `audience=llm-gateway` with **no `act`-chain growth** — Azure sits outside the
-  trust domain, so there's nothing to nest.
+  `gen_ai.usage.input_tokens` / `output_tokens`) — the only place in the system
+  where model and token accounting appear. Note the gateway span itself carries
+  **no `auth.*`**: those attributes come from `decorateSpanWithIdentity()`, which
+  is our Node middleware and does not run inside the gateway. The user attribution
+  for this hop is on the `auth.token_exchange` span immediately before it, which
+  shows `audience=llm-gateway`, `issued_scope=llm:invoke` and `auth.sub=alice`
+  on the agent's own span — with **no `act`-chain growth**, since Azure sits
+  outside the trust domain and there's nothing to nest.
 
 **Try it: deny a non-`llm:invoke` caller.** Run `make smoke-llm` (needs
 `SMOKE_SUBJECT_TOKEN` — a fresh access token for alice, see the script's usage

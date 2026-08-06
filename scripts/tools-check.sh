@@ -15,7 +15,7 @@ want() {
   return 0
 }
 
-want node       "install Node 20+ (https://nodejs.org or via volta/asdf)"          || true
+want node       "install Node 22+ (https://nodejs.org or via volta/asdf)"          || true
 want pnpm       "enable via corepack: corepack enable pnpm && corepack prepare pnpm@9.15.0 --activate" || true
 want docker     "install Docker Desktop or OrbStack"                                || true
 want kind       "brew install kind"                                                 || true
@@ -25,8 +25,12 @@ want mkcert     "brew install mkcert"                                           
 
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]')"
-  if [[ "$node_major" -lt 20 ]]; then
-    missing+=("node >=20 required (found $(node -v))")
+  # 22, not 20: Node 20 reached end-of-life on 2026-04-30 (no further security
+  # patches), and the app images build on node:22-bookworm-slim. Keeping the local
+  # floor at 20 would let a developer run against APIs the containers do not have,
+  # while @types/node (^22) already types them as present.
+  if [[ "$node_major" -lt 22 ]]; then
+    missing+=("node >=22 required (found $(node -v)); Node 20 went EOL 2026-04-30")
   fi
 fi
 
