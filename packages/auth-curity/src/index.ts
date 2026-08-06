@@ -17,6 +17,7 @@ export {
   buildIdentityAttributes,
   decorateSpanWithIdentity,
 } from './identity-span.js';
+export { buildExchangeAttributes, type ExchangeSpanInput } from './exchange-span.js';
 export {
   oboLog,
   formatOboLog,

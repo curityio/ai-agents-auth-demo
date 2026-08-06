@@ -3,6 +3,7 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { importPKCS8, SignJWT } from 'jose';
 import { CurityAuthError, type CurityAuthErrorCode } from './errors.js';
 import { oboLog, summarizeJwt } from './obo-log.js';
+import { buildExchangeAttributes } from './exchange-span.js';
 
 /** Friendly caller label for OBO logs: CIMD URL → agent name; else the raw id. */
 function callerLabel(clientId: string): string {
@@ -82,14 +83,7 @@ const ERROR_MAP: Record<string, CurityAuthErrorCode> = {
 export async function exchangeToken(params: ExchangeTokenParams): Promise<ExchangeTokenResult> {
   return tracer.startActiveSpan(
     'auth.token_exchange',
-    {
-      attributes: {
-        'auth.exchange.audience': params.audience,
-        'auth.exchange.scope': params.scope,
-        'auth.exchange.client_id': params.clientId,
-        'auth.exchange.grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
-      },
-    },
+    { attributes: buildExchangeAttributes(params) },
     async (span) => {
       try {
         const result = await doExchange(params);
