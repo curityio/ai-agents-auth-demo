@@ -8,9 +8,17 @@
  * audiences) without redaction on purpose. Set OBO_LOG=off to silence it.
  */
 
+import { isSpanContextValid, trace, type Span } from '@opentelemetry/api';
+
 const DISABLED = process.env.OBO_LOG === 'off';
 
 export type OboKind = 'RECEIVE' | 'EXCHANGE' | 'CALL';
+
+/** W3C trace-context ids used to join this line to the rest of the request. */
+export interface OboTrace {
+  traceId?: string;
+  spanId?: string;
+}
 
 export interface OboLogEvent {
   /** The service emitting the log, e.g. 'agent-copilot'. */
@@ -21,6 +29,32 @@ export interface OboLogEvent {
   headline: string;
   /** Key/value detail lines, pretty-printed and aligned. */
   fields?: Record<string, unknown>;
+  /**
+   * ISO-8601 emission time, rendered on the header line. `oboLog` fills this in;
+   * it is a parameter (not a `Date.now()` call inside the formatter) so that
+   * `formatOboLog` stays pure and its tests stay deterministic.
+   */
+  at?: string;
+  /**
+   * Trace correlation ids. `oboLog` fills these in from the active span; same
+   * purity argument as `at`.
+   */
+  trace?: OboTrace;
+}
+
+/**
+ * Pull the W3C ids off a span for logging. An all-zero (invalid) span context —
+ * what you get when nothing is instrumented or the context was lost — yields
+ * nothing rather than a run of zeros that looks like a real id.
+ *
+ * Takes the span explicitly rather than defaulting to `trace.getActiveSpan()`
+ * so the "no active span" branch is genuinely reachable from a test.
+ */
+export function traceFields(span: Span | undefined): OboTrace {
+  if (!span) return {};
+  const ctx = span.spanContext();
+  if (!isSpanContextValid(ctx)) return {};
+  return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
 
 export interface JwtSummary {
@@ -107,27 +141,44 @@ function shortSpiffe(s: string): string {
   return m ? m[1]! : s;
 }
 
-/** Render an OBO event as an aligned, box-drawn INFO block on stdout. */
+/**
+ * Render an OBO event as an aligned, box-drawn INFO block on stdout, stamped
+ * with the current time and the active trace/span. An explicit `at`/`trace` on
+ * the event wins, which is what lets callers log on behalf of another context.
+ */
 export function oboLog(event: OboLogEvent): void {
   if (DISABLED) return;
-  console.log(formatOboLog(event));
+  console.log(
+    formatOboLog({
+      at: new Date().toISOString(),
+      trace: traceFields(trace.getActiveSpan()),
+      ...event,
+    }),
+  );
 }
 
 /** Pure formatter (exported for testing). */
 export function formatOboLog(event: OboLogEvent): string {
-  const { service, kind, headline, fields } = event;
-  const lines: string[] = [`┌─ INFO [${service}] ${kind} ${headline}`];
-  if (fields) {
-    const entries = Object.entries(fields).filter(
-      ([, v]) => v !== undefined && v !== null && v !== '',
-    );
-    const width = entries.reduce((w, [k]) => Math.max(w, k.length), 0);
-    for (const [k, v] of entries) {
-      lines.push(`│  ${k.padEnd(width)} : ${stringifyVal(v)}`);
-    }
+  const { service, kind, headline, fields, at, trace: tc } = event;
+  const stamp = at ? `${at} ` : '';
+  const lines: string[] = [`┌─ ${stamp}INFO [${service}] ${kind} ${headline}`];
+  // `trace` goes first so the correlation id sits next to the headline, and is
+  // spread-before-fields so an explicit caller field of the same name wins.
+  const entries = Object.entries({ trace: formatTrace(tc), ...fields }).filter(
+    ([, v]) => v !== undefined && v !== null && v !== '',
+  );
+  const width = entries.reduce((w, [k]) => Math.max(w, k.length), 0);
+  for (const [k, v] of entries) {
+    lines.push(`│  ${k.padEnd(width)} : ${stringifyVal(v)}`);
   }
   lines.push('└─');
   return lines.join('\n');
+}
+
+/** `<traceId> ▸ <spanId>`, or just the trace id, or nothing. */
+function formatTrace(tc: OboTrace | undefined): string | undefined {
+  if (!tc?.traceId) return undefined;
+  return tc.spanId ? `${tc.traceId} ▸ ${tc.spanId}` : tc.traceId;
 }
 
 function stringifyVal(v: unknown): string {

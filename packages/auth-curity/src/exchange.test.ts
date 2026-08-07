@@ -173,6 +173,52 @@ describe('exchangeToken', () => {
   });
 });
 
+describe('exchangeToken OBO log labelling', () => {
+  const okResponse = () =>
+    new Response(
+      JSON.stringify({ access_token: 'exchanged.jwt', token_type: 'Bearer', expires_in: 300 }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+
+  it('labels the log with the Curity client id by default', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await exchangeToken({ ...baseParams, clientId: 'mcp-observability' });
+
+    expect(spy.mock.calls[0]![0]).toContain('INFO [mcp-observability] EXCHANGE');
+  });
+
+  it('shortens a CIMD client-id URL to the agent name', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await exchangeToken({
+      ...baseParams,
+      clientId: 'https://specialist.localtest.me/.well-known/oauth-client',
+    });
+
+    expect(spy.mock.calls[0]![0]).toContain('INFO [agent-specialist] EXCHANGE');
+  });
+
+  it('prefers an explicit serviceLabel so a workload can log under its own name', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // exchange-shim authenticates as the `mcp-gateway` client but is its own
+    // workload; logging the client id would name a pod that does not exist.
+    await exchangeToken({
+      ...baseParams,
+      clientId: 'mcp-gateway',
+      serviceLabel: 'exchange-shim',
+    });
+
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).toContain('INFO [exchange-shim] EXCHANGE');
+    expect(line).toContain('client_id    : mcp-gateway');
+  });
+});
+
 describe('exchangeToken with private_key_jwt', () => {
   const clientId = 'https://copilot.localtest.me/.well-known/oauth-client';
 

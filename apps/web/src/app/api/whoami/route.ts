@@ -20,22 +20,10 @@ export async function GET(req: Request): Promise<Response> {
     secureCookie: true,
   });
 
-  if (process.env.AUTH_DEBUG === 'true') {
-    const cookieNames = (req.headers.get('cookie') ?? '')
-      .split(';')
-      .map((c) => c.trim().split('=')[0])
-      .filter(Boolean);
-    console.log(
-      JSON.stringify({
-        tag: 'whoami.debug',
-        token_present: Boolean(token),
-        token_keys: token ? Object.keys(token) : [],
-        token_sub: token?.sub,
-        accessToken_typeof: typeof (token as Record<string, unknown> | null)?.accessToken,
-        cookies: cookieNames,
-      }),
-    );
-  }
+  // (No `whoami.debug` log line here: it existed to answer "did getToken find
+  // the cookie?" while fact #2 — Auth.js v5 needing `secureCookie: true` — was
+  // being diagnosed. The response body below already reports `has_access_token`,
+  // so the log was a duplicate of what the caller can see.)
 
   const safe = {
     sub: token?.sub ?? session.user?.id,

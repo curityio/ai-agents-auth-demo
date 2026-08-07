@@ -56,4 +56,14 @@ describe('handleExchange', () => {
       ),
     ).rejects.toThrow(/audience/i);
   });
+
+  it('logs under the exchange-shim workload name, not the mcp-gateway client id', async () => {
+    await handleExchange(
+      { callerToken: 'caller.token', targetAudience: 'mcp-observability' },
+      deps,
+    );
+    expect(deps.exchange).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceLabel: 'exchange-shim' }),
+    );
+  });
 });

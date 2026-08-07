@@ -39,6 +39,13 @@ export interface ExchangeTokenParams {
   clientSecret?: string;
   /** Client authentication strategy. Defaults to Basic auth using clientId/clientSecret. */
   clientAuth?: ClientAuth;
+  /**
+   * Name this workload logs under. Defaults to a friendly form of `clientId`,
+   * which is right everywhere the Curity client and the workload share a name.
+   * `exchange-shim` is the exception: it authenticates as the `mcp-gateway`
+   * client, so without this it would log under a name no pod has.
+   */
+  serviceLabel?: string;
   subjectToken: string;
   /** SPIFFE JWT-SVID in compact form. */
   actorToken: string;
@@ -165,7 +172,7 @@ async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenRes
     const subj = summarizeJwt(params.subjectToken);
     const actor = summarizeJwt(params.actorToken);
     oboLog({
-      service: callerLabel(params.clientId),
+      service: params.serviceLabel ?? callerLabel(params.clientId),
       kind: 'EXCHANGE',
       headline: `→ ${params.audience}`,
       fields: {
