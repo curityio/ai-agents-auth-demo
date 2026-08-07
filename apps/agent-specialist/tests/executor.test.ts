@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ToolExecutionError } from 'ai';
 import { runRemediation, fallbackSummary, type RemediationDeps } from '../src/executor.js';
+import type { StepUpSink } from '../src/mcp-ops-client.js';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
 
 describe('fallbackSummary', () => {
@@ -67,8 +67,27 @@ function deps(over: Partial<RemediationDeps> = {}): RemediationDeps {
     fetchResourceMetadata: vi
       .fn()
       .mockResolvedValue({ scopes_supported: ['ops:write'], acr_values_supported: ['mfa'] }),
+    buildStepUpInterceptingFetch: vi.fn(() => fetch),
     ...over,
   };
+}
+
+/**
+ * Wire a fake interceptor factory that hands the sink back to the test, so a
+ * `runLlm` stub can record a challenge into it the way the real fetch wrapper
+ * does mid-loop. Returns a getter because the sink only exists once
+ * `runRemediation` has allocated it.
+ */
+function withSinkCapture(over: Partial<RemediationDeps> = {}) {
+  let captured: StepUpSink | undefined;
+  const d = deps({
+    buildStepUpInterceptingFetch: vi.fn((_scope: string, sink?: StepUpSink) => {
+      captured = sink;
+      return fetch;
+    }),
+    ...over,
+  });
+  return { deps: d, sink: () => captured as StepUpSink };
 }
 
 describe('runRemediation', () => {
@@ -169,17 +188,22 @@ describe('runRemediation', () => {
     expect(d.openMcpToolset).not.toHaveBeenCalled();
   });
 
-  it('returns step-up and STILL closes both toolsets when runLlm throws StepUpRequiredError', async () => {
+  it('returns step-up and STILL closes both toolsets when a challenge is recorded', async () => {
+    // Both MCP transports must be released even on the step-up exit, or a user
+    // who re-authenticates and retries leaks a connection per attempt.
     const readClose = vi.fn();
     const writeClose = vi.fn();
     const openMcpToolset = vi
       .fn()
       .mockResolvedValueOnce({ tools: {}, close: readClose })
       .mockResolvedValueOnce({ tools: {}, close: writeClose });
-    const d = deps({
-      openMcpToolset,
-      runLlm: vi.fn().mockRejectedValue(makeStepUp()),
-    });
+    const { deps: d, sink } = withSinkCapture({ openMcpToolset });
+    (d.runLlm as unknown as { mockImplementation: (f: () => Promise<unknown>) => void }).mockImplementation(
+      async () => {
+        sink().err = makeStepUp();
+        return { text: 'could not restart', steps: [] };
+      },
+    );
     const out = await runRemediation({
       cfg,
       bearer: 'b',
@@ -192,17 +216,45 @@ describe('runRemediation', () => {
     expect(writeClose).toHaveBeenCalledOnce();
   });
 
-  it('returns step-up when runLlm throws a ToolExecutionError wrapping a StepUpRequiredError (real ai@4 wrapping)', async () => {
-    // generateText in ai@4.x does NOT re-throw a bare StepUpRequiredError from a
-    // tool's execute — it wraps it in a ToolExecutionError with the original on
-    // `.cause`. This pins the unwrap so a mid-flight step-up isn't misclassified.
-    const wrapped = new ToolExecutionError({
-      toolName: 'set_deployment_image',
-      toolArgs: { deployment: 'api-gateway' },
-      toolCallId: 'call_1',
-      cause: makeStepUp(),
+  it('returns step-up when the fetch wrapper recorded a challenge but runLlm resolved normally', async () => {
+    // This is the ai@5+ reality and the reason the sink exists. A throw from
+    // inside a tool's `execute` is NOT propagated: the SDK turns it into a
+    // `tool-error` content part and the tool loop continues, so generateText
+    // RESOLVES — with prose the model invented about why it failed. If the
+    // step-up did not travel out-of-band, the browser would receive that prose
+    // as a normal answer and the user would never be prompted for MFA.
+    const { deps: d, sink } = withSinkCapture({
+      runLlm: vi.fn(async () => {
+        sink().err = makeStepUp(); // what the intercepting fetch does mid-loop
+        return { text: 'I was unable to restart api-gateway.', steps: [] };
+      }),
     });
-    const d = deps({ runLlm: vi.fn().mockRejectedValue(wrapped) });
+    const out = await runRemediation({
+      cfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
+    });
+    expect(out.kind).toBe('step-up');
+    // The challenge that reaches the browser must be the one the resource server
+    // actually sent, not a default — it is what drives the re-auth acr_values.
+    if (out.kind === 'step-up') {
+      expect(out.payload.data.acrValues).toBe('mfa');
+      expect(out.payload.data.scope).toBe('ops:write');
+    }
+  });
+
+  it('prefers a recorded step-up over specialist_failure when runLlm also throws', async () => {
+    // A challenge recorded mid-loop must win over an unrelated later failure —
+    // otherwise a transport error after the 401 downgrades a real MFA challenge
+    // into a generic error and the user sees a dead end instead of a prompt.
+    const { deps: d, sink } = withSinkCapture({
+      runLlm: vi.fn(async () => {
+        sink().err = makeStepUp();
+        throw new Error('connection reset');
+      }),
+    });
     const out = await runRemediation({
       cfg,
       bearer: 'b',
@@ -213,35 +265,56 @@ describe('runRemediation', () => {
     expect(out.kind).toBe('step-up');
   });
 
-  it('returns step-up when the StepUpRequiredError is nested two causes deep', async () => {
-    // The SDK can wrap more than once; the cause-walk must descend the chain.
-    const inner = new ToolExecutionError({
-      toolName: 'set_deployment_image',
-      toolArgs: {},
-      toolCallId: 'call_1',
-      cause: makeStepUp(),
+  it('hands runLlm a live stopEarly predicate so the loop halts on the first challenge', async () => {
+    // Without this the model keeps retrying into the same 401 until the step
+    // limit, burning privileged calls and delaying the challenge.
+    let stopEarly: (() => boolean) | undefined;
+    const { deps: d, sink } = withSinkCapture({
+      runLlm: vi.fn(async (o: { stopEarly?: () => boolean }) => {
+        stopEarly = o.stopEarly;
+        return { text: 'ok', steps: [] };
+      }),
     });
-    const outerWrap = new Error('downstream call failed');
-    (outerWrap as { cause?: unknown }).cause = inner;
-    const d = deps({ runLlm: vi.fn().mockRejectedValue(outerWrap) });
-    const out = await runRemediation({
+    await runRemediation({
       cfg,
       bearer: 'b',
       goal: 'restart api-gateway',
       verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
       deps: d,
     });
-    expect(out.kind).toBe('step-up');
+    expect(stopEarly).toBeDefined();
+    expect(stopEarly!()).toBe(false);
+    sink().err = makeStepUp();
+    expect(stopEarly!()).toBe(true);
   });
 
-  it('maps a ToolExecutionError with a non-step-up cause to a specialist_failure', async () => {
-    const wrapped = new ToolExecutionError({
-      toolName: 'set_deployment_image',
-      toolArgs: {},
-      toolCallId: 'call_1',
-      cause: new Error('mcp-ops 500'),
+  it('wraps the write toolset fetch with the interceptor and leaves the read toolset bare', async () => {
+    // Reads are unprivileged and never step-up; wrapping them would be noise.
+    // Getting this backwards is invisible until a real 401 arrives.
+    const d = deps();
+    await runRemediation({
+      cfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
     });
-    const d = deps({ runLlm: vi.fn().mockRejectedValue(wrapped) });
+    expect(d.buildStepUpInterceptingFetch).toHaveBeenCalledWith('ops:write', expect.any(Object));
+    const calls = (
+      d.openMcpToolset as unknown as {
+        mock: { calls: Array<[{ fetchImpl?: unknown; label: string }]> };
+      }
+    ).mock.calls;
+    expect(calls).toHaveLength(2);
+    const [read, write] = calls.map((c) => c[0]);
+    expect(read!.label).toBe('mcp-observability');
+    expect(read!.fetchImpl).toBeUndefined();
+    expect(write!.label).toBe('mcp-ops');
+    expect(write!.fetchImpl).toBeDefined();
+  });
+
+  it('maps a non-step-up rejection from runLlm to a specialist_failure', async () => {
+    const d = deps({ runLlm: vi.fn().mockRejectedValue(new Error('mcp-ops 500')) });
     const out = await runRemediation({
       cfg,
       bearer: 'b',

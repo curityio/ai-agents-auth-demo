@@ -77,7 +77,7 @@ from this package); `agent-specialist` depends on it directly.
 | File | Exports | Responsibility |
 |---|---|---|
 | `llm.ts` | `buildLlm(cfg, opts?)` | Provider wiring — selects the Vercel AI SDK model by `LLM_PROVIDER` (`gateway` **default**: an OpenAI-compatible client pointed at agentgateway's `/llm` route, requires a per-request `opts.accessToken`; `anthropic`/`ollama` alternatives). The old `azure` provider (direct `@ai-sdk/azure`) is gone — see §3.6. |
-| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `jsonSchemaToZod` | Connects to an MCP server over Streamable HTTP with a Bearer token, converts each MCP tool's JSON-Schema input into a Zod schema, and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
+| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `mcpInputSchema` | Connects to an MCP server over Streamable HTTP with a Bearer token, passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
 
 ---
 
@@ -175,10 +175,20 @@ bus. **Every authorization gate sits outside the LLM loop**, in this fixed order
 4. **READ token + open both toolsets** — exchange for `obs:read` to
    `mcp-observability` (no MFA), then open *both* MCP toolsets; a partial-open
    failure still closes whatever connected.
-5. **Run the LLM** — `generateText` (`maxSteps: 8`) over the merged toolset
+5. **Run the LLM** — `generateText` (`stopWhen: [isStepCount(8), stopEarly]`) over the merged toolset
    (`get_deployment` read + `restart_deployment`/`set_deployment_image`/
    `scale_deployment` write). The system prompt (`system-prompt.ts`) directs an
    inspect→act→verify loop. The specialist holds **two tokens** for the whole run.
+6. **Mid-flight step-up, out-of-band** — a 401 from `mcp-ops`/`ops-api` during the
+   loop is turned into a `StepUpRequiredError` by `buildStepUpInterceptingFetch`,
+   which both throws *and* records it on a per-run `StepUpSink`. The sink is what
+   carries the challenge out: since ai@5 a throw from inside a tool's `execute`
+   does not propagate — the SDK converts it to a `tool-error` content part and the
+   loop continues, so `generateText` resolves with prose the model invented about
+   the failure. `runRemediation` therefore checks the sink on **both** exits (before
+   reporting `ok`, and in the `catch` before reporting `specialist_failure`), and
+   passes `stopEarly` into `stopWhen` so the loop halts on the first challenge
+   instead of retrying into the same 401.
 
 ---
 
@@ -392,7 +402,9 @@ Both agents route every Azure OpenAI call through agentgateway's OpenAI-compatib
   `agent-specialist.yaml`, and the old per-agent `agent-*-llm` secrets are gone.
 - **`buildLlm` gateway mode** (`packages/agent-runtime/src/llm.ts`):
   `buildLlm(cfg, { accessToken })` builds an OpenAI-compatible client
-  (`@ai-sdk/openai`) with `baseURL` pointed at the `/llm` route and `apiKey` set
+  (`@ai-sdk/openai-compatible` — NOT `@ai-sdk/openai`, whose provider function
+  defaults to the Responses API since ai@5 and would POST `/llm/responses`)
+  with `baseURL` pointed at the `/llm` route and `apiKey` set
   to the exchanged `aud=llm-gateway` JWT — sent as the OpenAI
   `Authorization: Bearer`, which the gateway validates and swaps for the Azure
   api-key upstream. `LLM_PROVIDER` is now `gateway | anthropic | ollama`

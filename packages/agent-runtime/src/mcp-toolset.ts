@@ -1,6 +1,5 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { tool, type ToolSet } from 'ai';
-import { z } from 'zod';
+import { jsonSchema, tool, type FlexibleSchema, type ToolSet } from 'ai';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 
 export interface McpToolset {
@@ -68,10 +67,9 @@ export async function openMcpToolset(opts: {
 
   const tools: ToolSet = {};
   for (const t of listed.tools) {
-    const parameters = jsonSchemaToZod(t.inputSchema);
     tools[t.name] = tool({
       description: t.description ?? `MCP tool: ${t.name}`,
-      parameters,
+      inputSchema: mcpInputSchema(t.inputSchema),
       execute: async (args: Record<string, unknown>) => {
         let result;
         try {
@@ -124,35 +122,43 @@ export async function openMcpToolset(opts: {
   };
 }
 
+const EMPTY_OBJECT_SCHEMA = { type: 'object', properties: {} } as const;
+
 /**
- * Minimal JSON-Schema → Zod converter for the property shapes MCP tools emit.
- * Object-of-primitives only.
+ * Adapt an MCP tool's advertised `inputSchema` for the AI SDK's `inputSchema`.
+ *
+ * The server's JSON Schema is passed through **verbatim**. This replaced a
+ * hand-written JSON-Schema→Zod converter that handled "object of primitives"
+ * only, and silently dropped everything else: enums, arrays and nested objects
+ * collapsed to `z.unknown()`, and all constraints were lost — `replicas`
+ * (`integer`, 0–20 on mcp-ops) reached the model as a bare number, so it could
+ * propose 50 replicas and only discover the limit from a server-side rejection.
+ * Reshaping the document here also meant maintaining a second, drifting
+ * definition of a contract the server already publishes.
+ *
+ * **Trade-off, deliberate:** `jsonSchema()` performs no validation unless given a
+ * `validate` function, so the model's arguments are no longer checked
+ * client-side. That check was never the security boundary — `mcp-observability`
+ * and `mcp-ops` validate their own inputs with zod 4 on every call, and the
+ * gateway's `Mcp-Param-Namespace` authz rule fails closed on anything it cannot
+ * read. What changes is where a malformed call is caught: the server returns an
+ * error result the model can act on, instead of the SDK rejecting locally. Since
+ * the model now sees the real constraints, it should produce fewer such calls.
+ *
+ * Sending the schema unconstrained is safe because tool definitions go out
+ * **non-strict**: `@ai-sdk/openai-compatible` sets `strict` on a tool only when the
+ * tool asks for it, and its `strictJsonSchema: true` default applies to
+ * `response_format`, which we never use. Under strict function calling OpenAI
+ * rejects keywords like `minimum`; non-strict treats them as advice to the model.
+ * Setting a tool's `strict` here would therefore need the schema narrowed first.
+ *
+ * MCP permits a tool with no inputs, but the AI SDK still wants an object schema,
+ * hence the fallback.
  */
-export function jsonSchemaToZod(schema: unknown): z.ZodObject<Record<string, z.ZodTypeAny>> {
-  const s = schema as { type?: string; properties?: Record<string, unknown>; required?: string[] };
-  if (!s || s.type !== 'object' || !s.properties) return z.object({});
-  const shape: Record<string, z.ZodTypeAny> = {};
-  const required = new Set(s.required ?? []);
-  for (const [key, value] of Object.entries(s.properties)) {
-    const v = value as { type?: string; description?: string };
-    let zType: z.ZodTypeAny;
-    switch (v.type) {
-      case 'string':
-        zType = z.string();
-        break;
-      case 'number':
-      case 'integer':
-        zType = z.number();
-        break;
-      case 'boolean':
-        zType = z.boolean();
-        break;
-      default:
-        zType = z.unknown();
-    }
-    if (v.description) zType = zType.describe(v.description);
-    if (!required.has(key)) zType = zType.optional();
-    shape[key] = zType;
+export function mcpInputSchema(schema: unknown): FlexibleSchema<Record<string, unknown>> {
+  const s = schema as { type?: string; properties?: Record<string, unknown> } | undefined | null;
+  if (!s || s.type !== 'object' || !s.properties) {
+    return jsonSchema<Record<string, unknown>>({ ...EMPTY_OBJECT_SCHEMA });
   }
-  return z.object(shape);
+  return jsonSchema<Record<string, unknown>>(s as Parameters<typeof jsonSchema>[0]);
 }

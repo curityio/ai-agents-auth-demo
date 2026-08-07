@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import { generateText, type ToolSet } from 'ai';
+import { generateText, isStepCount, type ToolSet } from 'ai';
 import type { AgentExecutor, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server';
 import type { Message, Task, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { bearerFromContext, StepUpRequiredError } from '@ai-agents-demo/a2a-helpers';
@@ -16,6 +16,7 @@ import {
   obtainOpsToken,
   fetchResourceMetadata,
   buildStepUpInterceptingFetch,
+  type StepUpSink,
 } from './mcp-ops-client.js';
 import { obtainObsToken } from './obs-token.js';
 import { obtainLlmToken } from './llm-token.js';
@@ -75,8 +76,15 @@ export interface RemediationDeps {
     goal: string;
     tools: ToolSet;
     accessToken: string;
+    /**
+     * Extra halt condition for the tool loop, on top of the step limit. Named
+     * `stopEarly` rather than `stopWhen` so this dep stays free of the SDK's
+     * `Arrayable<StopCondition>` type — the real implementation adapts it.
+     */
+    stopEarly?: () => boolean;
   }) => Promise<{ text: string; steps: RemediationStep[] }>;
   fetchResourceMetadata: typeof fetchResourceMetadata;
+  buildStepUpInterceptingFetch: typeof buildStepUpInterceptingFetch;
 }
 
 export type RemediationResult =
@@ -124,6 +132,10 @@ export async function runRemediation(args: {
   // turned into a RemediationResult rather than escaping runRemediation.
   let readSet: Awaited<ReturnType<typeof openMcpToolset>> | undefined;
   let writeSet: Awaited<ReturnType<typeof openMcpToolset>> | undefined;
+  // Carries a mid-flight RFC 9470 challenge out of the LLM tool loop. See
+  // StepUpSink — since ai@5 a throw from inside a tool's `execute` does not
+  // propagate, so this is the only path by which the challenge escapes.
+  const stepUpSink: StepUpSink = {};
   try {
     const obsToken = await deps.obtainObsToken({ cfg, subjectToken: bearer });
     readSet = await deps.openMcpToolset({
@@ -137,7 +149,7 @@ export async function runRemediation(args: {
       bearerToken: opsToken,
       clientName: 'agent-specialist',
       label: 'mcp-ops',
-      fetchImpl: buildStepUpInterceptingFetch(cfg.mcpOpsScope),
+      fetchImpl: deps.buildStepUpInterceptingFetch(cfg.mcpOpsScope, stepUpSink),
     });
   } catch (e) {
     await readSet?.close();
@@ -157,34 +169,24 @@ export async function runRemediation(args: {
       goal,
       tools,
       accessToken: llmToken,
+      // Halt the loop the moment a challenge is recorded, instead of letting the
+      // model retry into the same 401 until it hits the step limit.
+      stopEarly: () => stepUpSink.err !== undefined,
     });
+    // Checked BEFORE reporting success: the SDK resolves normally after
+    // swallowing the tool's throw, so `text` here is the model's invented account
+    // of the failure. A recorded challenge must win over it.
+    if (stepUpSink.err) return { kind: 'step-up', payload: stepUpSink.err.toPayload() };
     return { kind: 'ok', summary: text, steps };
   } catch (e) {
-    // A mid-flight step-up 401 from mcp-ops/ops-api is thrown by
-    // buildStepUpInterceptingFetch as a StepUpRequiredError from inside a tool's
-    // `execute`. The Vercel AI SDK (ai@4.x) does NOT re-throw that bare error: it
-    // wraps it in a ToolExecutionError (extends AISDKError) with the original on
-    // `.cause`, and may nest further. Walk the cause chain so a genuine step-up
-    // challenge isn't misclassified as a specialist_failure.
-    const su = findStepUp(e);
-    if (su) return { kind: 'step-up', payload: su.toPayload() };
+    // Also checked on the failure path: an unrelated error after the 401 must not
+    // downgrade a genuine MFA challenge into a generic specialist_failure.
+    if (stepUpSink.err) return { kind: 'step-up', payload: stepUpSink.err.toPayload() };
     return { kind: 'error', error: 'specialist_failure', description: String(e) };
   } finally {
     await readSet?.close();
     await writeSet?.close();
   }
-}
-
-// The AI SDK wraps a throw from inside a tool's `execute` in a ToolExecutionError
-// (and may nest further), placing the original error on `.cause`. Walk the chain
-// (bounded) to recover the underlying StepUpRequiredError if there is one.
-function findStepUp(e: unknown): StepUpRequiredError | undefined {
-  let cur: unknown = e;
-  for (let i = 0; i < 5 && cur; i++) {
-    if (cur instanceof StepUpRequiredError) return cur;
-    cur = (cur as { cause?: unknown }).cause;
-  }
-  return undefined;
 }
 
 async function stepUpFromMetadata(cfg: Config, deps: RemediationDeps): Promise<RemediationResult> {
@@ -276,23 +278,31 @@ function publishWorkingTask(bus: ExecutionEventBus, ctx: RequestContext): Task {
 }
 
 export function buildExecutor(cfg: Config): AgentExecutor {
-  const runLlm: RemediationDeps['runLlm'] = async ({ system, goal, tools, accessToken }) => {
+  const runLlm: RemediationDeps['runLlm'] = async ({
+    system,
+    goal,
+    tools,
+    accessToken,
+    stopEarly,
+  }) => {
     const llm = buildLlm(cfg, { accessToken });
     const result = await generateText({
       model: llm,
-      system,
+      instructions: system,
       messages: [{ role: 'user', content: goal }],
       tools,
-      maxSteps: 8,
+      stopWhen: stopEarly ? [isStepCount(8), stopEarly] : [isStepCount(8)],
     });
     // Serialize the tool-calling loop the same way agent-copilot does, so the
-    // web UI's Trace tab renders the privileged path's steps uniformly.
+    // web UI's Trace tab renders the privileged path's steps uniformly. The
+    // `{name, args/result}` shape is OUR wire contract with the web UI, so it is
+    // held stable here while the SDK's own field names (input/output) move.
     const steps: RemediationStep[] = result.steps.map((s) => {
-      const calls = s.toolCalls as Array<{ toolName: string; args: unknown }> | undefined;
-      const results = s.toolResults as Array<{ toolName: string; result: unknown }> | undefined;
+      const calls = s.toolCalls as Array<{ toolName: string; input: unknown }> | undefined;
+      const results = s.toolResults as Array<{ toolName: string; output: unknown }> | undefined;
       return {
-        toolCalls: calls?.map((tc) => ({ name: tc.toolName, args: tc.args })),
-        toolResults: results?.map((tr) => ({ name: tr.toolName, result: tr.result })),
+        toolCalls: calls?.map((tc) => ({ name: tc.toolName, args: tc.input })),
+        toolResults: results?.map((tr) => ({ name: tr.toolName, result: tr.output })),
         finishReason: s.finishReason,
       };
     });
@@ -309,6 +319,7 @@ export function buildExecutor(cfg: Config): AgentExecutor {
     openMcpToolset,
     runLlm,
     fetchResourceMetadata,
+    buildStepUpInterceptingFetch,
   };
 
   return {

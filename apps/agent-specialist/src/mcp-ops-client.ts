@@ -124,22 +124,43 @@ export function parseStepUpChallenge(
 }
 
 /**
+ * Out-of-band channel for a challenge observed during the LLM tool loop.
+ *
+ * Necessary because ai@5 removed `ToolExecutionError` and stopped propagating
+ * throws out of a tool's `execute`: the SDK converts them into `tool-error`
+ * content parts and keeps looping, so `generateText` RESOLVES and the throw below
+ * never reaches `runRemediation`'s catch. Without this sink a real MFA challenge
+ * would be handed to the model, which would narrate a failure, and the browser
+ * would render that prose instead of prompting for step-up.
+ */
+export interface StepUpSink {
+  err?: StepUpRequiredError;
+}
+
+/**
  * Build a fetch wrapper that converts an RFC 9470 step-up 401 into a typed
  * StepUpRequiredError before the MCP SDK swallows the headers. Used for the
  * WRITE toolset (mcp-ops). Reads are unprivileged and don't need this.
+ *
+ * Still throws — that aborts the individual tool call rather than handing the
+ * model a bogus success — but also records into `sink`, which is what actually
+ * carries the challenge out. First challenge wins: a later one would describe the
+ * same missing authentication.
  */
-export function buildStepUpInterceptingFetch(scope: string): typeof fetch {
+export function buildStepUpInterceptingFetch(scope: string, sink?: StepUpSink): typeof fetch {
   return async (input, init) => {
     const response = await fetch(input, init);
     if (response.status === 401) {
       const challenge = parseStepUpChallenge(response.headers.get('www-authenticate') ?? undefined);
       if (challenge) {
         await response.body?.cancel().catch(() => undefined);
-        throw new StepUpRequiredError({
+        const err = new StepUpRequiredError({
           acrValues: challenge.acrValues,
           resourceMetadata: challenge.resourceMetadata,
           scope,
         });
+        if (sink && !sink.err) sink.err = err;
+        throw err;
       }
     }
     return response;
