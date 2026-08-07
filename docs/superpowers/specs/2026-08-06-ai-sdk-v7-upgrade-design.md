@@ -2,8 +2,9 @@
 
 **Date:** 2026-08-06
 **Branch:** `chore/ai-sdk-upgrade-analysis`
-**Status:** implemented. Unit + characterization tests green, agents healthy in
-cluster. Two token-gated end-to-end checks still outstanding — see
+**Status:** implemented and verified. `make smoke` passes in full and both agents'
+LLM loops were driven end to end in cluster. One case remains structurally
+unverifiable for reasons that predate this work — see
 [Verification status](#verification-status).
 
 ## Goal
@@ -258,24 +259,41 @@ Done:
   under `node --import @ai-agents-demo/otel-bootstrap` in the real runtime.
 - `make routing-check` — all 8 targets still wired.
 
-Outstanding, blocked on a browser-obtained user token (`SMOKE_SUBJECT_TOKEN` /
-`SMOKE_TOKEN_ALICE_MFA`). Curity has no ROPC grant here and the demo passwords are
-operator-chosen with TOTP enrolled, so these cannot be minted headlessly:
+- **`make smoke` — all suites passed** (alice, `acr=mfa`, roles `sre`+`oncall`):
+  OBO; A2A including the depth-2 act chain, the gateway's inserted position and all
+  three negatives; step-up alice-mfa; LLM egress (Azure 200 with `usage`); MCP
+  protocol with **both tiers negotiating 2026-07-28** plus cross-tier denial;
+  gateway authz namespace confinement and `set_deployment_image` for an `sre`
+  caller. The pre-existing SKIPs are unrelated to this change and need other
+  logins: alice-pwd (see below), bob, carol.
+- **Both agents' LLM loops driven end to end through `POST /chat`.** This is what
+  no smoke script covers — the scripts exercise the token and gateway layers
+  directly, never the tool loop.
+  - Read path: 3 steps, `get_deployment` → `list_pods` → final prose.
+  - Privileged path: 4 steps, a real inspect→act→verify —
+    `get_deployment` → `restart_deployment` → `get_deployment`, with the
+    deployment's `generation` going 1 → 2 and the verify step observing it.
+  - **On both paths every `toolCalls[].args` and `toolResults[].result` came back
+    populated**, which is the only way to confirm the `tc.input` / `tr.output`
+    remap: those are read through `as` casts, so a wrong field name yields
+    `undefined` in the Trace tab rather than a type error.
+- **Step-up relay end to end:** a restart requested with a token lacking
+  `ops:write` returned `HTTP 401` with `{kind:'step-up', acrValues:'mfa',
+  scope:'ops:write'}` — the deterministic pre-check path at step 1 of
+  `runRemediation`.
 
-1. **`make smoke`** — the full token/gateway suite.
-2. **The step-up sink, end to end.** No smoke script drives the agents' LLM loop;
-   they exercise the token and gateway layers directly. So the sink is covered by
-   unit + characterization tests but has not yet been observed against a real
-   `mcp-ops` 401. Drive a restart as alice-**pwd** in the browser and confirm the
-   MFA prompt still appears.
-3. **The step mapping, end to end.** `tc.input` / `tr.output` are read through `as`
-   casts, so a wrong field name yields `undefined` in the Trace tab rather than a
-   type error. Confirm tool calls and results still render, and that
-   `gen_ai.usage.*` is still on the agentgateway `/llm` span in Grafana.
+Not verifiable, and not newly so: **the sink firing on a real mid-loop 401.** That
+needs a token with `ops:write` but `acr != mfa`, and no UI journey produces one —
+the step-up re-auth itself demands `acr_values=mfa`. `scripts/smoke-stepup.sh`
+documents this and skips its `[2/4]` case for the same reason, which is why that
+assertion was already dormant before this upgrade. The sink is therefore covered by
+`executor.test.ts` plus the SDK characterization test, and the step-up *response*
+plumbing is confirmed by the 401 above; only the specific mid-loop trigger is
+unobserved.
 
-Note the gateway cannot be used to distinguish the two LLM paths directly: its JWT
-policy runs before routing, so `/llm/chat/completions` and `/llm/responses` both
-answer `403` without a token.
+Also note the gateway cannot be used to distinguish the two LLM paths directly: its
+JWT policy runs before routing, so `/llm/chat/completions` and `/llm/responses`
+both answer `403` without a token.
 
 ## Documentation
 
