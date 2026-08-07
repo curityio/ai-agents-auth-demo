@@ -308,12 +308,50 @@ both answer `403` without a token.
 
 ## Out of scope (follow-ups)
 
-1. **Wire `@ai-sdk/otel`.** The repo emits no `ai.*` spans today (no
-   `experimental_telemetry` anywhere). v7 moves telemetry into a separate package
-   and enables it once `registerTelemetry(new OpenTelemetry())` is called, which
-   would nest `ai.generateText` / `ai.toolCall` under each agent's server span —
-   valuable for a demo whose thesis is end-to-end traceability, and currently the
-   one hop visible only through the gateway's own span.
+1. **Wire `@ai-sdk/otel`.** The repo emits no `ai.*` spans today, and nothing is
+   broken by their absence: there was no `experimental_telemetry` before the
+   upgrade either, so this is purely additive and there is no deprecation nag.
+   v7 moved telemetry into a separate package, enabled globally once
+   `registerTelemetry(new OpenTelemetry())` runs — no call-site changes needed.
+
+   What it would add over what we already have: agentgateway's `/llm` span already
+   carries `gen_ai.usage.*` (fact #29). Missing is the *in-agent* view — per-step
+   spans, tool names, tool-execution timing, and which agent ran the loop — none of
+   which the gateway can see. Token usage would then appear in both places.
+
+   Four things established by reading the package, before anyone starts:
+
+   - **Where to register is the real design question.** `otel-bootstrap` is a
+     dependency of seven services and only two (`agent-copilot`,
+     `agent-specialist`) have `ai`. Adding `@ai-sdk/otel` there would pull `ai` +
+     `@ai-sdk/provider` into `exchange-shim`, `mcp-observability`, `mcp-ops`,
+     `obs-api` and `ops-api`. Register in each agent's entrypoint instead, or behind
+     a separate subpath export only the agents import.
+   - **`recordInputs`/`recordOutputs` default to ENABLED**, so prompts, tool
+     arguments and tool results become span attributes in Tempo. This is *not* a
+     credential leak — the exchanged `aud=llm-gateway` JWT is attached inside the
+     provider's fetch, not via the prompt or the `headers` option — but user
+     questions and cluster state would be exported. Make it a deliberate choice.
+   - **Use `OpenTelemetry`, not `LegacyOpenTelemetry`.** Both are exported. The
+     former follows GenAI SemConv and gates header emission behind an option that
+     defaults to `false`; the latter reproduces the old `ai.*` span shape and emits
+     `ai.request.headers.*` **ungated**. There are no existing dashboards to stay
+     compatible with, so there is no reason to take the legacy one.
+   - **Keep `ai` and `@ai-sdk/otel` in lockstep** — hygiene, not a hazard.
+     `@ai-sdk/otel@1.0.56` depends on `ai` at an exact `7.0.56` (a real dependency,
+     not a peer). With our `^7.0.55` a fresh install dedupes to one copy; under skew
+     you get two, with `@ai-sdk/otel` loading its own. Verified that this does *not*
+     silently break registration: the only runtime value it imports from `ai` is a
+     pure helper, and `registerTelemetry` is called from the app's own instance, with
+     the integration duck-typed. The cost is a duplicated install plus a patch-level
+     event-shape mismatch risk. Bump `ai` to `^7.0.56` when adding it, and assert a
+     single `ai@` entry in the store.
+
+   Ordering: `registerTelemetry` must run after `otel-bootstrap`'s NodeSDK has set
+   the global tracer provider and before the first `generateText`. `node --import
+   @ai-agents-demo/otel-bootstrap` already guarantees that if registration happens in
+   the agent entrypoint. Fact #28's ESM-patching trap does **not** apply here — this
+   is explicit API, not module patching.
 
 ## Follow-up landed: `jsonSchemaToZod` deleted
 
