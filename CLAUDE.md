@@ -622,6 +622,58 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       import it). **`generateObject` was deprecated in v6 and we don't use it** —
       `intent.ts` is deterministic on purpose.
 
+31. **The OBO log is the log-plane twin of the traces, and its two easiest
+    regressions are silent.** `packages/auth-curity/src/obo-log.ts` renders the
+    `┌─ … RECEIVE/EXCHANGE/CALL/DENY` blocks every service prints. Every line carries
+    an ISO-8601 stamp on the header and a `trace : <traceId> ▸ <spanId>` field, taken
+    from the active span — so one `kubectl logs` line joins to the Grafana/Tempo trace
+    and to agentgateway's own `trace.id=…` request log. Rules that are load-bearing:
+    - **Denials MUST be logged, and the logging lives at ONE exit per component.**
+      `exchange.ts` originally called `oboLog` inside `if (response.ok)`, so a *granted*
+      exchange logged in full and a *refused* one produced nothing: the chain just
+      stopped, indistinguishable from a crash. In a demo about authorization that is
+      backwards. `DENY` is emitted from `exchangeToken`'s `catch` (the single point every
+      failure path crosses — refusal, unreachable endpoint, malformed body — and inside
+      `startActiveSpan`, so it inherits the failed attempt's span id) and from the
+      `runRemediation` wrapper over `remediate` (a step-up has **five** origins: the scope
+      gate, the deterministic `acr` pre-check, a late toolset rejection, and two
+      `StepUpSink` checks around the LLM loop). **Don't relocate either to the individual
+      `throw`/`return` sites** — a sixth path would then be added unlogged, which is
+      exactly how the gap arose. Three tests assert `DENY` is *absent* on success paths;
+      a demo that prints DENY on a granted exchange is worse than one that prints nothing.
+    - **An `invalid_scope` refusal logs TWICE on purpose** — once as Curity's verdict
+      (`[agent-specialist] DENY → mcp-gateway … invalid_scope`) and once as the agent's
+      RFC 9470 response (`DENY → mcp-ops (step-up required)`), ~6ms apart. Different
+      facts at different layers; merging them loses which component decided what.
+    - **`formatOboLog` is pure and must stay pure.** `at` and `trace` are *parameters*;
+      `oboLog` is the thin wrapper that calls `new Date()` and `trace.getActiveSpan()`.
+      Moving either inside the formatter makes every rendering test time- and
+      context-dependent. Likewise `traceFields(span)` takes the span explicitly — a
+      `= trace.getActiveSpan()` default would make its "no active span" branch
+      unreachable from a test. It drops an all-zero span context, so an uninstrumented
+      service (see #28) prints no `trace` field rather than 32 zeros that look real —
+      which also makes a missing `trace` field a one-glance diagnosis for #28.
+    - **`serviceLabel` exists for `exchange-shim` only.** The log's service name defaults
+      to a friendly form of the Curity `client_id`, right everywhere the client and the
+      workload share a name. The shim authenticates as `mcp-gateway`, so without the
+      override it logs under a name no pod has.
+    - The box format is deliberately multi-line for `kubectl logs` readability, which
+      means a log *collector* splits each `│` line into its own record. Fine today
+      (nothing ships these off-cluster); if that changes, add an opt-in `OBO_LOG=json`
+      single-line mode rather than flattening the pretty default. `OBO_LOG=off` silences it.
+
+32. **`AUTH_DEBUG` gates demo *features*, not verbose logging — don't re-merge them.**
+    `AUTH_DEBUG=true` (set in `k8s/workloads/web.yaml`) enables the `/inspect` token
+    viewer and `/api/dev/token`, which `make smoke` reads for `SMOKE_SUBJECT_TOKEN`. It
+    is therefore permanently ON in the cluster. It used to *also* drive Auth.js's own
+    `debug:` flag, which dumps the full decoded ID token and every `Set-Cookie` on each
+    login and buried the OBO chain in `kubectl logs -n web`. Auth.js verbose logging now
+    has its own switch, **`AUTHJS_DEBUG`**, unset by default. Three ad-hoc debug loggers
+    were removed at the same time; one of them (`auth.incoming`, on the NextAuth route)
+    wrote the callback URL's `code` and `state` to stdout — an authorization code in
+    `kubectl logs`, readable by anyone holding `pods/log` in `web`. Its diagnostic
+    purpose was settled by fact #1.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:

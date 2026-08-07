@@ -173,6 +173,123 @@ describe('exchangeToken', () => {
   });
 });
 
+describe('exchangeToken OBO log labelling', () => {
+  const okResponse = () =>
+    new Response(
+      JSON.stringify({ access_token: 'exchanged.jwt', token_type: 'Bearer', expires_in: 300 }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+
+  it('labels the log with the Curity client id by default', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await exchangeToken({ ...baseParams, clientId: 'mcp-observability' });
+
+    expect(spy.mock.calls[0]![0]).toContain('INFO [mcp-observability] EXCHANGE');
+  });
+
+  it('shortens a CIMD client-id URL to the agent name', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await exchangeToken({
+      ...baseParams,
+      clientId: 'https://specialist.localtest.me/.well-known/oauth-client',
+    });
+
+    expect(spy.mock.calls[0]![0]).toContain('INFO [agent-specialist] EXCHANGE');
+  });
+
+  it('prefers an explicit serviceLabel so a workload can log under its own name', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // exchange-shim authenticates as the `mcp-gateway` client but is its own
+    // workload; logging the client id would name a pod that does not exist.
+    await exchangeToken({
+      ...baseParams,
+      clientId: 'mcp-gateway',
+      serviceLabel: 'exchange-shim',
+    });
+
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).toContain('INFO [exchange-shim] EXCHANGE');
+    expect(line).toContain('client_id    : mcp-gateway');
+  });
+});
+
+describe('exchangeToken denial logging', () => {
+  const refusal = (error: string, description: string) =>
+    new Response(JSON.stringify({ error, error_description: description }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('logs a DENY block when Curity refuses to narrow the token', async () => {
+    fetchMock.mockResolvedValue(
+      refusal('invalid_scope', 'no scope intersects subject + policy'),
+    );
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(
+      exchangeToken({ ...baseParams, audience: 'mcp-gateway', scope: 'ops:write' }),
+    ).rejects.toThrow(CurityAuthError);
+
+    const line = spy.mock.calls[0]![0] as string;
+    expect(line).toContain('INFO [agent-copilot] DENY → mcp-gateway');
+    expect(line).toContain('scope req : ops:write');
+    expect(line).toContain('error     : invalid_scope');
+    expect(line).toContain('reason    : no scope intersects subject + policy');
+  });
+
+  it('logs a DENY block when the role gate refuses the exchange', async () => {
+    fetchMock.mockResolvedValue(refusal('access_denied', 'user lacks required role'));
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(exchangeToken({ ...baseParams, scope: 'ops:write' })).rejects.toThrow(
+      CurityAuthError,
+    );
+
+    expect(spy.mock.calls[0]![0]).toContain('error     : access_denied');
+  });
+
+  it('logs a DENY block when the token endpoint is unreachable', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(exchangeToken(baseParams)).rejects.toThrow(CurityAuthError);
+
+    expect(spy.mock.calls[0]![0]).toContain('DENY → mcp-observability');
+    expect(spy.mock.calls[0]![0]).toContain('error     : exchange_failed');
+  });
+
+  it('honours serviceLabel on the DENY line, as it does on success', async () => {
+    fetchMock.mockResolvedValue(refusal('invalid_scope', 'nope'));
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(
+      exchangeToken({ ...baseParams, clientId: 'mcp-gateway', serviceLabel: 'exchange-shim' }),
+    ).rejects.toThrow(CurityAuthError);
+
+    expect(spy.mock.calls[0]![0]).toContain('INFO [exchange-shim] DENY');
+  });
+
+  it('logs no DENY block when the exchange succeeds', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ access_token: 'ok.jwt', token_type: 'Bearer', expires_in: 300 }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await exchangeToken(baseParams);
+
+    expect(spy.mock.calls.map((c) => c[0]).join('\n')).not.toContain('DENY');
+  });
+});
+
 describe('exchangeToken with private_key_jwt', () => {
   const clientId = 'https://copilot.localtest.me/.well-known/oauth-client';
 

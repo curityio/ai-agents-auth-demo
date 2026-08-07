@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { formatOboLog, summarizeJwt, flattenAct } from './obo-log.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { trace } from '@opentelemetry/api';
+import { formatOboLog, summarizeJwt, flattenAct, oboLog, traceFields } from './obo-log.js';
+
+const TRACE_ID = '2e167fa6e19030ede6429c533dab3874';
+const SPAN_ID = 'b6dda66790f72dd9';
 
 function makeJwt(payload: Record<string, unknown>): string {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -81,6 +85,91 @@ describe('formatOboLog', () => {
     expect(out).toContain('sub');
     expect(out).not.toContain('acr');
     expect(out).not.toContain('note');
+  });
+});
+
+describe('traceFields', () => {
+  it('extracts the trace and span ids from a span', () => {
+    const span = trace.wrapSpanContext({ traceId: TRACE_ID, spanId: SPAN_ID, traceFlags: 1 });
+    expect(traceFields(span)).toEqual({ traceId: TRACE_ID, spanId: SPAN_ID });
+  });
+
+  it('returns nothing when there is no active span', () => {
+    expect(traceFields(undefined)).toEqual({});
+  });
+
+  it('ignores an all-zero span context rather than logging a useless id', () => {
+    const span = trace.wrapSpanContext({
+      traceId: '0'.repeat(32),
+      spanId: '0'.repeat(16),
+      traceFlags: 0,
+    });
+    expect(traceFields(span)).toEqual({});
+  });
+});
+
+describe('formatOboLog timestamp', () => {
+  it('renders the emission time on the header line', () => {
+    const out = formatOboLog({
+      service: 'obs-api',
+      kind: 'RECEIVE',
+      headline: 'GET /pods',
+      at: '2026-08-07T07:48:08.619Z',
+    });
+    expect(out.split('\n')[0]).toBe('┌─ 2026-08-07T07:48:08.619Z INFO [obs-api] RECEIVE GET /pods');
+  });
+
+  it('leaves the header unchanged when no time is supplied', () => {
+    const out = formatOboLog({ service: 'obs-api', kind: 'RECEIVE', headline: 'GET /pods' });
+    expect(out.split('\n')[0]).toBe('┌─ INFO [obs-api] RECEIVE GET /pods');
+  });
+});
+
+describe('formatOboLog trace correlation', () => {
+  it('renders trace ▸ span as the first field, ahead of the caller fields', () => {
+    const out = formatOboLog({
+      service: 'mcp-observability',
+      kind: 'RECEIVE',
+      headline: 'MCP tool list_pods',
+      trace: { traceId: TRACE_ID, spanId: SPAN_ID },
+      fields: { user: 'alice' },
+    });
+    const lines = out.split('\n');
+    expect(lines[1]).toBe(`│  trace : ${TRACE_ID} ▸ ${SPAN_ID}`);
+    expect(lines[2]).toBe('│  user  : alice');
+  });
+
+  it('renders the trace id alone when there is no span id', () => {
+    const out = formatOboLog({
+      service: 'web',
+      kind: 'CALL',
+      headline: '→ agent-copilot',
+      trace: { traceId: TRACE_ID },
+    });
+    expect(out).toContain(`│  trace : ${TRACE_ID}`);
+    expect(out).not.toContain('▸');
+  });
+
+  it('omits the trace field entirely when no trace context exists', () => {
+    const out = formatOboLog({
+      service: 'web',
+      kind: 'CALL',
+      headline: '→ agent-copilot',
+      trace: {},
+      fields: { user: 'alice' },
+    });
+    expect(out).not.toContain('trace');
+  });
+});
+
+describe('oboLog', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stamps every line it emits with the current time', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    oboLog({ service: 'obs-api', kind: 'RECEIVE', headline: 'GET /pods' });
+    const header = spy.mock.calls[0]![0]!.split('\n')[0]!;
+    expect(header).toMatch(/^┌─ \d{4}-\d{2}-\d{2}T[\d:.]+Z INFO \[obs-api\] RECEIVE GET \/pods$/);
   });
 });
 

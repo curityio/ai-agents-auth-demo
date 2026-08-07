@@ -295,6 +295,65 @@ credential genuinely lives only at the gateway.
 > Tempo retention is **30 minutes**. Query within ~25 minutes of driving the
 > demo, or re-drive it — empty results are usually expiry, not a broken pipeline.
 
+### 6.1 The same story in `kubectl logs`
+
+Grafana is the analytic view. For a live audience the log plane is often the
+better one: it needs no dashboard, survives Tempo's 30-minute retention, and
+reads top-to-bottom. Every service prints a block per delegation event, stamped
+with the time and the trace id (see `architecture.md` §7.1).
+
+Tail the read path:
+
+```bash
+kubectl logs -n agents deploy/agent-copilot -f
+kubectl logs -n mcp    deploy/mcp-observability -f
+kubectl logs -n apis   deploy/obs-api -f
+```
+
+Point at the **`act` chain growing one position per hop** — `agent-copilot` →
+`agent-copilot ▸ agentgateway` → `agent-copilot ▸ agentgateway ▸
+mcp-observability` — with the same `trace` on every line. To follow one request
+across all seven services at once:
+
+```bash
+TRACE=<trace id from any block>
+for p in agents/agent-copilot mcp/mcp-observability apis/obs-api; do
+  kubectl logs -n ${p%%/*} deploy/${p##*/} | grep -A 8 "$TRACE"
+done
+kubectl logs -n mcp deploy/agentgateway -c exchange-shim  | grep -A 8 "$TRACE"
+kubectl logs -n mcp deploy/agentgateway -c agentgateway   | grep "trace.id=$TRACE"
+```
+
+**The strongest moment is a refusal.** Ask for a restart *before* completing
+MFA and tail the specialist:
+
+```bash
+kubectl logs -n agents deploy/agent-specialist -f
+```
+
+Two `DENY` blocks appear milliseconds apart — Curity refusing `ops:write`
+(`error: invalid_scope`), then the agent raising the RFC 9470 challenge
+(`acr: html-form`, `acr required: mfa`). Complete the MFA and re-run: the same
+request now completes under a **new trace** with no `DENY`. Presenting the two
+side by side is the clearest demonstration in the demo that the gate is real and
+that the system says *why* it refused.
+
+Some things worth counting out loud while the logs are on screen:
+
+- A completed restart mints **at least 11 tokens** — 1 at the copilot, 3 at the
+  specialist, 6 at the exchange-shim (one per gateway `extAuthz` callout), 1 at
+  `mcp-ops`. Every one is a separate narrowing.
+- A plain read mints 5. The three identical shim blocks are `server/discover`,
+  `tools/list` and `tools/call` — distinguishable by their span ids.
+- The pre- and post-MFA attempts are **different traces**. That is inherent: the
+  challenge round-trips through the browser, so the retry is a new request. They
+  are joined only by `sub=alice` and adjacency in time.
+
+> `OBO_LOG=off` silences these blocks. `AUTH_DEBUG=true` on `web` gates the
+> `/inspect` viewer and `/api/dev/token`, **not** logging — Auth.js's own verbose
+> output is `AUTHJS_DEBUG`, off by default, because it dumps the decoded ID token
+> and every cookie on each login and drowns everything above.
+
 ---
 
 ## 7. Teardown

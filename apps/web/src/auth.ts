@@ -13,7 +13,13 @@ if (!issuer) {
 export const authConfig: NextAuthConfig = {
   // Use a stable cookie domain inside the demo.
   trustHost: true,
-  debug: process.env.AUTH_DEBUG === 'true',
+  // Auth.js's own verbose logging, deliberately NOT wired to AUTH_DEBUG.
+  // AUTH_DEBUG is the demo's feature gate (the /inspect token viewer and the
+  // /api/dev/token route that `make smoke` reads), so it is on in the cluster —
+  // and Auth.js `debug: true` dumps the full decoded ID token plus every Set-Cookie
+  // value on each login, which buried the OBO chain in `kubectl logs -n web`.
+  // Set AUTHJS_DEBUG=true to bring it back while diagnosing Auth.js itself.
+  debug: process.env.AUTHJS_DEBUG === 'true',
   providers: [
     {
       id: 'curity',
@@ -49,25 +55,10 @@ export const authConfig: NextAuthConfig = {
   session: { strategy: 'jwt' },
   callbacks: {
     async jwt({ token, account, profile }) {
-      // Debug: when 'account' is set (initial sign-in), log what fields Curity
-      // sent. If access_token is missing, the client config probably didn't
-      // request it.
-      if (account && process.env.AUTH_DEBUG === 'true') {
-        console.log(
-          JSON.stringify({
-            tag: 'auth.jwt.account',
-            provider: account.provider,
-            type: account.type,
-            has_access_token: Boolean(account.access_token),
-            has_id_token: Boolean(account.id_token),
-            has_refresh_token: Boolean(account.refresh_token),
-            token_type: account.token_type,
-            expires_at: account.expires_at,
-            scope: account.scope,
-            account_keys: Object.keys(account),
-          }),
-        );
-      }
+      // (The former `auth.jwt.account` log answered "did Curity return an
+      // access_token at all?" during initial client setup. /api/whoami reports
+      // the same thing on demand, so it is no longer worth a line per login.)
+
       // Stash the Curity access token on the session JWT so server routes
       // can forward it to the agent. NEVER expose to the browser.
       if (account?.access_token) {

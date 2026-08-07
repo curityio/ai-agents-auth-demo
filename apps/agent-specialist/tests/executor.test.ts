@@ -105,6 +105,60 @@ describe('runRemediation', () => {
     expect(d.openMcpToolset).not.toHaveBeenCalled();
   });
 
+  it('logs a DENY block naming the missing acr when it challenges before the LLM', async () => {
+    // The acr pre-check never reaches packages/auth-curity, so this refusal is
+    // the specialist's own and would otherwise leave no trace in `kubectl logs`
+    // at all — the request would simply stop mid-chain.
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runRemediation({
+      cfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'pwd' } } as never,
+      deps: deps(),
+    });
+    const line = spy.mock.calls.map((c) => c[0]).join('\n');
+    expect(line).toContain('INFO [agent-specialist] DENY');
+    expect(line).toContain('step-up required');
+    expect(line).toContain('alice');
+    expect(line).toContain('pwd');
+    expect(line).toContain('mfa');
+  });
+
+  it('logs a DENY block when the challenge arrives mid-flight via the sink', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { deps: d, sink } = withSinkCapture({
+      runLlm: vi.fn(async () => {
+        sink().err = makeStepUp();
+        return { text: 'I was unable to restart api-gateway.', steps: [] };
+      }),
+    });
+    const out = await runRemediation({
+      cfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
+    });
+    expect(out.kind).toBe('step-up');
+    expect(spy.mock.calls.map((c) => c[0]).join('\n')).toContain(
+      'INFO [agent-specialist] DENY',
+    );
+  });
+
+  it('logs no DENY block on a successful remediation', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const out = await runRemediation({
+      cfg,
+      bearer: 'b',
+      goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: deps(),
+    });
+    expect(out.kind).toBe('ok');
+    expect(spy.mock.calls.map((c) => c[0]).join('\n')).not.toContain('DENY');
+  });
+
   it('opens both toolsets and runs the LLM when acr=mfa', async () => {
     const steps = [{ toolCalls: [{ name: 'get_deployment', args: { name: 'api-gateway' } }] }];
     const d = deps({

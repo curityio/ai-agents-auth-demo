@@ -39,6 +39,13 @@ export interface ExchangeTokenParams {
   clientSecret?: string;
   /** Client authentication strategy. Defaults to Basic auth using clientId/clientSecret. */
   clientAuth?: ClientAuth;
+  /**
+   * Name this workload logs under. Defaults to a friendly form of `clientId`,
+   * which is right everywhere the Curity client and the workload share a name.
+   * `exchange-shim` is the exception: it authenticates as the `mcp-gateway`
+   * client, so without this it would log under a name no pod has.
+   */
+  serviceLabel?: string;
   subjectToken: string;
   /** SPIFFE JWT-SVID in compact form. */
   actorToken: string;
@@ -93,12 +100,41 @@ export async function exchangeToken(params: ExchangeTokenParams): Promise<Exchan
       } catch (e) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: (e as Error).message });
         span.recordException(e as Error);
+        // Log here rather than at each `throw` in doExchange: this is the one
+        // point every failure path passes through (refusal, unreachable
+        // endpoint, malformed body), and it is inside the active span, so the
+        // DENY line carries the same trace/span ids as the attempt.
+        logDenial(params, e);
         throw e;
       } finally {
         span.end();
       }
     },
   );
+}
+
+/**
+ * Emit the DENY counterpart of the EXCHANGE block. Deliberately mirrors that
+ * block's fields so the two read side by side in `kubectl logs`, with the
+ * granted scope replaced by why nothing was granted.
+ */
+function logDenial(params: ExchangeTokenParams, e: unknown): void {
+  const subj = summarizeJwt(params.subjectToken);
+  const actor = summarizeJwt(params.actorToken);
+  oboLog({
+    service: params.serviceLabel ?? callerLabel(params.clientId),
+    kind: 'DENY',
+    headline: `→ ${params.audience}`,
+    fields: {
+      client_id: params.clientId,
+      'subject (sub)': subj.sub,
+      'subject act': subj.act,
+      'actor (spiffe)': actor.sub,
+      'scope req': params.scope,
+      error: e instanceof CurityAuthError ? e.code : 'exchange_failed',
+      reason: (e as Error).message,
+    },
+  });
 }
 
 async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenResult> {
@@ -165,7 +201,7 @@ async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenRes
     const subj = summarizeJwt(params.subjectToken);
     const actor = summarizeJwt(params.actorToken);
     oboLog({
-      service: callerLabel(params.clientId),
+      service: params.serviceLabel ?? callerLabel(params.clientId),
       kind: 'EXCHANGE',
       headline: `→ ${params.audience}`,
       fields: {
