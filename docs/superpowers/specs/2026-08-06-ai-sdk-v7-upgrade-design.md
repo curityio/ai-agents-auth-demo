@@ -1,7 +1,7 @@
 # Vercel AI SDK 4 → 7 upgrade
 
 **Date:** 2026-08-06
-**Branch:** `chore/ai-sdk-upgrade-analysis`
+**Branch:** `chore/ai-sdk-v7-upgrade`
 **Status:** implemented and verified. `make smoke` passes in full and both agents'
 LLM loops were driven end to end in cluster. One case remains structurally
 unverifiable for reasons that predate this work — see
@@ -14,10 +14,10 @@ change to any externally observable behaviour: the same web-UI wire contract, th
 same RFC 9470 step-up flow, the same gateway `/llm` request shape, the same
 `make smoke` results.
 
-Two optional improvements the upgrade unlocks — deleting `jsonSchemaToZod` and
-wiring `@ai-sdk/otel` — are **explicitly out of scope** and tracked at the end of
-this document. Keeping them out keeps the diff reviewable and keeps a green
-`make smoke` attributable to the upgrade alone.
+Deleting `jsonSchemaToZod` was initially out of scope and was then folded in on
+request, after the upgrade had been verified green on its own — so a `make smoke`
+regression remains attributable. Wiring `@ai-sdk/otel` stays out of scope and is
+tracked at the end of this document.
 
 ## Current state
 
@@ -30,7 +30,7 @@ this document. Keeping them out keeps the diff reviewable and keeps a green
 Declared in `packages/agent-runtime/package.json`,
 `apps/agent-copilot/package.json`, `apps/agent-specialist/package.json`.
 
-Every import site:
+Every import site (as found before the upgrade):
 
 | File | Uses |
 | --- | --- |
@@ -308,15 +308,39 @@ both answer `403` without a token.
 
 ## Out of scope (follow-ups)
 
-1. **Delete `jsonSchemaToZod`** (`mcp-toolset.ts:131-158`). v5+ `inputSchema`
-   accepts JSON Schema directly, so MCP's own `inputSchema` could pass through
-   verbatim. The current converter is object-of-primitives only and silently
-   drops enums, arrays, and nested objects from the tool contract the model sees.
-   Removes 158 lines and improves tool fidelity — but it changes what the model
-   is told, which does not belong in an upgrade diff.
-2. **Wire `@ai-sdk/otel`.** The repo emits no `ai.*` spans today (no
+1. **Wire `@ai-sdk/otel`.** The repo emits no `ai.*` spans today (no
    `experimental_telemetry` anywhere). v7 moves telemetry into a separate package
    and enables it once `registerTelemetry(new OpenTelemetry())` is called, which
    would nest `ai.generateText` / `ai.toolCall` under each agent's server span —
    valuable for a demo whose thesis is end-to-end traceability, and currently the
    one hop visible only through the gateway's own span.
+
+## Follow-up landed: `jsonSchemaToZod` deleted
+
+Replaced by `mcpInputSchema`, which wraps the server's advertised document with the
+SDK's `jsonSchema()` helper and passes it through **verbatim**.
+
+The old converter handled "object of primitives" only. Everything else was dropped
+silently: enums, arrays and nested objects collapsed to `z.unknown()`, and all
+constraints were lost. Concretely, `mcp-ops` declares `replicas` as
+`integer, 0–20` and `reason` as `maxLength 512`; the model saw a bare number and an
+unbounded string, so it could propose 50 replicas and discover the limit only from a
+server-side rejection. Reshaping a contract the server already publishes also meant
+maintaining a second copy of it that drifts.
+
+**Trade-off, accepted deliberately:** `jsonSchema()` performs no validation without a
+`validate` function, so the model's arguments are no longer checked inside the agent.
+That check was never the security boundary — `mcp-ops` and `mcp-observability`
+validate every call with zod 4, and the gateway's `Mcp-Param-Namespace` authz rule
+fails closed on anything it cannot read. What changes is *where* a malformed call is
+caught: the server returns an error result the model can act on, rather than the SDK
+rejecting locally. Adding a JSON Schema validator would mean a new dependency (ajv)
+heavier than the 28 lines removed.
+
+`x-mcp-header` (SEP-2243, hard-won fact #27) is unaffected either way: the
+`Mcp-Param-Namespace` header is derived by the MCP *client* from the server-advertised
+schema, never from what the agent hands the LLM. Passing the document through now also
+means that annotation is visible to the model rather than stripped — harmless.
+
+Covered by five tests in `mcp-toolset.test.ts` asserting the constraints the old
+converter dropped, using the real `scale_deployment` schema.

@@ -59,7 +59,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   exchange = role+scope gate, and a deterministic `acr=mfa` step-up pre-check) run
   **outside/before** the LLM loop — see `apps/agent-specialist/src/executor.ts`
   (`runRemediation`). Shared LLM plumbing lives in `packages/agent-runtime`
-  (`buildLlm` provider wiring + `openMcpToolset`/`jsonSchemaToZod` MCP→AI-SDK
+  (`buildLlm` provider wiring + `openMcpToolset`/`mcpInputSchema` MCP→AI-SDK
   adapter); both agents depend on it (copilot's `llm.ts`/`mcp-client.ts` are thin
   re-exports). Every model call is now routed through agentgateway's `/llm`
   route rather than called directly — see hard-won fact #22; the old
@@ -586,6 +586,21 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       this** — only the request path can, which is what `llm.test.ts` now asserts.
       Note you cannot distinguish the two paths by probing the gateway either: its JWT
       policy runs before routing, so both answer `403` without a token.
+    - **MCP tool schemas are now passed through VERBATIM** (`mcpInputSchema`, which
+      wraps the server's document with the SDK's `jsonSchema()` helper). It replaced a
+      hand-written JSON-Schema→Zod converter (`jsonSchemaToZod`) that handled
+      object-of-primitives only and silently dropped the rest: enums/arrays/nested
+      objects became `z.unknown()`, and every constraint was lost — `replicas`
+      (`integer`, 0–20 on mcp-ops) reached the model as a bare number, so it could
+      propose 50 and learn the bound only from a server-side rejection. **Deliberate
+      trade-off:** `jsonSchema()` does no validation without a `validate` function, so
+      the model's args are no longer checked client-side. That was never the security
+      boundary — `mcp-ops`/`mcp-observability` validate every call with zod 4, and the
+      gateway's `Mcp-Param-Namespace` rule fails closed on anything unreadable; only
+      *where* a malformed call is caught moves. Don't "restore" a converter here: it
+      recreates a second, drifting copy of a contract the server already publishes.
+      (Unrelated to the zod-3/zod-4 split — the client no longer builds zod at all,
+      but `zod` stays a dependency because `ai` peers on it.)
     - **Mechanical renames, all compiler-caught:** `parameters`→`inputSchema`,
       `maxSteps: n`→`stopWhen: isStepCount(n)`, `toolCall.args`→`.input`,
       `toolResult.result`→`.output`, `LanguageModelV1`→`LanguageModel`. `system:` and

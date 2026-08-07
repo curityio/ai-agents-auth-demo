@@ -77,7 +77,7 @@ from this package); `agent-specialist` depends on it directly.
 | File | Exports | Responsibility |
 |---|---|---|
 | `llm.ts` | `buildLlm(cfg, opts?)` | Provider wiring — selects the Vercel AI SDK model by `LLM_PROVIDER` (`gateway` **default**: an OpenAI-compatible client pointed at agentgateway's `/llm` route, requires a per-request `opts.accessToken`; `anthropic`/`ollama` alternatives). The old `azure` provider (direct `@ai-sdk/azure`) is gone — see §3.6. |
-| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `jsonSchemaToZod` | Connects to an MCP server over Streamable HTTP with a Bearer token, converts each MCP tool's JSON-Schema input into a Zod schema (passed as the AI SDK's `inputSchema`), and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
+| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `mcpInputSchema` | Connects to an MCP server over Streamable HTTP with a Bearer token, passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
 
 ---
 

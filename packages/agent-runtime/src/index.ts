@@ -4,4 +4,4 @@ export {
   type BuildLlmOptions,
   type AgentLanguageModel,
 } from './llm.js';
-export { openMcpToolset, jsonSchemaToZod, type McpToolset } from './mcp-toolset.js';
+export { openMcpToolset, mcpInputSchema, type McpToolset } from './mcp-toolset.js';
