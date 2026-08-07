@@ -464,6 +464,71 @@ the shim's exchange underneath it.
 > ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904)).
 > Durations still nest correctly — only the indentation misleads.
 
+### 7.1 The OBO log (the log-plane view)
+
+Traces are the analytic view; they need Grafana, and Tempo drops them after 30
+minutes. Alongside them every service prints a human-readable block to stdout
+for each of the four events in a delegation hop — inbound receipt, token
+exchange, call to the next hop, and **refusal**:
+
+```
+┌─ 2026-08-07T08:35:28.051Z INFO [agent-specialist] DENY → mcp-gateway
+│  trace          : d5d000011850a56765d35750020540ff ▸ b30f1eceff0ab5f4
+│  client_id      : https://specialist.localtest.me/.well-known/oauth-client
+│  subject (sub)  : alice
+│  subject act    : agent-copilot
+│  actor (spiffe) : spiffe://demo.curity.local/ns/agents/sa/agent-specialist
+│  scope req      : ops:write
+│  error          : invalid_scope
+│  reason         : invalid_scope no scope intersects subject + policy …
+└─
+```
+
+The renderer is `packages/auth-curity/src/obo-log.ts`; `OBO_LOG=off` silences
+it. Two properties make it useful rather than decorative:
+
+- **It is joined to the trace plane by `trace`,** taken from the active span at
+  emission. The same trace id appears in agentgateway's native request log
+  (`trace.id=… span.id=… jwt.sub=alice`) and in Tempo, so a log line found by
+  `kubectl logs` leads directly to the trace, and vice versa. The span id
+  additionally distinguishes *which* unit of work emitted the line — the
+  `EXCHANGE` blocks carry their own `auth.token_exchange` span id, distinct from
+  the enclosing request. Because trace ids are constant across a whole trace,
+  this correlation is unaffected by the `mcp:` backend mis-parenting noted above.
+- **Refusals are logged, not just grants** (`DENY`). This is the plane where the
+  authorization story is easiest to read live, and a chain that simply *stopped*
+  would be indistinguishable from a crash. See §7.2.
+
+A missing `trace` field is itself diagnostic: it means no active span, i.e. the
+service is not instrumented — the failure mode of the ESM/OTel patching hazard
+recorded in `CLAUDE.md` fact #28.
+
+> The blocks are multi-line for terminal readability, so a log *collector* would
+> split each `│` into its own record. Nothing ships these off-cluster today; if
+> that changes, add an opt-in single-line JSON mode rather than flattening the
+> default.
+
+### 7.2 What a denial looks like
+
+The pre-MFA half of a privileged request is the most instructive thing in the
+logs, and it spans three blocks in one trace:
+
+| When | Service | Block | What it shows |
+|---|---|---|---|
+| `…27.984` | `agent-copilot` | `EXCHANGE → agent-specialist` | `scope req: obs:read ops:write llm:invoke` → `scope issued: obs:read llm:invoke`. Curity narrows `ops:write` away **silently and successfully** — the copilot is *allowed to ask*, so this is not an error. |
+| `…28.051` | `agent-specialist` | `DENY → mcp-gateway` | The same refusal, now fatal: the specialist actually needs `ops:write`, so Curity answers `invalid_scope`. This is the authorization server's verdict. |
+| `…28.057` | `agent-specialist` | `DENY → mcp-ops (step-up required, RFC 9470)` | The agent's *response* to that verdict: `acr: html-form`, `acr required: mfa`. This is what becomes the browser's MFA prompt. |
+
+The two `DENY` blocks 6ms apart are deliberate, not duplication: one is Curity
+refusing, the other is the agent converting that refusal into a challenge.
+Which component made which decision is the point.
+
+Both are emitted from a **single exit per component** — `exchangeToken`'s
+`catch`, and a wrapper around `runRemediation` — because a step-up has five
+possible origins and a failed exchange six. Logging at each `throw`/`return`
+site instead is what let the original gap exist: the refusal path simply
+produced no output.
+
 ---
 
 ## 8. Standards used

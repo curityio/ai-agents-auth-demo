@@ -79,7 +79,11 @@ spec:
               value: web-app
             - name: AGENT_COPILOT_URL
               value: http://agent-copilot.agents.svc.cluster.local:8081
-            # Auth debugging verbosity — turn off for a clean demo.
+            # Demo FEATURE gate, not logging verbosity: enables the /inspect
+            # token viewer and /api/dev/token, which `make smoke` reads for
+            # SMOKE_SUBJECT_TOKEN. Turning it off breaks the smoke tests.
+            # Auth.js's own verbose logging is AUTHJS_DEBUG (unset — it dumps the
+            # decoded ID token and every Set-Cookie on each login).
             - name: AUTH_DEBUG
               value: "true"
             # OTel: @vercel/otel exports OTLP/HTTP to the Collector. No
