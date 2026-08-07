@@ -8,3 +8,24 @@ profile: ambient
 # that intermediate is signed by the same root as SPIRE's CA. So Istio mTLS certs
 # and SPIRE SVIDs share a single trust anchor. istiod auto-detects `cacerts` at
 # boot and uses it instead of self-signing; the Secret must exist before install.
+
+# Workload cert lifetime for the ENVOY proxies, raised from the 24h default to
+# match ztunnel's SECRET_TTL in values-ztunnel.yaml (see the rationale there —
+# it is a laptop-demo convenience, not a recommended posture).
+#
+# There are three cert consumers in this mesh, not two: ztunnel (its own chart),
+# the edge gateway `istio-ingress`, and the `apis-waypoint` Gateway that fronts
+# obs-api/ops-api (k8s/istio/apis-l7-authz.yaml). The last one is deployed by
+# istiod, not by a Helm chart we pass values to — so setting SECRET_TTL here via
+# proxyMetadata is what covers BOTH Envoys. Putting it in values-gateway.yaml's
+# `env:` instead would silently miss the waypoint.
+#
+# NOTE: proxyMetadata is a map Helm deep-merges — ISTIO_META_ENABLE_HBONE comes
+# from the ambient profile and MUST survive. Verify after upgrade:
+#   kubectl -n istio-system get cm istio -o jsonpath='{.data.mesh}' | grep -A4 proxyMetadata
+# The 30d value stays under istiod's MAX_WORKLOAD_CERT_TTL (90d), so the CA-side
+# defaults are deliberately left untouched.
+meshConfig:
+  defaultConfig:
+    proxyMetadata:
+      SECRET_TTL: 720h # 30d — keep in sync with values-ztunnel.yaml

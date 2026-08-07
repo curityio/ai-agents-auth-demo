@@ -1,2 +1,17 @@
 # ztunnel — the per-node L4 dataplane for ambient mode. No sidecars.
 profile: ambient
+
+# Mesh workload cert lifetime, raised from the 24h default so a KIND cluster that
+# sits suspended overnight still has valid mTLS certs the next morning. This is a
+# LAPTOP-DEMO CONVENIENCE, not a recommended posture — the demo's own argument is
+# that short-lived credentials are cheap precisely when no human is in the
+# rotation loop (SPIRE JWT-SVIDs here are 5m, x509 4h; see k8s/spire/identities/).
+#
+# ztunnel puts this duration in its CSR, and istiod issues what is asked for. So
+# THIS is the knob that moves the cert — istiod's DEFAULT_WORKLOAD_CERT_TTL is
+# only a fallback for CSRs that omit a duration, which ztunnel never does.
+# Keep it <= istiod's MAX_WORKLOAD_CERT_TTL (default 90d): istiod REJECTS a CSR
+# that overshoots rather than clamping it, so too-long means no cert at all.
+# The Envoy-side twin of this value lives in values-istiod.yaml (proxyMetadata).
+env:
+  SECRET_TTL: 720h # 30d
