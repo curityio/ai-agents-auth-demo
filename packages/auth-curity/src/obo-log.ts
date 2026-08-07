@@ -12,7 +12,14 @@ import { isSpanContextValid, trace, type Span } from '@opentelemetry/api';
 
 const DISABLED = process.env.OBO_LOG === 'off';
 
-export type OboKind = 'RECEIVE' | 'EXCHANGE' | 'CALL';
+/**
+ * RECEIVE (inbound), EXCHANGE (token exchange), CALL (next hop), DENY (an
+ * authorization refusal). DENY exists because the success paths were logged and
+ * the refusals were not — which is backwards for a demo about authorization:
+ * a denied hop would simply stop appearing in the logs, indistinguishable from
+ * a crash.
+ */
+export type OboKind = 'RECEIVE' | 'EXCHANGE' | 'CALL' | 'DENY';
 
 /** W3C trace-context ids used to join this line to the rest of the request. */
 export interface OboTrace {

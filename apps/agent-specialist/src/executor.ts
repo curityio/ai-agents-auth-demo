@@ -92,13 +92,45 @@ export type RemediationResult =
   | { kind: 'step-up'; payload: ReturnType<StepUpRequiredError['toPayload']> }
   | { kind: 'error'; error: string; description: string };
 
-export async function runRemediation(args: {
+export interface RemediationArgs {
   cfg: Config;
   bearer: string;
   goal: string;
   verified: VerifiedJwt;
   deps: RemediationDeps;
-}): Promise<RemediationResult> {
+}
+
+/**
+ * Runs the remediation and records an RFC 9470 challenge as a DENY block.
+ *
+ * The logging is a wrapper rather than a line at each `return` because a
+ * step-up can originate from five places — the scope gate, the deterministic
+ * acr pre-check, a late toolset rejection, and two StepUpSink checks around the
+ * LLM loop. Logging at the single exit means a new challenge path cannot be
+ * added without being logged, which is how the previous gap arose: the refusal
+ * simply stopped producing output and looked identical to a crash.
+ */
+export async function runRemediation(args: RemediationArgs): Promise<RemediationResult> {
+  const result = await remediate(args);
+  if (result.kind === 'step-up') {
+    const acr = String(args.verified.payload.acr ?? '(none)');
+    oboLog({
+      service: 'agent-specialist',
+      kind: 'DENY',
+      headline: '→ mcp-ops (step-up required, RFC 9470)',
+      fields: {
+        user: String(args.verified.payload.sub ?? 'unknown'),
+        acr,
+        'acr required': result.payload.data.acrValues,
+        'scope required': result.payload.data.scope,
+        goal: args.goal,
+      },
+    });
+  }
+  return result;
+}
+
+async function remediate(args: RemediationArgs): Promise<RemediationResult> {
   const { cfg, bearer, goal, verified, deps } = args;
   const sub = String(verified.payload.sub ?? 'unknown');
 
