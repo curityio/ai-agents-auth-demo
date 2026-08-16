@@ -109,10 +109,6 @@ spec:
               value: agent-specialist
             - name: SPECIALIST_SCOPE
               value: obs:read ops:write llm:invoke
-            - name: LLM_PROVIDER
-              value: gateway
-            - name: LLM_MODEL
-              value: gpt-4.1
             # Identity-bound LLM egress: routed through the agentgateway `/llm`
             # route (mcp ns). The agent exchanges the caller's user token for an
             # aud=llm-gateway, scope=llm:invoke token (RFC 8693) and presents it

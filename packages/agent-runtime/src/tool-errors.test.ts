@@ -68,8 +68,6 @@ function scriptedFetch(responses: Response[]): typeof fetch {
 }
 
 const cfg = {
-  llmProvider: 'gateway' as const,
-  llmModel: 'gpt-4.1',
   llmGatewayUrl: 'http://gw:8080/llm',
 };
 

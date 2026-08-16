@@ -434,9 +434,6 @@ importers:
       '@ai-agents-demo/auth-curity':
         specifier: workspace:*
         version: link:../auth-curity
-      '@ai-sdk/anthropic':
-        specifier: ^4.0.33
-        version: 4.0.33(zod@3.25.76)
       '@ai-sdk/openai-compatible':
         specifier: ^3.0.25
         version: 3.0.25(zod@3.25.76)
@@ -554,12 +551,6 @@ packages:
         optional: true
       express:
         optional: true
-
-  '@ai-sdk/anthropic@4.0.33':
-    resolution: {integrity: sha512-7mxzS0O2NQVSWscKqliLTd0JG/PDjNzRM3c9J8JIJKbOeAxJUSxjKjETIxTRSfvBCmrhASu7vRdpV6+cZruRUw==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
 
   '@ai-sdk/gateway@4.0.43':
     resolution: {integrity: sha512-7KqJR7+8zKwxuZY7/G12QWRV8MDUMgrAUmR/Al99zN6OGB3KQe1Q9i2lAB8uyTBsxgdZjB07vH+ky+RG5m1aiA==}
@@ -3727,12 +3718,6 @@ snapshots:
     optionalDependencies:
       '@grpc/grpc-js': 1.14.4
       express: 4.22.2
-
-  '@ai-sdk/anthropic@4.0.33(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.6
-      '@ai-sdk/provider-utils': 5.0.23(zod@3.25.76)
-      zod: 3.25.76
 
   '@ai-sdk/gateway@4.0.43(zod@3.25.76)':
     dependencies:

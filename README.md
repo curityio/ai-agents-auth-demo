@@ -19,8 +19,10 @@ Built with:
   `tools/list` filtering) whose co-located `exchange-shim` sidecar runs the
   per-backend RFC 8693 OBO exchange for every tool call. It is **also the LLM
   egress gateway**: both agents exchange for `aud=llm-gateway`/`scope=llm:invoke`
-  and call its OpenAI-compatible `/llm` route, which holds the only Azure OpenAI
-  key in the system — the agents never possess it.
+  and call its OpenAI-compatible `/llm` route, which holds the only upstream LLM
+  provider key in the system — the agents never possess it. The provider itself is
+  pluggable (OpenAI, Anthropic, Gemini, Azure OpenAI) — see
+  [`docs/llm-providers.md`](docs/llm-providers.md).
 - **OpenTelemetry → Tempo → Grafana** — identity-decorated distributed tracing.
 - Modern OAuth standards: **RFC 8693** (token exchange), **RFC 9470** (step-up),
   **RFC 9728** (protected-resource metadata), and **CIMD** (Client ID Metadata
@@ -39,12 +41,12 @@ and deny by role. Three identity planes — **human** (OIDC), **workload**
 
 ```
 Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
-                                                        ├─ LLM ─▶ agentgateway ─▶ Azure OpenAI
+                                                        ├─ LLM ─▶ agentgateway ─▶ LLM provider
                                                         └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s
                                                                                     ├─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
-                                                                                    └─ LLM ─▶ agentgateway ─▶ Azure OpenAI
+                                                                                    └─ LLM ─▶ agentgateway ─▶ LLM provider
               agentgateway = MCP front door (aud=mcp-gateway; per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
-                           + LLM egress   (/llm; aud=llm-gateway + scope=llm:invoke; injects the only Azure key — no shim, no act-chain)
+                           + LLM egress   (/llm; aud=llm-gateway + scope=llm:invoke; injects the only provider key — no shim, no act-chain)
               every agent/MCP hop ⇄ Curity (RFC 8693 exchange, SPIFFE actor_token)
 ```
 
@@ -55,7 +57,8 @@ See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 ## Prerequisites (macOS)
 
 You need **Docker running** (Docker Desktop or OrbStack), a few CLIs, a Curity
-developer license, and an Azure OpenAI endpoint/key for the agent LLM.
+developer license, and an API key for one supported LLM provider (OpenAI,
+Anthropic, Gemini, or Azure OpenAI).
 
 ```bash
 # 1. CLIs via Homebrew (Node 22+ is required; the rest are tools the Makefile drives).
@@ -71,11 +74,15 @@ make tools-check
 Two things `make tools-check` can't check for — have them ready before `make demo`:
 
 - **Curity developer license** → save it as `./license.json` at the repo root (gitignored).
-- **Azure OpenAI** endpoint + API key — the agents' reasoning runs on it, so
-  without it they can't respond. The key is seeded **only into the agentgateway**
-  (`agentgateway-llm` secret, ns `mcp`); the agents reach Azure through the
-  gateway's `/llm` route and never hold the key themselves. `make demo` prompts
-  for these (via `make seed-secrets` → `seed-llm-secret`).
+- **An LLM provider API key** — the agents' reasoning runs on it, so without it
+  they can't respond. Pick one of `openai`, `anthropic`, `gemini` or `azure` in
+  `.demo.env` (copy [`.demo.env.example`](.demo.env.example)); azure additionally
+  needs `AZURE_OPENAI_ENDPOINT`. The key is seeded **only into the agentgateway**
+  (`agentgateway-llm` secret, ns `mcp`, under `LLM_API_KEY`); the agents reach the
+  provider through the gateway's `/llm` route and never hold the key themselves.
+  `make demo` prompts for it (via `make seed-secrets` → `seed-llm-secret`).
+  Switching provider later is one file plus `make configure-llm` — see
+  [`docs/llm-providers.md`](docs/llm-providers.md).
 
 `make demo` generates the local mkcert CA (via `make certs`) but, by default,
 does **not** register it in your macOS keychain / browser trust store — so the
@@ -95,7 +102,7 @@ cd ai-agents-auth-demo
 cp /path/to/your/curity-license.json ./license.json
 
 make demo            # one command, end to end. Prompts up front for the license
-                     # file + Azure OpenAI endpoint/key, then runs unattended:
+                     # file + LLM provider key, then runs unattended:
                      # kind + Istio Ambient + SPIRE + observability, seeds every
                      # secret, builds/loads images, applies manifests, wires routing.
 

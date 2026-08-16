@@ -30,5 +30,6 @@ pnpm-debug.log*
 
 # build artifacts
 /tmp/
+.gen/
 
 docs/explainers/

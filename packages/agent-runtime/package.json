@@ -25,7 +25,6 @@
   },
   "dependencies": {
     "@ai-agents-demo/auth-curity": "workspace:*",
-    "@ai-sdk/anthropic": "^4.0.33",
     "@ai-sdk/openai-compatible": "^3.0.25",
     "@modelcontextprotocol/client": "^2.0.0",
     "ai": "^7.0.55",

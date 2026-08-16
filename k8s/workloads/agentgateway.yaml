@@ -150,16 +150,14 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
           env:
-            - name: AZURE_OPENAI_API_KEY
+            # The ONLY upstream LLM credential in the system. Which vendor it
+            # belongs to is decided by k8s/workloads/llm-providers/<provider>.yaml
+            # at render time, so this Deployment is provider-agnostic.
+            - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: agentgateway-llm
-                  key: AZURE_OPENAI_API_KEY
-            - name: AZURE_RESOURCE_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: agentgateway-llm
-                  key: AZURE_RESOURCE_NAME
+                  key: LLM_API_KEY
           ports:
             - containerPort: 8080
           volumeMounts:

@@ -90,7 +90,7 @@ authenticator's "create account" feature (see §Accounts above) — open
 
 `make seed-secrets` does **not** prompt for client secrets: the web and MCP
 clients use the fixed demo value `Password1` (whose hash is committed in the
-configmap), the license comes from `./license.json`, and the Azure OpenAI key is
+configmap), the license comes from `./license.json`, and the LLM provider key is
 read from `.demo.env` (it only prompts when that file is absent). The two CIMD
 agents authenticate with `private_key_jwt`, so instead of a secret each gets a
 generated RSA keypair (`make seed-agent-key` / `seed-specialist-key`) stored in
@@ -111,12 +111,11 @@ kubectl -n web create secret generic web-secrets \
   --from-literal=AUTH_SECRET=$(openssl rand -hex 32) \
   --from-literal=CURITY_CLIENT_SECRET=Password1
 
-# Azure OpenAI key — the gateway holds the ONLY key. Both agents reach Azure
-# through agentgateway's /llm route (aud=llm-gateway) and no longer hold the key.
-# AZURE_RESOURCE_NAME is the <resource> in https://<resource>.openai.azure.com.
+# LLM provider key — the gateway holds the ONLY key. Both agents reach the
+# provider through agentgateway's /llm route (aud=llm-gateway) and no longer
+# hold the key.
 kubectl -n mcp create secret generic agentgateway-llm \
-  --from-literal=AZURE_OPENAI_API_KEY=<key> \
-  --from-literal=AZURE_RESOURCE_NAME=<resource>
+  --from-literal=LLM_API_KEY=<key>
 ```
 
 The full set of token-exchange clients (`agent-copilot`, `agent-specialist`,

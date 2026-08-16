@@ -1,0 +1,245 @@
+# LLM providers
+
+The agents reach an LLM through exactly one path: agentgateway's `/llm` route
+(CLAUDE.md fact #22). Which vendor sits behind that route is a gateway-side
+config choice, driven by one file, `.demo.env`. Nothing about the RFC 8693
+exchange, the `llm:invoke` scope, or the agent code changes when you switch
+providers — see [§7](#7-what-does-not-change).
+
+---
+
+## 1. Switching provider
+
+```bash
+cp .demo.env.example .demo.env
+```
+
+Edit `.demo.env`:
+
+```sh
+LLM_PROVIDER=azure           # openai | anthropic | gemini | azure
+LLM_MODEL=gpt-4.1
+LLM_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com   # azure only
+```
+
+**`azure` is the default** — both in this file and at the `make demo` prompt —
+because it is the provider this demo is developed against and the only one
+verified end to end (§3). For any other provider, delete the
+`AZURE_OPENAI_ENDPOINT` line. Because azure requires that endpoint, a tree with
+no `.demo.env` at all now fails the render with a message naming the missing
+variable, rather than quietly falling back to a provider nobody chose.
+
+Then, against a running cluster:
+
+```bash
+make seed-llm-secret configure-llm
+```
+
+`seed-llm-secret` writes `LLM_API_KEY` into the `agentgateway-llm` Secret (ns
+`mcp`); `configure-llm` re-renders the gateway config from `.demo.env`, updates
+the `agentgateway-config` ConfigMap, and restarts the gateway deployment so the
+new provider block takes effect. Both steps are required — rendering alone
+updates a gitignored file on disk but leaves the running ConfigMap, and
+therefore the cluster, on the old provider.
+
+**Nothing else in the repo is provider-specific.** The two agent Deployments
+(`k8s/workloads/agent-copilot.yaml`, `agent-specialist.yaml`) carry no
+`LLM_PROVIDER`/`LLM_MODEL` env vars — the agents don't know or care which vendor
+answers `/llm`, and always send a placeholder model name (see [§4 of
+`design.md`](design.md), and `packages/agent-runtime/src/llm.ts`). Switching
+provider is a `.demo.env` edit plus the one `make` target above; nothing in
+`apps/` or `packages/` is touched.
+
+`make demo`'s first-time interactive bootstrap (`scripts/demo-inputs.sh`)
+predates this feature and still only prompts for an Azure OpenAI endpoint and
+key up front. If you want to bring up a fresh cluster on a different provider,
+let `make demo` finish (it defaults to Azure via the back-compat shim below),
+then switch with the steps above — or edit `.demo.env` and run `make
+seed-llm-secret configure-llm` before ever pointing a browser at the app.
+
+**Back-compat.** A `.demo.env` written before this feature — one that carries
+only `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` and no `LLM_PROVIDER` —
+still resolves to `LLM_PROVIDER=azure`, `LLM_MODEL=gpt-4.1`, and
+`LLM_API_KEY=$AZURE_OPENAI_API_KEY`. A pre-existing setup keeps working without
+an edit; this shim exists in `scripts/render-gateway-config.sh` and is
+transitional.
+
+---
+
+## 2. The four providers
+
+| `LLM_PROVIDER` | Get a key | Example `LLM_MODEL` | Extra variable |
+| --- | --- | --- | --- |
+| `openai` | https://platform.openai.com/api-keys | `gpt-4.1` | — |
+| `anthropic` | https://console.anthropic.com/settings/keys | `claude-sonnet-4-6` | — |
+| `gemini` | https://aistudio.google.com/apikey | `gemini-2.5-pro` | — |
+| `azure` | your Azure OpenAI (AI Foundry) resource | the **deployment name** in that resource, not the base model | `AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com` |
+
+Each row is a fragment in `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure}.yaml`
+supplying the `backendAuth` policy and the `backends` block for the gateway's
+`/llm` route — see [§5](#5-adding-a-provider-agentgateway-supports-natively)
+for the shape.
+
+---
+
+## 3. Which is verified
+
+**Only Azure OpenAI is exercised end to end.** It is the provider driven
+through the whole stack during development: seeded, deployed, and used to
+actually answer a chat turn from `https://app.localtest.me`, with the
+resulting trace inspected in Grafana.
+
+The other three — OpenAI, Anthropic, Gemini — are **schema-validated only**.
+`make validate-llm` renders each fragment and runs it through agentgateway's
+own `--validate-only` config check against the exact pinned image
+(`ghcr.io/agentgateway/agentgateway:v1.4.1`), proving each fragment parses as a
+well-formed provider block. None of the three has been exercised against its
+live vendor. Say so plainly rather than implying otherwise: a fragment that
+loads cleanly can still have the wrong path prefix or the wrong auth header and
+only fail when a real request reaches the vendor. Every fragment here was
+derived from the agentgateway v1.4.1 source (`crates/llm/src/*.rs`), not from
+the published docs, which is the strongest available mitigation short of
+driving all four live — see [§4](#4-why-only-four).
+
+---
+
+## 4. Why only four
+
+agentgateway's published documentation lists 19 first-class providers. That
+page tracks `latest`, not the image this demo pins. At **v1.4.1**, standalone
+YAML config accepts exactly eight provider keys:
+
+```
+openAI, gemini, vertex, anthropic, bedrock, azure, copilot, custom
+```
+
+The other thirteen — including the obvious first reach for a local/free
+setup, Ollama, plus Groq, OpenRouter, Mistral, DeepSeek, Together AI, xAI,
+Fireworks, Cerebras, Cohere, HuggingFace, Baseten, and DeepInfra — exist as
+named presets in the v1.4.1 source (`crates/llm/src/custom.rs`), but the
+local-config `AIProvider` enum has no variant for them; they're reachable only
+through xDS (`types/agent_xds.rs`), which this demo's standalone-YAML config
+doesn't use. Writing `provider: {ollama: {}}` (or `{groq: {}}`) into the
+gateway config fails config load at exactly the schema-deserialization step
+`make validate-llm` checks, with:
+
+```
+unknown variant `ollama`
+```
+
+That is not a typo or a missing feature flag — it is a real gap between the
+docs and this pinned version, discovered by actually trying it, not by reading
+a changelog. If you land on this page searching that error text, this is why:
+reach the vendor through `custom` + `hostOverride` instead (see
+[§6](#6-reaching-groq--openrouter--ollama--vllm)), and re-check on any
+agentgateway version bump — the eight-key list is a property of v1.4.1, not a
+permanent architectural limit.
+
+This is also why the four shipped providers are exactly OpenAI, Anthropic,
+Gemini, and Azure OpenAI: they're the ones with a real native provider key at
+this pin, so no fragment here needs `custom`, `hostOverride`, or a `formats`
+block.
+
+---
+
+## 5. Adding a provider agentgateway supports natively
+
+Bedrock and Vertex both have native keys at v1.4.1 (`bedrock` needs `region`;
+`vertex` needs `projectId`) but aren't shipped, mainly because their auth
+(`auth.aws` / `auth.gcp`) doesn't fit the single-`LLM_API_KEY` contract this
+design standardized on. To add one:
+
+1. Write `k8s/workloads/llm-providers/<provider>.yaml`, following the shape of
+   the existing four fragments: a `backendAuth` block and a `backends: - ai:`
+   block with `name: llm` (keep the backend's local label `llm` — it's what
+   keeps `mcp.target`-style telemetry stable across a provider switch) and the
+   provider-specific fields.
+2. Add the provider's name to the `case` statement in
+   `scripts/render-gateway-config.sh` (default model, any provider-specific
+   rendered value).
+3. Add the name to `PROVIDERS` in `scripts/validate-llm-providers.sh`.
+4. Run `make validate-llm`.
+
+**The Anthropic `location` trap is the worked example of what to watch for.**
+agentgateway records whether a backend's `backendAuth.key.location` was set
+explicitly (`http/auth/mod.rs`, `AppliedBackendAuthLocation.explicit`) and only
+rewrites `Authorization: Bearer` → `x-api-key` and injects the
+`anthropic-version: 2023-06-01` header **when that location was left implicit**
+(`llm/mod.rs:1247-1276`). `k8s/workloads/llm-providers/anthropic.yaml` therefore
+has no `location:` block at all — adding one "for clarity," which is exactly
+what `azure.yaml` right next to it does, silently suppresses both rewrites and
+the upstream call fails to authenticate. Azure is the mirror image: it gets no
+per-provider fixup, so it *needs* the explicit `api-key` header location it
+already has. This asymmetry is the single most likely thing a future
+contributor "fixes" by making the two fragments look more alike. Don't.
+
+More generally: required fields differ per provider (`bedrock` wants `region`,
+`vertex` wants `projectId`, `azure` wants `resourceName`), and `hostOverride`
+is a `host:port` string, not a map. `--validate-only` (used by
+`make validate-llm`) catches a malformed field, but **not** a wrong-but-valid
+one — see the caveat in [§3](#3-which-is-verified) and the note under
+`make validate-llm` in `scripts/validate-llm-providers.sh`:
+`--validate-only` does not evaluate CEL, so it proves a provider block is
+well-formed and says nothing about the `jwtAuth`/`authorization` rules that
+gate the route (CLAUDE.md fact #29).
+
+---
+
+## 6. Reaching Groq / OpenRouter / Ollama / vLLM
+
+Every OpenAI-compatible endpoint that isn't one of the eight native keys —
+Groq, OpenRouter, Together AI, DeepSeek, Mistral, xAI, a self-hosted vLLM, or
+Ollama — is reachable through agentgateway's `custom` provider plus
+`hostOverride`. This is a **documented extension point that was deliberately
+not built** for the first version of this feature, to keep it small; it is one
+fragment and one `.demo.env` variable, not new machinery:
+
+```yaml
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+      backends:
+      - ai:
+          name: llm
+          provider:
+            custom:
+              model: __LLM_MODEL__
+              providerOverride: groq
+              formats:
+              - type: completions
+                path: /openai/v1/chat/completions
+          hostOverride: api.groq.com:443
+```
+
+Adding this for real means: a fifth fragment
+(`k8s/workloads/llm-providers/custom.yaml` or a per-vendor variant), a new
+`.demo.env` variable for the host (Groq's `api.groq.com:443` and a local
+Ollama's `localhost:11434` are both just a `hostOverride` string), and the same
+`case`/`PROVIDERS` wiring as [§5](#5-adding-a-provider-agentgateway-supports-natively).
+Ollama specifically is worth calling out: it's one of the thirteen presets
+that fails as a *named* provider key at v1.4.1 ([§4](#4-why-only-four)), but it
+serves an OpenAI-compatible `/v1/chat/completions` surface, so it's reachable
+through this same `custom` route — the failure in §4 is about the shorthand
+`{ollama: {}}` key, not about Ollama itself being unreachable.
+
+---
+
+## 7. What does not change
+
+Switching providers changes what sits **upstream of agentgateway**. Everything
+on the agent side of the `/llm` route is untouched:
+
+- Both agents still exchange the user's access token (subject) and their
+  SPIFFE JWT-SVID (actor) for `aud=llm-gateway`, `scope=llm:invoke` — one RFC
+  8693 call, same as any other hop.
+- The gateway still requires that exact scope on `/llm` before forwarding
+  anywhere, regardless of which provider fragment is loaded — `jwtAuth` and
+  the `llm:invoke` `authorization` rule live **outside** the generated
+  sentinel region in `k8s/workloads/agentgateway-config.yaml`, specifically so
+  the authorization posture of this hop can't drift with a provider switch.
+- The agents never hold the vendor key. The one credential per provider lives
+  only in the `agentgateway-llm` Secret (ns `mcp`), read by the gateway.
+
+See [`docs/design.md`](design.md) §3.6 for the full mechanics of this hop
+(exchange shape, gateway route config, why there's no `act`-chain growth here).

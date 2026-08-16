@@ -1,0 +1,22 @@
+# Azure OpenAI. resourceName is rendered from AZURE_OPENAI_ENDPOINT in .demo.env.
+#
+# Azure is the one provider that DOES need an explicit `location`: it gets no
+# per-provider header fixup, and Azure OpenAI authenticates API keys with the
+# `api-key` header rather than a bearer token. `resourceType` is lowercase-o
+# `openAI` (CLAUDE.md fact #22).
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+            location:
+              header:
+                name: api-key
+                prefix: ""
+      backends:
+      - ai:
+          name: llm
+          provider:
+            azure:
+              resourceName: __AZURE_RESOURCE_NAME__
+              resourceType: openAI
+              model: __LLM_MODEL__
+              apiVersion: "2024-04-01-preview"

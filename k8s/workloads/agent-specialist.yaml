@@ -96,10 +96,6 @@ spec:
               value: obs:read
             - name: REQUIRED_ACR
               value: mfa
-            - name: LLM_PROVIDER
-              value: gateway
-            - name: LLM_MODEL
-              value: gpt-4.1
             # Identity-bound LLM egress: routed through the agentgateway `/llm`
             # route (mcp ns). The agent exchanges the caller's user token for an
             # aud=llm-gateway, scope=llm:invoke token (RFC 8693) and presents it
