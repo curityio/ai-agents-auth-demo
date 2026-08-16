@@ -262,10 +262,18 @@ binds:
               path: /mcp
 
     # ------------------------------------------------------------------ #
-    # LLM egress -> {gateway}:8080/llm  (OpenAI-compatible; azure backend)
+    # LLM egress -> {gateway}:8080/llm  (OpenAI-compatible)
     # Identity-bound reasoning hop. jwtAuth(aud=llm-gateway) + require llm:invoke;
-    # the gateway holds the ONLY Azure key (backendAuth.key). No shim, no act-chain:
-    # Azure is outside the Curity trust domain — a single upstream credential swap.
+    # the gateway holds the ONLY upstream provider key (backendAuth.key). No shim,
+    # no act-chain: the LLM vendor is outside the Curity trust domain — a single
+    # upstream credential swap.
+    #
+    # Everything between the sentinels below is GENERATED from
+    # k8s/workloads/llm-providers/<LLM_PROVIDER>.yaml by
+    # scripts/render-gateway-config.sh, into .gen/agentgateway-config.yaml.
+    # Edit the fragment, not this block. The jwtAuth and authorization policies
+    # sit OUTSIDE the sentinels on purpose: the authorization posture of this hop
+    # must not vary with the provider.
     # ------------------------------------------------------------------ #
     - name: llm
       matches:
@@ -282,22 +290,17 @@ binds:
         authorization:
           rules:
           - require: '"llm:invoke" in (jwt.scope.split(" "))'
+        # BEGIN_LLM_PROVIDER
         backendAuth:
           key:
-            value: $AZURE_OPENAI_API_KEY
-            location:
-              header:
-                name: api-key
-                prefix: ""
+            value: $LLM_API_KEY
       backends:
       - ai:
-          name: azure
+          name: llm
           provider:
-            azure:
-              resourceName: $AZURE_RESOURCE_NAME
-              resourceType: openAI
+            openAI:
               model: gpt-4.1
-              apiVersion: "2024-04-01-preview"
+        # END_LLM_PROVIDER
 
     # ------------------------------------------------------------------ #
     # DEMO-ONLY chain-visualization passthroughs (NOT part of the enforcement

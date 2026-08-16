@@ -50,8 +50,6 @@ const cfg = {
   mcpOpsResourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
   mcpOpsMetadataUrl: 'http://mcp-ops.mcp.svc.cluster.local:8080/.well-known/oauth-protected-resource',
   mcpOpsScope: 'ops:write',
-  llmProvider: 'gateway',
-  llmModel: 'gpt-4.1',
   llmGatewayUrl: 'http://gw:8080/llm',
   llmGatewayAudience: 'llm-gateway',
   llmGatewayScope: 'llm:invoke',

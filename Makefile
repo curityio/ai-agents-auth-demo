@@ -287,7 +287,7 @@ images: ## Build all app images and load them into KIND
 	done
 
 .PHONY: apply
-apply: curity-procedures curity-truststore ## Apply all manifests (assumes images built/loaded) and run routing
+apply: curity-procedures curity-truststore render-gateway-config ## Apply all manifests (assumes images built/loaded) and run routing
 	kubectl apply -f k8s/namespaces.yaml
 	# Curity (sole token issuer). Config BEFORE the deployment so the pod finds it
 	# on first start. The `curity-license` secret is created separately by
@@ -307,12 +307,11 @@ apply: curity-procedures curity-truststore ## Apply all manifests (assumes image
 	kubectl apply -f k8s/workloads/agent-specialist.yaml
 	kubectl apply -f k8s/workloads/mcp-observability.yaml
 	kubectl apply -f k8s/workloads/mcp-ops.yaml
-	# agentgateway: generate its config ConfigMap from the single source of truth
-	# (k8s/workloads/agentgateway-config.yaml) BEFORE the Deployment, then apply the
-	# workload (SA + spiffe-helper CM + Deployment + Service). The ClusterSPIFFEID is
-	# applied by the k8s/spire/identities/ glob above.
+	# agentgateway: render its config from k8s/workloads/agentgateway-config.yaml
+	# + the LLM provider fragment chosen in .demo.env (see the render-gateway-config
+	# prerequisite), then create the ConfigMap from .gen/ BEFORE the Deployment.
 	kubectl -n $(NS_MCP) create configmap agentgateway-config \
-	  --from-file=config.yaml=k8s/workloads/agentgateway-config.yaml \
+	  --from-file=config.yaml=.gen/agentgateway-config.yaml \
 	  --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/workloads/agentgateway.yaml
 	kubectl apply -f k8s/workloads/obs-api.yaml
@@ -347,9 +346,9 @@ routing-check: ## Verify every app pod is wired to reach Curity (read-only; no r
 # independent: it creates its namespace if missing and only restarts the workload
 # if the Deployment already exists — so secrets can be seeded BEFORE `make apply`
 # creates the pods (the recommended order: secrets/configmaps before pods).
-# None of these prompt: the license comes from ./license.json, the Azure LLM key
-# from .demo.env (both gathered up front by `make demo-inputs`), and the rest are
-# generated keys or the fixed demo secret "Password1". `seed-llm-secret` falls
+# None of these prompt: the license comes from ./license.json, the LLM provider
+# key from .demo.env (both gathered up front by `make demo-inputs`), and the rest
+# are generated keys or the fixed demo secret "Password1". `seed-llm-secret` falls
 # back to prompting if .demo.env is absent (standalone re-seed).
 # ============================================================================
 .PHONY: seed-secrets
@@ -384,22 +383,32 @@ seed-web-secret: ## Create web-secrets (autogen AUTH_SECRET + web-app client sec
 	  $(call restart_if_exists,$(NS_WEB),web)
 
 .PHONY: seed-llm-secret
-seed-llm-secret: ## Create the agentgateway Azure OpenAI secret (from .demo.env if present, else prompt)
-	@if [ -f .demo.env ]; then . ./.demo.env; e="$$AZURE_OPENAI_ENDPOINT"; k="$$AZURE_OPENAI_API_KEY"; \
-	  else \
-	    read -r -p "AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com): " e; \
-	    read -r -s -p "AZURE_OPENAI_API_KEY: " k; echo; \
-	  fi; \
-	  test -n "$$e" || { echo "AZURE_OPENAI_ENDPOINT empty — abort"; exit 1; }; \
-	  test -n "$$k" || { echo "AZURE_OPENAI_API_KEY empty — abort"; exit 1; }; \
-	  res=$$(printf '%s' "$$e" | sed -E 's#https?://([^.]+)\..*#\1#'); \
-	  test -n "$$res" || { echo "could not derive AZURE_RESOURCE_NAME from endpoint — abort"; exit 1; }; \
+seed-llm-secret: ## Create the agentgateway LLM provider secret (from .demo.env if present, else prompt)
+	@if [ -f .demo.env ]; then . ./.demo.env; fi; \
+	  k="$${LLM_API_KEY:-$$AZURE_OPENAI_API_KEY}"; \
+	  if [ -z "$$k" ]; then read -r -s -p "LLM_API_KEY: " k; echo; fi; \
+	  test -n "$$k" || { echo "LLM_API_KEY empty — abort"; exit 1; }; \
 	  kubectl create namespace $(NS_MCP) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	  kubectl -n $(NS_MCP) create secret generic agentgateway-llm \
-	    --from-literal=AZURE_OPENAI_API_KEY="$$k" \
-	    --from-literal=AZURE_RESOURCE_NAME="$$res" \
+	    --from-literal=LLM_API_KEY="$$k" \
 	    --dry-run=client -o yaml | kubectl apply -f -; \
 	  $(call restart_if_exists,$(NS_MCP),agentgateway)
+
+.PHONY: render-gateway-config
+render-gateway-config: ## Render .gen/agentgateway-config.yaml from .demo.env (run by `make apply`)
+	bash scripts/render-gateway-config.sh
+
+.PHONY: configure-llm
+configure-llm: render-gateway-config ## Switch LLM provider: re-render, update the ConfigMap, restart the gateway
+	kubectl -n $(NS_MCP) create configmap agentgateway-config \
+	  --from-file=config.yaml=.gen/agentgateway-config.yaml \
+	  --dry-run=client -o yaml | kubectl apply -f -
+	$(call restart_if_exists,$(NS_MCP),agentgateway)
+
+.PHONY: validate-llm
+validate-llm: ## Validate every provider fragment against the pinned agentgateway image
+	bash scripts/validate-llm-providers.sh
+	bash scripts/test-render-gateway-config.sh
 
 # CIMD ephemeral clients authenticate with private_key_jwt — no shared secret.
 # We generate an RSA-2048 keypair and store only the PKCS8 PEM private key; the
@@ -482,7 +491,7 @@ smoke-stepup: ## Smoke: RFC 9470 step-up (MFA for ops:write) + role-based denial
 	bash scripts/smoke-stepup.sh
 
 .PHONY: smoke-llm
-smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm → Azure). Needs SMOKE_SUBJECT_TOKEN.
+smoke-llm: ## Smoke: identity-bound LLM egress (user → agent → gateway /llm → provider). Needs SMOKE_SUBJECT_TOKEN.
 	bash scripts/smoke-llm.sh
 
 .PHONY: smoke-mcp-protocol
@@ -534,11 +543,12 @@ inspect-ops: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) S
 # End-to-end orchestration
 # ============================================================================
 .PHONY: demo-inputs
-demo-inputs: ## Gather the license file + Azure OpenAI creds up front (interactive)
+demo-inputs: ## Gather the license file + LLM provider credentials up front (interactive)
 	@bash scripts/demo-inputs.sh
 
 # `demo-inputs` runs first so the only two interactive inputs (license.json +
-# Azure creds) are collected up front; everything after it runs unattended.
+# LLM provider credentials) are collected up front; everything after it runs
+# unattended.
 .PHONY: demo
 demo: tools-check demo-inputs kind-up certs platform seed-secrets images apply ## Stand up EVERYTHING on a fresh KIND cluster (one command)
 	@echo ""

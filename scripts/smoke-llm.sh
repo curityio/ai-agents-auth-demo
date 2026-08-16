@@ -6,19 +6,19 @@
 # the same RFC 8693 exchange it uses for MCP (Alice's subject token + the
 # agent's SPIFFE JWT-SVID as actor_token), then calls the gateway's
 # /llm/chat/completions route. The gateway validates the JWT, authorizes
-# llm:invoke, swaps in the Azure OpenAI API key server-side, and forwards to
-# Azure. The agents never hold the Azure key.
+# llm:invoke, swaps in the upstream provider key server-side, and forwards to
+# whichever provider is configured in .demo.env. The agents never hold that key.
 #
 # Assertions:
 #   [1/3] positive: Alice's subject token + copilot SVID exchange to
 #         aud=llm-gateway (scope llm:invoke).
 #   [2/3] positive (REAL egress): that llm-gateway token drives a chat
 #         completion through the gateway → HTTP 200 (proves JWT validate +
-#         llm:invoke authz + api-key swap + real Azure round-trip).
+#         llm:invoke authz + provider-key swap + a real upstream round-trip).
 #   [3/3] negative: an aud=mcp-gateway / scope=obs:read token (no llm:invoke)
-#         is denied AT the gateway (401/403), before any Azure call.
-#   plus: AZURE_OPENAI_API_KEY is absent from agent-copilot's env (the
-#         credential moved server-side into the gateway).
+#         is denied AT the gateway (401/403), before any upstream call.
+#   plus: no upstream LLM key (LLM_API_KEY / AZURE_OPENAI_API_KEY) is present in
+#         agent-copilot's env — the credential moved server-side into the gateway.
 #
 # Pre-reqs:
 #   - kubectl context points at the demo cluster; `make apply` + `make routing` ran.
@@ -138,13 +138,13 @@ SCOPE=$(read_claim "$LLM_TOKEN" scope)
 [[ "$SCOPE" == *"llm:invoke"* ]] || { red "scope mismatch: $SCOPE"; exit 1; }
 green "  OK (aud=$AUD, scope=$SCOPE)"
 
-# ----- [2/3] Positive: real egress through the gateway (REAL Azure call) ---------
-note "[2/3] Positive: chat completion through the gateway (REAL Azure round-trip)"
+# ----- [2/3] Positive: real egress through the gateway (REAL upstream call) ------
+note "[2/3] Positive: chat completion through the gateway (REAL upstream round-trip)"
 STATUS=$(llm_call agents agent-copilot agent \
   "$GATEWAY_LLM_URL" "$LLM_TOKEN" \
-  '{"model":"gpt-4.1","messages":[{"role":"user","content":"ping"}]}')
+  '{"model":"model-pinned-at-gateway","messages":[{"role":"user","content":"ping"}]}')
 case "$STATUS" in
-  200*) green "  OK (gateway + Azure returned 200: ${STATUS:0:120}...)" ;;
+  200*) green "  OK (gateway + provider returned 200: ${STATUS:0:120}...)" ;;
   *) red "  expected 200 through the gateway, got: $STATUS"; exit 1 ;;
 esac
 
@@ -171,19 +171,25 @@ MCP_TOKEN=$(echo "$RESP" | jq -r '.access_token // empty')
 [[ -n "$MCP_TOKEN" ]] || { red "no access_token minting negative token: $(echo "$RESP" | redact_resp)"; exit 1; }
 STATUS=$(llm_call agents agent-copilot agent \
   "$GATEWAY_LLM_URL" "$MCP_TOKEN" \
-  '{"model":"gpt-4.1","messages":[{"role":"user","content":"ping"}]}')
+  '{"model":"model-pinned-at-gateway","messages":[{"role":"user","content":"ping"}]}')
 case "$STATUS" in
   401*|403*) green "  OK (denied at gateway: ${STATUS:0:80})" ;;
   *) red "  expected 401/403 for a non-llm caller, got: $STATUS"; exit 1 ;;
 esac
 
-# ----- Credential moved: no Azure key on the agent pods --------------------------
-note "Credential moved: asserting no AZURE_OPENAI_API_KEY on agent-copilot"
+# ----- Credential moved: no upstream LLM key on the agent pods -------------------
+# Checks BOTH names: LLM_API_KEY is the current one, AZURE_OPENAI_API_KEY the
+# pre-2026-08-14 one, so this keeps catching the old leak as well as the new.
+note "Credential moved: asserting no upstream LLM key on agent-copilot"
 if ENV_LIST=$(kubectl -n agents set env deploy/agent-copilot --list 2>&1); then
-  if echo "$ENV_LIST" | grep -qi AZURE_OPENAI_API_KEY; then
-    red "  AZURE_OPENAI_API_KEY still present on agent-copilot"; exit 1
+  LEAKED=""
+  for VAR in LLM_API_KEY AZURE_OPENAI_API_KEY; do
+    if echo "$ENV_LIST" | grep -qi "$VAR"; then LEAKED="$LEAKED $VAR"; fi
+  done
+  if [ -n "$LEAKED" ]; then
+    red "  upstream LLM key still present on agent-copilot:$LEAKED"; exit 1
   fi
-  green "  OK (no AZURE_OPENAI_API_KEY on agent-copilot)"
+  green "  OK (no upstream LLM key on agent-copilot)"
 else
   note "  (non-fatal) could not read deploy/agent-copilot env: $ENV_LIST"
 fi

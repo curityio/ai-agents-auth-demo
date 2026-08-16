@@ -276,8 +276,6 @@ async function main(): Promise<void> {
       JSON.stringify({
         msg: 'agent-copilot listening',
         port: cfg.port,
-        llm_provider: cfg.llmProvider,
-        llm_model: cfg.llmModel,
         mcp_observability_url: cfg.mcpObservabilityUrl,
       }),
     );

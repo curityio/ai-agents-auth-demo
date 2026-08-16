@@ -1,0 +1,13 @@
+# OpenAI. https://platform.openai.com/api-keys
+#
+# `backendAuth.key` with no `location` lands in `Authorization: Bearer`, which is
+# what the OpenAI API wants — leave it implicit.
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+      backends:
+      - ai:
+          name: llm
+          provider:
+            openAI:
+              model: __LLM_MODEL__

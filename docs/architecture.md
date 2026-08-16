@@ -38,7 +38,7 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | Component | Namespace | Port | Responsibility |
 |---|---|---|---|
 | **web** | `web` | 3000 | Next.js BFF. OIDC login (Auth.js + Curity), httpOnly session cookie, forwards the user token to the copilot. The access token never reaches the browser. |
-| **agent-copilot** | `agents` | 8081 | Front-line AI agent (Vercel AI SDK). Validates the user token; exchanges it for hop-scoped `aud=mcp-gateway` tokens to reach `mcp-observability` (read) **via the agentgateway** (`/observability/mcp` path), or for an `agent-specialist` token (privileged, over A2A). It no longer exchanges directly to `mcp-observability`. Every model call is also a governed hop: it exchanges for `aud=llm-gateway`/`scope=llm:invoke` and drives its tool-calling loop against agentgateway's `/llm` route — never Azure directly. |
+| **agent-copilot** | `agents` | 8081 | Front-line AI agent (Vercel AI SDK). Validates the user token; exchanges it for hop-scoped `aud=mcp-gateway` tokens to reach `mcp-observability` (read) **via the agentgateway** (`/observability/mcp` path), or for an `agent-specialist` token (privileged, over A2A). It no longer exchanges directly to `mcp-observability`. Every model call is also a governed hop: it exchanges for `aud=llm-gateway`/`scope=llm:invoke` and drives its tool-calling loop against agentgateway's `/llm` route — never the LLM provider directly. |
 | **agent-specialist** | `agents` | 8082 | Privileged **LLM agent** (Vercel AI SDK). Exposes an A2A endpoint that takes a natural-language remediation goal. Acquires an `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (`/ops/mcp` + `/observability/mcp`), running a tool-using LLM loop to inspect, act, and verify (`get_deployment` to read; `restart_deployment`/`set_deployment_image`/`scale_deployment` to write). All authz gates fire **outside** the LLM loop: the `ops:write` exchange (role + scope gate) and the `acr=mfa` step-up pre-check both run **before** the model is ever invoked. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route. |
 | **mcp-observability** | `mcp` | 8080 | MCP server (Streamable HTTP, revision 2026-07-28 only), read tier. Validates the OBO token, then exchanges it again to call `obs-api`. Thin client — holds no data and no cluster credentials. |
 | **mcp-ops** | `mcp` | 8080 | MCP server (same transport + revision as above), privileged tier. Validates the OBO token (incl. step-up), then exchanges it to call `ops-api`. Thin client. |
@@ -48,7 +48,7 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **SPIRE** (server/agent/CSI) | `spire*` | — | Issues and rotates SPIFFE JWT-SVIDs (5-minute TTL) to every workload via a `spiffe-helper` sidecar. |
 | **Istio Ambient** (ztunnel/cni/istiod) | `istio-system` | — | Transparent ztunnel L4 mTLS for all in-mesh traffic. |
 | **Istio edge gateway** | `istio-ingress` | 80/443 | Terminates TLS for `app`/`curity`/`grafana`, the two agents' CIMD hosts (`copilot`/`specialist`), and the two MCP hosts (`mcp-ops`/`mcp-observability`, so their RFC 9728 metadata is browsable); the single ingress into the cluster. |
-| **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers, **and** the LLM egress gateway. Three path-scoped routes on one listener: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops, `/llm` → Azure OpenAI. For MCP: validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope — it does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced downstream at mcp-ops) — and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). For `/llm`: validates a separate `aud=llm-gateway` JWT, requires `llm:invoke`, and injects the **only** Azure OpenAI API key in the system (`backendAuth.key`) — no shim, no `act`-chain (Azure is outside the trust domain, so there is no downstream workload to nest). |
+| **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers, **and** the LLM egress gateway. Three path-scoped routes on one listener: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops, `/llm` → the configured LLM provider. For MCP: validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope — it does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced downstream at mcp-ops) — and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). For `/llm`: validates a separate `aud=llm-gateway` JWT, requires `llm:invoke`, and injects the **only** upstream LLM provider API key in the system (`backendAuth.key`) — no shim, no `act`-chain (the provider is outside the trust domain, so there is no downstream workload to nest). The provider block is generated from `.demo.env`; see `llm-providers.md`. |
 | **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | The deployments the copilot observes and restarts (e.g. a CrashLoopBackOff target). |
 
@@ -98,7 +98,7 @@ flowchart TB
   end
 
   subgraph mcp_ns["mcp namespace (ambient)"]
-    GWY["agentgateway<br/>(JWT + per-tier scope authz)<br/>+ exchange-shim (OBO)<br/>+ /llm egress (Azure key-inject)"]
+    GWY["agentgateway<br/>(JWT + per-tier scope authz)<br/>+ exchange-shim (OBO)<br/>+ /llm egress (provider key-inject)"]
     M1["mcp-observability"]
     M2["mcp-ops"]
   end
@@ -121,7 +121,7 @@ flowchart TB
   end
 
   subgraph external["External (HTTPS egress)"]
-    LLM["Azure OpenAI<br/>(LLM — gpt-4.1)"]
+    LLM["LLM provider<br/>(openai / anthropic / gemini / azure)"]
   end
 
   U -- "OIDC code+PKCE / https" --> GW
@@ -134,7 +134,7 @@ flowchart TB
   A2 -- "LLM (aud=llm-gateway)" --> GWY
   GWY -- "/observability/mcp<br/>(shim OBO → obs:read)" --> M1
   GWY -- "/ops/mcp<br/>(shim OBO → ops:write)" --> M2
-  GWY -- "/llm<br/>(backendAuth.key → Azure api-key)" --> LLM
+  GWY -- "/llm<br/>(backendAuth.key → provider key)" --> LLM
   M1 -- "Bearer (re-exchanged)" --> B1
   M2 -- "Bearer (re-exchanged)" --> B2
   B1 -- "list pods / logs (RBAC)" --> V
@@ -151,16 +151,19 @@ agents' CIMD metadata + JWKS, the MCP servers' RFC 9728 protected-resource
 metadata) are reachable over a trusted TLS cert. Those are *metadata* paths — the
 actual agent→MCP→API calls stay in-mesh over ztunnel mTLS, never through the edge.
 
-**LLM calls.** Both agents drive their tool-calling loops against **Azure
-OpenAI**, but neither calls it directly. Each exchanges the user's access token
+**LLM calls.** Both agents drive their tool-calling loops against an **LLM
+provider**, but neither calls it directly. Each exchanges the user's access token
 (subject) + its SPIFFE JWT-SVID (actor) for a token scoped `aud=llm-gateway`,
 `scope=llm:invoke`, and calls **agentgateway's** OpenAI-compatible `/llm` route
 with that token as the bearer. The gateway validates the JWT, checks
-`llm:invoke`, and injects the real Azure API key upstream
-(`backendAuth.key`) — it is the **only** place the Azure credential lives; the
-egress from the cluster to Azure happens at the gateway, not the agent pods.
+`llm:invoke`, and injects the real provider API key upstream
+(`backendAuth.key`) — it is the **only** place that credential lives; the
+egress from the cluster happens at the gateway, not the agent pods. Which
+provider answers is generated from `.demo.env` into the gateway's config
+(`openai` / `anthropic` / `gemini` / `azure`) and changes nothing above — see
+[`llm-providers.md`](llm-providers.md).
 This is a single RFC 8693 exchange with **no `exchange-shim` hop and no
-`act`-chain enforcement**: Azure sits outside the Curity/SPIFFE trust domain, so
+`act`-chain enforcement**: the provider sits outside the Curity/SPIFFE trust domain, so
 there is no downstream workload identity to nest — it's a one-hop credential
 swap, not a delegation chain. `agent-copilot` uses it for the read/observe path;
 `agent-specialist` for the privileged inspect→act→verify loop.
@@ -316,8 +319,8 @@ call is refused at `mcp-ops` (a legible role-denial the specialist relays).
 | Each resource server | the OBO actor chain | per-position SPIFFE-ID regex over the nested `act` claim |
 | ztunnel (Ambient) | peer workloads | Istio mTLS (istiod-issued certs — a distinct trust domain from SPIRE, but the same shared root) |
 | obs-api / ops-api | their own right to touch the cluster | Kubernetes RBAC — a Role/RoleBinding in `prod` bound to their `apis`-namespace ServiceAccounts |
-| agentgateway (`/llm`) | the caller is a Curity-authorized human-on-behalf-of request | `aud=llm-gateway` JWT + `llm:invoke` scope — **not** an actor chain, since the request terminates at Azure rather than another workload |
-| Azure OpenAI | the request came from agentgateway | a static API key (`backendAuth.key`) injected only at the gateway; the agents never possess it |
+| agentgateway (`/llm`) | the caller is a Curity-authorized human-on-behalf-of request | `aud=llm-gateway` JWT + `llm:invoke` scope — **not** an actor chain, since the request terminates at the LLM provider rather than another workload |
+| LLM provider | the request came from agentgateway | a static API key (`backendAuth.key`) injected only at the gateway; the agents never possess it |
 
 **Two identity systems at different layers, one shared root of trust.** Istio
 Ambient's mTLS uses istiod-issued workload certs for *transport* identity
@@ -380,14 +383,15 @@ Boundary properties worth calling out:
   gateway's generic deny cannot carry the RFC 9470 `WWW-Authenticate` challenge the
   step-up flow needs, nor match the nested `act.act.sub` chain (the step-up 401 still
   originates at mcp-ops/ops-api and passes back through the gateway).
-- **LLM egress gateway (agentgateway `/llm`).** Azure OpenAI sits outside the
+- **LLM egress gateway (agentgateway `/llm`).** The LLM provider sits outside the
   Curity/SPIFFE trust domain, so there is no downstream workload to nest into an
   `act` chain — this route is a single upstream credential swap, not a
   delegation hop. Each agent exchanges the user token (subject) + its SPIFFE
   SVID (actor) once for `aud=llm-gateway`/`scope=llm:invoke`; agentgateway
-  validates that JWT and `llm:invoke` before the request ever reaches Azure, and
-  is the only place the real Azure API key lives (`backendAuth.key`, injected as
-  the `api-key` header) — the agents never hold it.
+  validates that JWT and `llm:invoke` before the request ever leaves the cluster,
+  and is the only place the real provider API key lives (`backendAuth.key`) — the
+  agents never hold it. This boundary is identical whichever provider is
+  configured; only the fragment supplying `backendAuth`/`backends` changes.
 - **Audience confinement.** Each exchanged token names exactly one audience.
   A token minted for `mcp-observability` is rejected by `mcp-ops` and vice-versa,
   so a leaked read-tier token cannot drive a write.
@@ -536,7 +540,7 @@ produced no output.
 | RFC / spec | Where it shows up |
 |---|---|
 | **OIDC / OAuth 2.0** | Curity issues the user token (code + PKCE) |
-| **RFC 8693** token exchange | every agent/MCP hop, nested `act` per §4.1; also the single-hop LLM egress exchange (`aud=llm-gateway`), which does **not** nest `act` — Azure has no downstream workload identity |
+| **RFC 8693** token exchange | every agent/MCP hop, nested `act` per §4.1; also the single-hop LLM egress exchange (`aud=llm-gateway`), which does **not** nest `act` — the LLM provider has no downstream workload identity |
 | **CIMD** (Client ID Metadata Documents draft) + **RFC 7523** `private_key_jwt` | the two agents authenticate as ephemeral clients — `client_id` is a self-hosted metadata URL, auth is an asymmetric signed assertion |
 | **SPIFFE / SPIRE** | per-workload JWT-SVID, presented as `actor_token` |
 | **RFC 9470** step-up | `acr=mfa` required for `ops:write`; `WWW-Authenticate: insufficient_user_authentication` |

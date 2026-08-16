@@ -1,0 +1,21 @@
+# Golden fixture for scripts/test-render-gateway-config.sh.
+# This is the `llm` route's backendAuth+backends as deployed on 2026-08-14, with
+# exactly three intended changes: the key env var normalized to $LLM_API_KEY, the
+# resource name rendered from .demo.env, and the backend label held constant at
+# `llm` so telemetry does not move when the provider changes.
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+            location:
+              header:
+                name: api-key
+                prefix: ""
+      backends:
+      - ai:
+          name: llm
+          provider:
+            azure:
+              resourceName: my-azure-resource
+              resourceType: openAI
+              model: gpt-4.1
+              apiVersion: "2024-04-01-preview"

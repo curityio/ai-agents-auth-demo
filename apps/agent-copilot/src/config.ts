@@ -16,9 +16,7 @@ export interface Config {
   specialistA2aUrl: string;
   specialistAudience: string;
   specialistScope: string;
-  llmProvider: 'gateway' | 'anthropic' | 'ollama';
-  llmModel: string;
-  /** Base URL of the agentgateway LLM route. Only used when llmProvider === 'gateway'. */
+  /** Base URL of the agentgateway LLM route. */
   llmGatewayUrl: string;
   /** RFC 8693 exchange audience for the gateway LLM route. */
   llmGatewayAudience: string;
@@ -33,11 +31,6 @@ function required(name: string): string {
 }
 
 export function loadConfig(): Config {
-  const provider = (process.env.LLM_PROVIDER ?? 'gateway').toLowerCase();
-  if (provider !== 'gateway' && provider !== 'anthropic' && provider !== 'ollama') {
-    throw new Error(`LLM_PROVIDER must be 'gateway' | 'anthropic' | 'ollama' (got '${provider}')`);
-  }
-
   const cfg: Config = {
     port: Number(process.env.PORT ?? 8081),
     curityIssuer: required('CURITY_ISSUER'),
@@ -59,10 +52,6 @@ export function loadConfig(): Config {
     // llm:invoke in its delegated subject token to exchange to aud=llm-gateway
     // for its own reasoning hop (else its LLM egress fails mid-remediation).
     specialistScope: process.env.SPECIALIST_SCOPE ?? 'obs:read ops:write llm:invoke',
-    llmProvider: provider,
-    llmModel:
-      process.env.LLM_MODEL ??
-      (provider === 'anthropic' ? 'claude-sonnet-4-6' : provider === 'gateway' ? 'gpt-4.1' : 'qwen2.5-coder:7b'),
     llmGatewayUrl:
       process.env.LLM_GATEWAY_URL ?? 'http://agentgateway.mcp.svc.cluster.local:8080/llm',
     llmGatewayAudience: process.env.LLM_GATEWAY_AUDIENCE ?? 'llm-gateway',

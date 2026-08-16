@@ -320,15 +320,41 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       NOT mTLS SPIFFE identity. The Kubernetes Gateway API CRDs / `istio-waypoint`
       GatewayClass are no longer needed for MCP authz.
 
-22. **The LLM egress is a governed hop through agentgateway.** Both agents
-    exchange the user token → `aud=llm-gateway`, `scope=llm:invoke` (one exchange,
-    no shim — Azure is outside the trust domain) and call the gateway's
-    OpenAI-compatible `/llm` route. The gateway holds the ONLY Azure key
-    (`backendAuth.key: $AZURE_OPENAI_API_KEY`, header `api-key`), validates the JWT,
-    and requires `llm:invoke`. `resourceType` is `openAI` (lowercase-o). The AI SDK
-    client (`buildLlm` gateway mode) points `baseURL` at `.../llm` and passes the
-    exchanged JWT as the OpenAI bearer. Agents no longer hold `AZURE_OPENAI_API_KEY`.
-    The route serves **Chat Completions**, so the client must be
+22. **The LLM egress is a governed hop through agentgateway, and the upstream
+    vendor is pluggable — see `docs/llm-providers.md`.** Both agents exchange the
+    user token → `aud=llm-gateway`, `scope=llm:invoke` (one exchange, no shim — the
+    LLM vendor is outside the trust domain) and call the gateway's OpenAI-compatible
+    `/llm` route; this is unchanged regardless of which provider answers it. The
+    gateway holds the ONLY upstream key, now `$LLM_API_KEY` (was
+    `$AZURE_OPENAI_API_KEY`) in the `agentgateway-llm` Secret (ns `mcp`). **The
+    provider block is generated, not hand-edited:** `scripts/render-gateway-config.sh`
+    reads `.demo.env` (`LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`, plus
+    `AZURE_OPENAI_ENDPOINT` for azure) and splices the matching fragment from
+    `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure}.yaml` into
+    `.gen/agentgateway-config.yaml` (gitignored) between `# BEGIN_LLM_PROVIDER` /
+    `# END_LLM_PROVIDER` sentinels — editing the tracked
+    `agentgateway-config.yaml`'s `llm` route between those markers has NO effect,
+    since `make apply`/`make configure-llm` always re-render over it. `jwtAuth` and
+    the `llm:invoke` `authorization` rule sit OUTSIDE the sentinels, so the
+    authorization posture of this hop cannot vary with the provider. **The gateway
+    pins `model:`**, which overrides whatever the client sends, so agents have no
+    `LLM_MODEL` to configure and instead send the constant
+    `model-pinned-at-gateway` (`packages/agent-runtime/src/llm.ts`). `buildLlm` has
+    exactly ONE path — no direct-to-vendor mode exists; reintroducing one would put
+    a static vendor key back in the agent's environment and bypass the `llm:invoke`
+    scope check, which is the property this demo argues against. Two traps, both
+    measured against the pinned `agentgateway:v1.4.1`: **Anthropic breaks if
+    `backendAuth.key.location` is set explicitly** — the `x-api-key`/
+    `anthropic-version` rewrite (`llm/mod.rs:1247-1276`) only fires when the location
+    was left implicit, so "fixing" `anthropic.yaml` to look like `azure.yaml` breaks
+    it — while **Azure is the opposite and REQUIRES the explicit `api-key` header**
+    (it gets no such rewrite); and standalone YAML at v1.4.1 accepts only **eight**
+    provider keys (`openAI, gemini, vertex, anthropic, bedrock, azure, copilot,
+    custom`) — the 13 named presets agentgateway's docs otherwise list (ollama, groq,
+    …) are xDS-only and fail config load with `` unknown variant `ollama` ``.
+    `resourceType` stays `openAI` (lowercase-o) on the azure fragment. The AI SDK
+    client (`buildLlm`) points `baseURL` at `.../llm` and passes the exchanged JWT as
+    the OpenAI bearer. The route serves **Chat Completions**, so the client must be
     `@ai-sdk/openai-compatible` — `@ai-sdk/openai` would POST `/llm/responses`
     (fact #30).
 
@@ -681,7 +707,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 ```bash
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
 make demo            # stand up the full platform on a fresh KIND cluster
-make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, Azure LLM key
+make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, LLM provider key
+make configure-llm   # switch LLM provider after editing .demo.env
+make validate-llm    # validate all provider fragments against the pinned gateway image
 make images          # build all 8 app images and `kind load` them
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
@@ -742,5 +770,7 @@ exists when tsc reads it; don't remove that dependency.
   [`docs/demo.md`](docs/demo.md) — the canonical trio.
 - [`docs/curity-seed.md`](docs/curity-seed.md) — offline Curity setup checklist.
 - [`docs/spiffe.md`](docs/spiffe.md) — SPIFFE identity scheme.
+- [`docs/llm-providers.md`](docs/llm-providers.md) — switching the LLM vendor
+  behind agentgateway's `/llm` route.
 - [`docs/archive/`](docs/archive/) — historical build log: phase notes,
   `superpowers/` design specs, and the original implementation plan.

@@ -1,10 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { generateText } from 'ai';
 import { buildLlm, type LlmConfig } from './llm.js';
 
 const gw: LlmConfig = {
-  llmProvider: 'gateway',
-  llmModel: 'gpt-4.1',
   llmGatewayUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/llm',
 };
 
@@ -24,26 +22,18 @@ function chatCompletion(): Response {
 }
 
 function recordingFetch() {
-  const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+  const seen: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
   const impl: typeof fetch = async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
-    seen.push({ url, headers });
+    seen.push({ url, headers, body: typeof init?.body === 'string' ? init.body : undefined });
     return chatCompletion();
   };
   return { impl, seen };
 }
 
 describe('buildLlm', () => {
-  const saved = { ...process.env };
-  beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-anthropic';
-  });
-  afterEach(() => {
-    process.env = { ...saved };
-  });
-
-  it('builds an OpenAI-compatible model in gateway mode with an injected token', () => {
+  it('builds an OpenAI-compatible model with an injected token', () => {
     const model = buildLlm(gw, { accessToken: 'tok-123' });
     expect(model).toBeDefined();
   });
@@ -54,7 +44,7 @@ describe('buildLlm', () => {
   // of gen_ai.usage.* accounting, so that drift breaks the LLM hop AND its
   // telemetry. Asserting on `model.provider` alone cannot see this — only the
   // request path can.
-  it('gateway mode POSTs to the chat completions path under the gateway base URL', async () => {
+  it('POSTs to the chat completions path under the gateway base URL', async () => {
     const { impl, seen } = recordingFetch();
     const model = buildLlm(gw, { accessToken: 'tok-123', fetchImpl: impl });
     await generateText({ model, prompt: 'hi' });
@@ -64,7 +54,7 @@ describe('buildLlm', () => {
 
   // The exchanged aud=llm-gateway JWT must arrive as the bearer: that is what the
   // gateway validates and what it requires `llm:invoke` on before swapping in the
-  // Azure api-key upstream. Sending the wrong header means a 401 at the gateway.
+  // upstream provider key. Sending the wrong header means a 401 at the gateway.
   it('sends the exchanged token as the Authorization bearer', async () => {
     const { impl, seen } = recordingFetch();
     const model = buildLlm(gw, { accessToken: 'tok-123', fetchImpl: impl });
@@ -72,18 +62,23 @@ describe('buildLlm', () => {
     expect(seen[0].headers.authorization).toBe('Bearer tok-123');
   });
 
-  it('throws in gateway mode when accessToken is missing', () => {
+  // The gateway's provider block pins `model:`, which overrides whatever the
+  // client sends — so agents have no model to choose. This asserts they do not
+  // start choosing one again. The placeholder is deliberately self-describing:
+  // if a provider fragment ever omits `model:`, this exact string reaches the
+  // vendor and the error names it.
+  it('sends the gateway-pinned placeholder as the model', async () => {
+    const { impl, seen } = recordingFetch();
+    const model = buildLlm(gw, { accessToken: 'tok-123', fetchImpl: impl });
+    await generateText({ model, prompt: 'hi' });
+    expect(JSON.parse(seen[0].body!).model).toBe('model-pinned-at-gateway');
+  });
+
+  it('throws when accessToken is missing', () => {
     expect(() => buildLlm(gw)).toThrow(/accessToken/);
   });
 
-  it('throws in gateway mode when llmGatewayUrl is missing', () => {
-    expect(() => buildLlm({ llmProvider: 'gateway', llmModel: 'gpt-4.1' }, { accessToken: 't' })).toThrow(
-      /LLM_GATEWAY_URL/,
-    );
-  });
-
-  it('builds an Anthropic model when provider=anthropic (direct, no token)', () => {
-    const model = buildLlm({ llmProvider: 'anthropic', llmModel: 'claude-sonnet-4-6' });
-    expect(model.provider).toContain('anthropic');
+  it('throws when llmGatewayUrl is missing', () => {
+    expect(() => buildLlm({ llmGatewayUrl: '' }, { accessToken: 't' })).toThrow(/LLM_GATEWAY_URL/);
   });
 });

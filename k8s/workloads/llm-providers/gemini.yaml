@@ -1,0 +1,15 @@
+# Google Gemini (API-key auth via the OpenAI-compatible surface).
+# https://aistudio.google.com/apikey
+#
+# agentgateway routes this to /v1beta/openai/chat/completions, which accepts
+# Authorization: Bearer — so, as with openai.yaml, leave `location` implicit.
+# (Vertex AI is a different provider key and needs GCP credentials; not shipped.)
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+      backends:
+      - ai:
+          name: llm
+          provider:
+            gemini:
+              model: __LLM_MODEL__
