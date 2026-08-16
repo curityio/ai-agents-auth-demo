@@ -360,6 +360,173 @@ Some things worth counting out loud while the logs are on screen:
 > output is `AUTHJS_DEBUG`, off by default, because it dumps the decoded ID token
 > and every cookie on each login and drowns everything above.
 
+### 6.2 Log tap reference — one command per workload
+
+§6.1 tails the three services that tell the story. This is the exhaustive list,
+for when you need a specific hop. All of it assumes `alias k=kubectl`.
+
+Selecting by `-l app=…` rather than `deploy/…` means the command survives a
+rollout — after `make images` reloads a `:dev` image and you restart the
+deployment, the same line follows the new pod.
+
+```bash
+# ── the request path, in order ──────────────────────────────────────────────
+k -n web    logs -f -l app=web                             # BFF: login, session cookie, user token
+k -n agents logs -f -l app=agent-copilot                   # exchange #1 → aud=mcp-gateway, obs:read
+k -n agents logs -f -l app=agent-specialist                # cross-tier LLM agent (restart flow)
+k -n mcp    logs -f -l app=agentgateway -c agentgateway    # JWT validation, tier authz, tools/list filter, /llm
+k -n mcp    logs -f -l app=agentgateway -c exchange-shim   # the extAuthz OBO hop (same pod)
+k -n mcp    logs -f -l app=mcp-observability               # re-exchange → obs-api
+k -n mcp    logs -f -l app=mcp-ops                         # re-exchange → ops-api (+ set_deployment_image role gate)
+k -n apis   logs -f -l app=obs-api                         # K8s reads: pods, logs, deployments
+k -n apis   logs -f -l app=ops-api                         # K8s writes: patch deployments
+k -n curity logs -f -l app=curity                          # the sole token issuer
+```
+
+**`agentgateway` is the one workload that needs an explicit `-c`.** `kubectl`
+defaults to the *first* container in the pod spec. For every other workload here
+that happens to be the app container, but the gateway pod lists `exchange-shim`
+first — so omitting `-c` silently tails the shim while you believe you are
+reading the gateway. Both are listed above because they are two different
+things: the gateway logs the authorization decision, the shim logs the token it
+minted in response. Either one alone is half a hop.
+
+SPIFFE sidecars — SVID rotation, and the first place to look when a workload
+cannot authenticate itself:
+
+```bash
+k -n web    logs -f -l app=web               -c spiffe-helper
+k -n agents logs -f -l app=agent-copilot     -c spiffe-helper
+k -n agents logs -f -l app=agent-specialist  -c spiffe-helper
+k -n mcp    logs -f -l app=agentgateway      -c spiffe-helper
+k -n mcp    logs -f -l app=mcp-observability -c spiffe-helper
+k -n mcp    logs -f -l app=mcp-ops           -c spiffe-helper
+k -n apis   logs -f -l app=obs-api           -c spiffe-helper
+k -n apis   logs -f -l app=ops-api           -c spiffe-helper
+```
+
+A whole tier in one pane. `--prefix` stamps each line with its pod and
+container, which is what makes an interleaved stream readable:
+
+```bash
+k -n agents logs -f --prefix -l 'app in (agent-copilot,agent-specialist)'
+k -n apis   logs -f --prefix -l 'app in (obs-api,ops-api)'
+k -n mcp    logs -f --prefix --all-containers --max-log-requests 10 \
+     -l 'app in (agentgateway,mcp-ops,mcp-observability)'
+```
+
+`--max-log-requests` is **required** on that last one, not decorative: the `mcp`
+tier is 7 containers across 3 pods and `kubectl` refuses to follow more than 5
+streams by default (`error: you are attempting to follow 7 log streams…`).
+
+Every refusal across the mesh in the last ten minutes — `-l app` here is an
+existence selector, matching any pod carrying the label at all:
+
+```bash
+for ns in web agents mcp apis; do
+  k -n $ns logs --prefix --all-containers --since=10m -l app --ignore-errors | grep DENY
+done
+```
+
+Two caveats worth knowing before you need them. A label selector reads only from
+*live* pods, so a CrashLooped container's evidence is not reachable this way —
+`--previous` needs an explicit pod name. And the `trace` field on every OBO block
+is the join key across all of these panes (and into Tempo); if it is missing
+entirely, that is itself the diagnosis — an uninstrumented server emits no span
+rather than a zeroed one (`architecture.md` §7.1).
+
+### 6.3 Reading a workload's JWT-SVID
+
+The SVID is what every workload presents as the `actor_token` in its RFC 8693
+exchange — it is the machine half of the delegation, the thing that makes `act`
+trustworthy. Showing one on screen answers "how does Curity know this really is
+the copilot?" better than any slide.
+
+Every workload writes it to the **same path**, `/run/spiffe/curity-actor.jwt`,
+set in two places that must agree: the `spiffe-helper` sidecar's
+`jwt_svid_file_name` (which writes it) and the app's `SPIFFE_SVID_PATH` env
+(which reads it).
+
+```bash
+k -n agents exec deploy/agent-copilot -c agent -- cat /run/spiffe/curity-actor.jwt
+```
+
+Decoded — the app containers are Node images, so the tidiest version decodes
+in-pod and needs nothing installed locally:
+
+```bash
+k -n agents exec deploy/agent-copilot -c agent -- node -e \
+  "const t=require('fs').readFileSync(process.env.SPIFFE_SVID_PATH,'utf8').trim();
+   console.log(JSON.stringify(JSON.parse(Buffer.from(t.split('.')[1],'base64url')),null,2))"
+```
+
+```json
+{
+  "aud": ["https://curity.localtest.me/oauth/v2/oauth-token"],
+  "exp": 1786610611,
+  "iat": 1786610311,
+  "iss": "https://oidc-discovery.demo.curity.local",
+  "sub": "spiffe://demo.curity.local/ns/agents/sa/agent-copilot"
+}
+```
+
+Three things to point at. `sub` is the SPIFFE ID that `token-exchange.js` matches
+against `allowedActors` and that lands in the next token's `act`. `aud` is
+Curity's token endpoint — the SVID is audience-bound **at fetch time** by the
+`spiffe-helper` config, not by the `ClusterSPIFFEID` (§`docs/spiffe.md`). `iss`
+is SPIRE's OIDC discovery provider, whose JWKS the exchange procedure fetches at
+runtime, which is why a cluster rebuild or key rotation needs no snapshot step.
+
+To decode locally instead, pad the base64url yourself — a bare
+`base64 -d` fails on macOS, and jq's `@base64d` does not accept the URL alphabet:
+
+```bash
+k -n agents exec deploy/agent-copilot -c agent -- cat /run/spiffe/curity-actor.jwt \
+  | jq -Rr 'split(".")[1]|gsub("-";"+")|gsub("_";"/")|.+("="*((4-(length%4))%4))|@base64d' | jq .
+```
+
+Every workload's identity and time-to-expiry in one sweep — a good way to show
+that these are short-lived and continuously rotated, not provisioned secrets:
+
+```bash
+printf '%s\n' web:web:web agents:agent-copilot:agent agents:agent-specialist:agent \
+  mcp:agentgateway:exchange-shim mcp:mcp-observability:mcp mcp:mcp-ops:mcp \
+  apis:obs-api:api apis:ops-api:api |
+while IFS=: read -r ns app c; do
+  printf '%-20s ' "$app"
+  k -n "$ns" exec "deploy/$app" -c "$c" -- cat /run/spiffe/curity-actor.jwt 2>/dev/null \
+    | jq -Rr 'split(".")[1]|gsub("-";"+")|gsub("_";"/")|.+("="*((4-(length%4))%4))|@base64d' \
+    | jq -r --argjson now "$(date +%s)" '"\(.sub)  exp in \(.exp-$now)s"'
+done
+```
+
+```
+web                  spiffe://demo.curity.local/ns/web/sa/web  exp in 214s
+agent-copilot        spiffe://demo.curity.local/ns/agents/sa/agent-copilot  exp in 287s
+agent-specialist     spiffe://demo.curity.local/ns/agents/sa/agent-specialist  exp in 292s
+agentgateway         spiffe://demo.curity.local/ns/mcp/sa/agentgateway  exp in 106s
+mcp-observability    spiffe://demo.curity.local/ns/mcp/sa/mcp-observability  exp in 146s
+mcp-ops              spiffe://demo.curity.local/ns/mcp/sa/mcp-ops  exp in 225s
+obs-api              spiffe://demo.curity.local/ns/apis/sa/obs-api  exp in 102s
+ops-api              spiffe://demo.curity.local/ns/apis/sa/ops-api  exp in 171s
+```
+
+The 5-minute lifetime is why nothing caches these: `spiffe-helper` rewrites the
+file and every exchange re-reads it. Watch a rotation with
+`k -n agents logs -f -l app=agent-copilot -c spiffe-helper` — `JWT SVID updated`.
+
+Two exec-specific gotchas:
+
+- **`agentgateway` must be read through `-c exchange-shim`.** The gateway
+  container is a minimal Rust image with no `cat` and no shell (`exec failed:
+  "cat": executable file not found in $PATH`). The shim shares the same
+  `/run/spiffe` volume, so it reads the identical file — which is also precisely
+  why the shim exists at all (§`CLAUDE.md` #21: the gateway's CEL cannot read a
+  rotating file, so the exchange runs in a co-located sidecar).
+- **The file is mode `0600` owned by uid 1000 (`node`).** `spiffe-helper` ≤ 0.11.0
+  has no permission override, so the app containers run as `runAsUser: 1000` to
+  match. Exec'ing as any other user gets `Permission denied`.
+
 ---
 
 ## 7. Teardown
