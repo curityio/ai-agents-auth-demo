@@ -11,9 +11,11 @@
 # Assertions:
 #   [1/4] alice-mfa (acr=mfa, roles sre+oncall) → full chain to aud=mcp-gateway,
 #         acr=mfa propagated; restart_deployment through the gateway → 200.
-#   [2/4] alice-pwd (acr=password) → same chain, but the gateway/mcp-ops path
-#         returns 401 with WWW-Authenticate: insufficient_user_authentication,
-#         acr_values="mfa" (step-up challenge, relayed through the gateway).
+#   [2/4] ISSUANCE INVARIANT — a password-only login that ASKS for ops:write does
+#         not get it. Hand-drives /authorize as the web-app client with NO
+#         acr_values, logs alice in with a password, and asserts the issued token
+#         carries obs:read + llm:invoke but NOT ops:write: the ACR Token Issuance
+#         Authorizer withheld the privileged scope at issuance.
 #   [3/4] bob (role=developer, no write role) → Curity returns access_denied at
 #         the FIRST exchange hop (copilot→specialist, scope ops:write) — the role
 #         gate is (sre OR oncall); bob has neither.
@@ -29,17 +31,12 @@
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
 #   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; roles sre+oncall). REQUIRED.
-#   SMOKE_TOKEN_ALICE_PWD  — alice with ops:write BUT acr!=mfa. Optional → skips [2/4].
-#         NOT obtainable by signing in without MFA: the web login scope is
-#         `openid obs:read llm:invoke` (no ops:write), and ops:write is only ever
-#         requested by the step-up re-auth, which demands acr_values=mfa in the same
-#         request — so no UI journey yields ops:write with acr=password. Supplying a
-#         plain non-MFA login token instead fails EARLIER than this assertion intends,
-#         at scope narrowing: `invalid_scope no scope intersects subject + policy`.
-#         To exercise [2/4] you must hand-drive the authorize endpoint with
-#         scope=...ops:write and NO acr_values (alice/sre passes the role gate, and
-#         acr stays html-form). Until then this assertion stays skipped, and the
-#         RFC 9470 challenge itself is covered only by the UI demo.
+#   SMOKE_ALICE_PASSWORD   — alice's html-form password (whatever you chose when you
+#         registered her; see docs/curity-seed.md). Optional → skips [2/4]. NOT a
+#         token: [2/4] drives the login itself, because the thing under test is what
+#         Curity will ISSUE, and no pre-existing token can demonstrate a refusal to
+#         mint one. The web-app client secret is read from the `web-secrets` Secret
+#         in the `web` namespace.
 #   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
 #   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
 #                            Optional → the carol half of [4/4] is skipped.
@@ -53,6 +50,9 @@
 set -euo pipefail
 
 CURITY_TOKEN_URL="${CURITY_TOKEN_URL:-https://curity.localtest.me/oauth/v2/oauth-token}"
+CURITY_BASE="${CURITY_BASE:-https://curity.localtest.me}"
+CURITY_AUTHORIZE_URL="${CURITY_AUTHORIZE_URL:-$CURITY_BASE/oauth/v2/oauth-authorize}"
+WEB_REDIRECT_URI="${WEB_REDIRECT_URI:-https://app.localtest.me/api/auth/callback/curity}"
 GATEWAY_OPS_URL="${GATEWAY_OPS_URL:-http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp}"
 CACERT="$(mkcert -CAROOT)/rootCA.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -130,6 +130,144 @@ build_gateway_ops_token() {
   echo "$gwb"
 }
 
+# parse_post_form: read an HTML page on stdin, echo "<action>\t<urlencoded body>"
+# for its first method=post form (every named non-submit input included), exit 1 if
+# there is none. Curity's login chain renders TWO such forms and both must be
+# submitted properly: the `debug-attribute` action page (no inputs) and the
+# "Redirecting..." auto-POST that resumes /oauth/v2/oauth-authorize, which carries
+# hidden `token` and `state`. Posting that one with an empty body silently returns no
+# redirect and the walk just stops — indistinguishable from a failed login.
+parse_post_form() {
+  python3 -c '
+import sys, urllib.parse
+from html.parser import HTMLParser
+
+class Form(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.action = None
+        self.fields = []
+        self._in = False
+        self._done = False
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "form" and not self._done and (a.get("method") or "").lower() == "post":
+            self._in = True
+            self.action = a.get("action") or ""
+        elif tag == "input" and self._in:
+            name = a.get("name")
+            if name and (a.get("type") or "text").lower() != "submit":
+                self.fields.append((name, a.get("value") or ""))
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self._in:
+            self._in = False
+            self._done = True
+
+f = Form()
+f.feed(sys.stdin.read())
+if f.action is None:
+    sys.exit(1)
+print(f.action + "\t" + urllib.parse.urlencode(f.fields))
+'
+}
+
+# web_login_access_token: hand-drive the authorization_code flow as the web-app
+# client with a PASSWORD-ONLY login, and echo the resulting access token.
+#   $1 username  $2 password  $3 requested scope
+#
+# Three details are load-bearing:
+#   - Redirects are followed ONE HOP AT A TIME and the walk stops as soon as the next
+#     hop leaves Curity. `curl -L` would deliver the code to the real Next.js callback
+#     at app.localtest.me, which redeems it — the token call here would then fail with
+#     an already-used code and read as a policy failure rather than a test bug.
+#   - The html-form authenticator is GET-then-POSTed at the same path
+#     (/authn/authentication/html-auth) and carries no hidden CSRF field, so userName
+#     and password are the whole form.
+#   - The chain is NOT all redirects: it interleaves 302s with rendered forms (see
+#     parse_post_form). All of this was read off the running instance, not assumed.
+web_login_access_token() {
+  local user="$1" pass="$2" scope="$3"
+  local jar loc nloc code resp tok page hdr form action body hops=0
+  jar=$(mktemp)
+
+  # 1. Start the code flow. <force-authn>true</force-authn> on web-app means this
+  #    always reaches the authenticator chooser rather than reusing a session.
+  curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -L -o /dev/null \
+    -G "$CURITY_AUTHORIZE_URL" \
+    --data-urlencode "client_id=web-app" \
+    --data-urlencode "response_type=code" \
+    --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \
+    --data-urlencode "scope=$scope" \
+    --data-urlencode "state=smoke-$$" \
+    || { echo "authorize request failed" >&2; rm -f "$jar"; return 1; }
+
+  # 2. Pick the html-form authenticator, then post the credentials to it.
+  curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null \
+    "$CURITY_BASE/authn/authentication/html-auth"
+  loc=$(curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null -D - \
+    --data-urlencode "userName=$user" --data-urlencode "password=$pass" \
+    "$CURITY_BASE/authn/authentication/html-auth" \
+    | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -1)
+  if [[ -z "$loc" ]]; then
+    echo "login did not advance (no redirect from the credential POST) — wrong password?" >&2
+    rm -f "$jar"; return 1
+  fi
+
+  # 3. Advance the chain until the next hop leaves Curity; that hop carries ?code=.
+  while ((hops < 12)); do
+    hops=$((hops + 1))
+    [[ "$loc" == /* ]] && loc="$CURITY_BASE$loc"
+    [[ "$loc" == *app.localtest.me* ]] && break
+
+    hdr=$(mktemp); page=$(mktemp)
+    curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o "$page" -D "$hdr" "$loc"
+    nloc=$(awk 'tolower($1)=="location:"{print $2}' "$hdr" | tr -d '\r' | tail -1)
+
+    if [[ -z "$nloc" ]]; then
+      form=$(parse_post_form < "$page") || {
+        echo "chain stalled at $loc after $hops hops (no redirect, no POST form)" >&2
+        rm -f "$hdr" "$page" "$jar"; return 1
+      }
+      action=${form%%$'\t'*}
+      body=${form#*$'\t'}
+      [[ -z "$action" ]] && action="$loc"
+      [[ "$action" == /* ]] && action="$CURITY_BASE$action"
+      nloc=$(curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null -D - \
+        --data "$body" "$action" \
+        | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -1)
+    fi
+
+    rm -f "$hdr" "$page"
+    if [[ -z "$nloc" ]]; then
+      echo "chain stalled after $hops hops (last: $loc)" >&2
+      rm -f "$jar"; return 1
+    fi
+    loc="$nloc"
+  done
+  rm -f "$jar"
+
+  code=$(printf '%s' "$loc" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+  if [[ -z "$code" ]]; then
+    echo "no authorization code after $hops hops (last: ${loc:-<none>})" >&2
+    return 1
+  fi
+
+  # 4. Redeem it. web-app is a client_secret_basic client.
+  resp=$(curl -sS --cacert "$CACERT" -u "web-app:$WEB_CLIENT_SECRET" \
+    -d "grant_type=authorization_code" \
+    -d "code=$code" \
+    --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \
+    "$CURITY_TOKEN_URL")
+  tok=$(echo "$resp" | jq -r '.access_token // empty')
+  if [[ -z "$tok" ]]; then
+    echo "code redemption failed: $(echo "$resp" | redact)" >&2
+    return 1
+  fi
+  printf '%s' "$tok"
+}
+
 # gw_mcp: drive an MCP request through the gateway from the specialist pod; echoes
 # "<status>:<www-authenticate>|<body-slice>". Speaks protocol revision 2026-07-28:
 # ONE request, no initialize handshake and no session (the revision removed both).
@@ -197,6 +335,12 @@ SPECIALIST_PEM=$(kubectl -n agents get secret agent-specialist-curity \
   | python3 -c 'import sys,base64;print(base64.b64decode(sys.stdin.read()).decode(),end="")')
 [[ -n "$COPILOT_PEM" && -n "$SPECIALIST_PEM" ]] || { red "missing CIMD private key(s)"; exit 1; }
 
+# Only [2/4] drives a login, so a missing secret is not fatal here — the assertion
+# below skips instead, and says why.
+WEB_CLIENT_SECRET=$(kubectl -n web get secret web-secrets \
+  -o jsonpath='{.data.CURITY_CLIENT_SECRET}' 2>/dev/null \
+  | python3 -c 'import sys,base64;d=sys.stdin.read().strip();print(base64.b64decode(d).decode() if d else "",end="")' 2>/dev/null || true)
+
 # ===========================================================================
 # [1/4] alice + acr=mfa → full chain to aud=mcp-gateway; restart via gateway = 200
 # ===========================================================================
@@ -229,37 +373,57 @@ case "$STATUS" in
 esac
 
 # ===========================================================================
-# [2/4] alice + acr=password → gateway/mcp-ops path returns 401 step-up challenge
+# [2/4] ISSUANCE INVARIANT: Curity will not mint ops:write without acr=mfa
 # ===========================================================================
-if [[ -z "${SMOKE_TOKEN_ALICE_PWD:-}" ]]; then
-  yellow "SKIP [2/4]: SMOKE_TOKEN_ALICE_PWD not set — needs ops:write WITH acr!=mfa, which no"
-  yellow "            UI login produces (see the header). Hand-drive /authorize to obtain."
+# Enforced by the ACR Token Issuance Authorizer `require-mfa-for-privileged`, bound
+# to the ops:write scope in k8s/curity/configmap.yaml. A TIA runs on EVERY grant that
+# requests the scope — the authorization_code login below AND each RFC 8693 exchange
+# hop — so "no privileged scope without MFA" becomes an issuance invariant instead of
+# a convention upheld by whichever client happens to be asking.
+#
+# Before the TIA, the property rested on apps/web/src/auth.ts choosing to request only
+# `openid obs:read llm:invoke` at login, plus the acr checks at mcp-ops/ops-api. A
+# hand-crafted authorize request exactly like the one below DID yield ops:write at
+# acr=html-form. That is what this asserts is no longer possible.
+#
+# This REPLACES the former [2/4] (present an ops:write token with acr!=mfa to mcp-ops
+# and expect a 401 insufficient_user_authentication). That case is now unreachable by
+# construction — no such Curity-issued token can exist — so it could never run. The
+# resource-server check still executes on every call and stays covered by
+# apps/mcp-ops/tests/auth-middleware.test.ts ("401 insufficient_user_authentication
+# when acr is not mfa").
+if [[ -z "${SMOKE_ALICE_PASSWORD:-}" ]]; then
+  yellow "SKIP [2/4]: SMOKE_ALICE_PASSWORD not set — alice's html-form password (see"
+  yellow "            docs/curity-seed.md). [2/4] drives the login itself."
+elif [[ -z "$WEB_CLIENT_SECRET" ]]; then
+  yellow "SKIP [2/4]: could not read CURITY_CLIENT_SECRET from secret/web-secrets in ns web."
 else
-  note "[2/4] alice-pwd: full chain, then gateway/mcp-ops must return 401 step-up challenge"
-  GATEWAY_BEARER_PWD=$(build_gateway_ops_token "$SMOKE_TOKEN_ALICE_PWD") \
-    || { red "  failed to build aud=mcp-gateway token for alice-pwd"; exit 1; }
-  LEAF_ACR_PWD=$(echo "$GATEWAY_BEARER_PWD" | decode_jwt_payload | jq -r '.acr // empty')
-  green "  OK (aud=mcp-gateway token issued; acr=$LEAF_ACR_PWD — expect non-mfa)"
+  note "[2/4] password-only login REQUESTING ops:write → token must come back without it"
+  PWD_TOKEN=$(web_login_access_token "alice" "$SMOKE_ALICE_PASSWORD" "openid obs:read llm:invoke ops:write") \
+    || { red "  password-only login flow failed (diagnostic above)"; exit 1; }
+  PAYLOAD=$(echo "$PWD_TOKEN" | decode_jwt_payload)
+  PWD_ACR=$(echo "$PAYLOAD" | jq -r '.acr // empty')
+  PWD_SCOPE=$(echo "$PAYLOAD" | jq -r '.scope // empty')
 
-  note "  [2/4-C] restart via gateway with password-acr token → expect 401 insufficient_user_authentication"
-  STATUS=$(gw_mcp "$GATEWAY_OPS_URL" "$GATEWAY_BEARER_PWD" "tools/call" \
-    '{"name":"restart_deployment","arguments":{"name":"order-service","namespace":"prod","reason":"step-up smoke pwd"}}')
-  # mcp-ops 401s on the first authenticated (initialize) request; the gateway
-  # relays it. Accept the challenge in either the WWW-Authenticate header or body.
-  case "$STATUS" in
-    INIT_401*insufficient_user_authentication*mfa*|*insufficient_user_authentication*acr_values*mfa*)
-      green "  OK (step-up challenge relayed through the gateway: ${STATUS:0:160})" ;;
-    INIT_401*insufficient_user_authentication*|*insufficient_user_authentication*)
-      green "  OK (401 insufficient_user_authentication relayed: ${STATUS:0:160})" ;;
-    200*)
-      red "  password-acr token was accepted — step-up not enforced: $STATUS"; exit 1 ;;
-    INIT_401*|401*)
-      # A 401 without the challenge string still means step-up denied it; surface for review.
-      yellow "  401 returned but challenge string not visible (gateway may not relay WWW-Authenticate): $STATUS"
-      green "  OK (denied with 401)" ;;
-    *)
-      red "  unexpected response (expected 401 step-up): $STATUS"; exit 1 ;;
+  # Sanity first: if this login somehow came back as MFA, the assertion below would
+  # pass for the wrong reason.
+  [[ "$PWD_ACR" != "mfa" ]] \
+    || { red "  expected a non-MFA acr from a password-only login, got acr=mfa"; exit 1; }
+
+  case " $PWD_SCOPE " in
+    *" ops:write "*)
+      red "  ops:write WAS issued at acr=$PWD_ACR — the ACR TIA is not in effect."
+      red "  Check that the token-service profile has token-issuance-authorizers with"
+      red "  id=require-mfa-for-privileged, and that the ops:write scope carries"
+      red "  <token-issuance-authorizer>require-mfa-for-privileged</token-issuance-authorizer>."
+      exit 1 ;;
   esac
+
+  # Partial denial, not blanket refusal: the TIA withholds one scope and login still
+  # works. A blanket access_denied would also lack ops:write, so assert the survivors.
+  [[ "$PWD_SCOPE" == *"obs:read"* && "$PWD_SCOPE" == *"llm:invoke"* ]] \
+    || { red "  expected obs:read + llm:invoke to survive the denial, got scope: '$PWD_SCOPE'"; exit 1; }
+  green "  OK (acr=$PWD_ACR; ops:write withheld at issuance; scope='$PWD_SCOPE')"
 fi
 
 # ===========================================================================

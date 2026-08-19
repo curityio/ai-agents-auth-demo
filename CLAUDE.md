@@ -700,6 +700,88 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `kubectl logs`, readable by anyone holding `pods/log` in `web`. Its diagnostic
     purpose was settled by fact #1.
 
+33. **A Token Issuance Authorizer (TIA) gates `ops:write` on `acr=mfa`, and its config
+    has one trap that costs a Curity boot.** `require-mfa-for-privileged`
+    (`acr-token-issuance-authorizer`, `required-acr: mfa`) is bound to the `ops:write`
+    `<scope>` in `k8s/curity/configmap.yaml`. A TIA is *configuration* that decides, per
+    requested scope, whether Curity may RELEASE it — `Allow` / `Deny` /
+    `RequireUserConsent` / `SetScopeTimeToLive` — and it runs on every grant, so it
+    complements rather than replaces `token-exchange.js` (see `docs/design.md` §3.2.1).
+    Details that bite:
+    - **A plugin-provided block needs its own `xmlns`.** A YANG `augment` places the
+      augmented node in the **augmenting module's** namespace, so
+      `<acr-token-issuance-authorizer xmlns="https://curity.se/ns/ext-conf/acr-token-issuance-authorizer">`
+      — same pattern as `<totp xmlns=".../ext-conf/totp">` already in the file. The
+      enclosing `<token-issuance-authorizers>` is core `profile-oauth` and inherits.
+      Omit the xmlns and ConfD refuses the whole file with only *"One or more of the XML
+      files in the /opt/idsvr/etc/init directory are corrupt"* — no element named, and
+      Curity CrashLoops, which per fact #15 also costs an HSQLDB re-seed.
+    - **Validate offline before applying, in ~25s.** Boot the SAME pinned image in a
+      scratch namespace with the candidate configmap + the license secret, then read the
+      config back out of CDB: `printf 'show configuration profiles profile token-service
+      settings authorization-server token-issuance-authorizers\nexit\n' | /opt/idsvr/bin/idsh`.
+      "ConfD started" alone is NOT proof the block was accepted — query it. This also
+      prints the resolved license features, which is how
+      `token-issuance-authorization={feature=…, restrictions=[]}` was confirmed present:
+      the Trial/Enterprise license does not list it, but `LegacyFeatureUpgrader` grants it
+      to Basic/Standard/Enterprise, so no new license is needed.
+    - **Denial is per scope.** Only when EVERY requested scope is denied does Curity
+      answer `access_denied` (`isFullyDenied`); otherwise it returns 200 with a narrower
+      token. The demo's step-up beat is unaffected — the specialist's privileged hop
+      requests `ops:write` alone, so it still fails loudly and `runRemediation` already
+      maps that to an RFC 9470 challenge — but do not assume a partially-denied exchange
+      fails at all. **`openid` is exempt** and cannot be bound to a TIA.
+    - **`RequireUserConsent` is a no-op on every hop here.** Both token-exchange grants
+      deliberately ignore the consent obligation (there is no user to ask), so that
+      decision only has effect at the authorization endpoint.
+    - **11.4.0 ships six TIAs** — `acr`, `authzen`, `client-type`, `composite`,
+      `grant-type`, `script`. **`authentication-freshness` exists in the idsvr source but
+      is NOT in the image**; don't plan on it. The `script` TIA runs in
+      `JavaScriptEnvironment.basicEnvironment()` (no `exceptionFactory`, so a TIA cannot
+      raise a custom OAuth error) and is Nashorn-validated at config load, so fact #17's
+      trailing-comma hazard would apply to it too.
+    - **The TIA DOES see `acr` on an exchange hop — verified by a two-sided probe, not
+      assumed.** This was the one real risk: if `acr` were invisible where
+      `getInitializedContext(...)` builds the TIA's `authenticationAttributes`, the gate
+      would false-deny a user who HAD stepped up. Proof needs both halves, because a
+      pass alone is also consistent with the TIA never running: bind a throwaway ACR TIA
+      to a scope the caller already holds (`obs:read`) with `required-acr: html-form` →
+      the copilot→mcp-gateway exchange still issues `scope=obs:read`; flip it to
+      `required-acr: mfa` → the same exchange returns
+      `access_denied "Authorization denied for all requested scopes and claims"`
+      (the `isFullyDenied` path). So the TIA runs at the exchange and reads the
+      delegation's authentication context.
+    - **To apply a configmap change WITHOUT the fact-#15 HSQLDB wipe, merge it into the
+      running ConfD instead of restarting.** The mount is a `subPath`, so it never
+      live-updates and a pod restart is otherwise required — which costs every seeded
+      user + their TOTP enrolments, and therefore blocks `make smoke` (its tokens come
+      from real logins). Instead: `kubectl apply` the configmap so the next boot matches,
+      then `kubectl cp` a `<config>` fragment into the pod and
+      `printf "configure\nload merge /tmp/frag.xml\ncommit\n" | /opt/idsvr/bin/idsh`.
+      ConfD is transactional (a bad merge rolls back), `delete <path>` reverts, and
+      **`show configuration … | display xml` is the only proof it landed** — "Commit
+      complete" is not. Careful with leaf-lists: merge APPENDS to them (so re-merging a
+      different `required-acr` yields both values); plain leafs are replaced.
+    - **`scripts/smoke-stepup.sh` `[2/4]` is the regression test** and it drives a real
+      password-only login (needs `SMOKE_ALICE_PASSWORD`), because the property under test
+      is what Curity will ISSUE — no pre-existing token can demonstrate a refusal to mint
+      one. It replaced an assertion that is now unreachable by construction; the
+      resource-server `acr` check it used to cover lives on in
+      `apps/mcp-ops/tests/auth-middleware.test.ts`. **Driving that login from a script
+      means interleaving 302s with rendered forms** — this profile's chain is
+      `/authorize` → authenticator chooser → `html-auth` (POST `userName`/`password`,
+      no CSRF field) → the `debug-attribute` action page (submit form, no inputs) →
+      a *"Redirecting…"* auto-POST back to `/oauth/v2/oauth-authorize` carrying hidden
+      `token` + `state` → the code. Following only redirects stalls at the action page,
+      and POSTing the resume form with an empty body drops the hidden fields — both
+      failures look exactly like a wrong password, which is why `parse_post_form`
+      submits forms properly rather than curling `-L`. And do NOT use `curl -L` to the
+      end: it hands the code to the real Next.js callback, which redeems it, so the
+      script's own token call then fails on an already-used code.
+      Measured against the pre-TIA config, that flow returns
+      `scope=openid obs:read llm:invoke ops:write` at `acr=html-form` — the hole the
+      TIA closes, and the reason this assertion is a real regression test.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
