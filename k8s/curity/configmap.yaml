@@ -117,7 +117,6 @@ data:
                   <authentication-context-class-reference>mfa</authentication-context-class-reference>
                   <authentication-actions>
                     <login>add-roles</login>
-                    <login>debug-1</login>
                   </authentication-actions>
                   <required-authenticator-for-registration>html-auth</required-authenticator-for-registration>
                   <totp xmlns="https://curity.se/ns/ext-conf/totp">
@@ -220,6 +219,13 @@ data:
                 <scope>
                   <id>ops:write</id>
                   <description>Allow the AI copilot to restart and scale deployments on your behalf. This is a privileged action requiring MFA</description>
+                  <!-- Curity will not mint ops:write unless the delegation's authentication
+                       context class is `mfa`. Before this binding the property was upheld
+                       only by the web app declining to REQUEST ops:write at login
+                       (apps/web/src/auth.ts) plus the acr checks at mcp-ops/ops-api; a
+                       hand-crafted authorize request could still obtain the privileged
+                       scope at acr=html-form. -->
+                  <token-issuance-authorizer>require-mfa-for-privileged</token-issuance-authorizer>
                 </scope>
                 <scope>
                   <id>phone</id>
@@ -421,6 +427,21 @@ data:
                 <expose-metadata>
                 </expose-metadata>
               </openid-connect>
+              <!-- Token Issuance Authorizers (TIA). A TIA decides, per requested scope,
+                   whether Curity may RELEASE that scope: allow / deny / require-consent /
+                   cap-its-TTL. It runs on every grant that requests the scope, including
+                   each RFC 8693 exchange hop (GrantType.OAUTH_TOKEN_EXCHANGE), so the
+                   decision is an issuance invariant rather than a convention upheld by
+                   whichever client happens to be asking. -->
+              <token-issuance-authorizers>
+                <token-issuance-authorizer>
+                  <id>require-mfa-for-privileged</id>
+                  <description>Deny privileged scopes unless the user authenticated with MFA (acr=mfa)</description>
+                  <acr-token-issuance-authorizer xmlns="https://curity.se/ns/ext-conf/acr-token-issuance-authorizer">
+                    <required-acr>mfa</required-acr>
+                  </acr-token-issuance-authorizer>
+                </token-issuance-authorizer>
+              </token-issuance-authorizers>
               <client-store>
                 <config-backed>
                     <!-- agent-copilot and agent-specialist are no longer static clients.

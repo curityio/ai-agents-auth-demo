@@ -284,6 +284,46 @@ The per-client policy as configured:
 | `mcp-ops` | `ops-api`→`ops:write` | `…/ns/mcp/sa/mcp-ops` |
 | `mcp-observability` | `obs-api`→`obs:read` | `…/ns/mcp/sa/mcp-observability` |
 
+### 3.2.1 Token Issuance Authorizer: `ops:write` requires `acr=mfa`
+
+The procedure above is *code* that runs per exchange. A **Token Issuance Authorizer
+(TIA)** is *configuration* that runs per requested scope, on every grant, and decides
+whether Curity may release that scope at all — `Allow`, `Deny`, `RequireUserConsent`,
+or `SetScopeTimeToLive`. One is configured:
+
+| TIA | Type | Bound to | Effect |
+|---|---|---|---|
+| `require-mfa-for-privileged` | `acr-token-issuance-authorizer` (`required-acr: mfa`) | the `ops:write` scope | Curity refuses to mint `ops:write` unless the delegation's authentication context class is `mfa` |
+
+Why it matters: before this binding, "no `ops:write` without MFA" was upheld by the
+**client** — `apps/web/src/auth.ts` logs in with `openid obs:read llm:invoke` and only
+`chat.tsx`'s step-up re-auth adds `ops:write`, bundled with `acr_values=mfa` — plus the
+`acr` checks at `mcp-ops`/`ops-api`. A hand-crafted authorize request could still obtain
+the privileged scope at `acr=html-form`. The TIA makes it an **issuance invariant**:
+the token cannot exist. `scripts/smoke-stepup.sh` `[2/4]` asserts exactly that by
+driving a password-only login that *asks* for `ops:write` and checking it is withheld.
+
+Three properties worth knowing:
+
+- **It applies to every grant**, including each RFC 8693 hop
+  (`GrantType.OAUTH_TOKEN_EXCHANGE`), not just the login — so the gate cannot be
+  stepped around by exchanging into a different audience.
+- **Denial is per scope, not per request.** A request for `openid obs:read llm:invoke
+  ops:write` returns 200 with the first three; only when *every* requested scope is
+  denied does Curity answer `access_denied`. The demo's step-up UX is unaffected either
+  way: the specialist's `ops:write` hop requests that scope alone, so it still fails
+  loudly, and `runRemediation` already maps the resulting refusal to an RFC 9470
+  challenge (`apps/agent-specialist/src/executor.ts`).
+- **The resource-server check stays.** `mcp-ops`/`ops-api` still verify `acr === 'mfa'`
+  (`requiredAcr` in their `config.ts`). That is deliberate defence in depth — the RS must
+  not trust that issuance was gated — and it remains covered by
+  `apps/mcp-ops/tests/auth-middleware.test.ts`.
+
+The plugin ships with the Identity Server (11.4.0 bundles `acr`, `authzen`,
+`client-type`, `composite`, `grant-type`, and `script` TIAs) and needs no new license
+entitlement: `token-issuance-authorization` is granted to Basic/Standard/Enterprise
+editions by the license feature upgrader.
+
 ### 3.3 SVID delivery
 
 A `spiffe-helper` (v0.11.0) sidecar in every workload pod fetches a JWT-SVID for
