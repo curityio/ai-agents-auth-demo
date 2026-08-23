@@ -588,15 +588,31 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 # ============================================================================
 # Teardown + diagnosticsma
 # ============================================================================
+# Same fail-fast ordering as 'reset': a read-only Docker makes 'kind delete' and the
+# image removal below fail, and the image removal is silent ('-' prefix + 2>/dev/null),
+# so without the preflight this wipes node_modules/certs and reports success anyway.
 .PHONY: clean
-clean: kind-down ## Tear down the cluster and remove local artifacts + built images
+clean: docker-writable kind-down ## Tear down the cluster and remove local artifacts + built images
 	rm -rf node_modules .turbo
 	rm -rf $(CERT_DIR)
 	# Remove the locally-built demo images so a fresh `make images` rebuilds clean.
 	-docker image rm -f $(addprefix ai-agents-demo/,$(addsuffix :dev,$(IMAGE_NAMES))) 2>/dev/null
 
+.PHONY: docker-writable
+docker-writable: ## Verify the Docker daemon can WRITE to its own storage (a read-only Docker Desktop VM still answers 'docker info')
+	@bash scripts/docker-writable.sh
+
+# 'docker-writable' runs BEFORE 'kind-down' on purpose: a wedged Docker makes the
+# prune below fail anyway, and without the preflight the cluster is destroyed first,
+# leaving a failed reset strictly worse off than not running it.
 .PHONY: reset
-reset: kind-down ## Recover from a wedged cluster: drop KIND + reclaim docker build cache
+reset: docker-writable kind-down ## Recover from a wedged cluster: drop KIND + reclaim docker build cache
+	@# 'kind-down' is '-' prefixed so a missing cluster is not an error; that also hides a
+	@# genuine teardown failure, so verify the cluster is actually gone before continuing.
+	@kind get clusters 2>/dev/null | grep -q '^$(CLUSTER_NAME)$$' && { \
+		echo "ERROR: cluster '$(CLUSTER_NAME)' still exists after 'kind delete' - teardown failed."; \
+		echo "  Inspect with: docker ps -a --filter name=$(CLUSTER_NAME)"; \
+		exit 1; } || true
 	docker builder prune -af
 	@echo ""
 	@echo "Build cache reclaimed. To reclaim more (review first):"
@@ -608,6 +624,9 @@ reset: kind-down ## Recover from a wedged cluster: drop KIND + reclaim docker bu
 
 .PHONY: doctor
 doctor: ## Show Docker + KIND disk pressure (run before 'make demo' if something's off)
+	@echo "=== Docker storage writability ==="
+	@bash scripts/docker-writable.sh --report
+	@echo ""
 	@echo "=== Docker disk usage ==="
 	@docker system df 2>/dev/null || true
 	@echo ""
