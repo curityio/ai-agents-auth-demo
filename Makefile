@@ -586,7 +586,7 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '\n'
 
 # ============================================================================
-# Teardown + diagnosticsma
+# Teardown + diagnostics
 # ============================================================================
 # Same fail-fast ordering as 'reset': a read-only Docker makes 'kind delete' and the
 # image removal below fail, and the image removal is silent ('-' prefix + 2>/dev/null),
