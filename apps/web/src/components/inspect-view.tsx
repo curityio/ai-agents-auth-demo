@@ -1,70 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Layers, RefreshCw, ShieldAlert } from 'lucide-react';
+import { RefreshCw, ShieldAlert } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { JsonBlock } from '@/components/json-block';
-import { CopyButton } from '@/components/copy-button';
+import { DelegationLedger, type LedgerHop } from '@/components/delegation-ledger';
 import { friendlyFetchError } from '@/lib/fetch-error';
-
-interface ChainHop {
-  hop: string;
-  header: Record<string, unknown> | null;
-  payload: Record<string, unknown> | null;
-  /** Raw JWT — present because /api/inspect requests ?raw=1. */
-  token?: string;
-}
 
 interface InspectResponse {
   sub?: string;
   expires_at?: number;
-  chain: ChainHop[];
-}
-
-/** Render the TTL badge for a hop from its `exp` claim. */
-function TtlBadge({ payload }: { payload: Record<string, unknown> | null }) {
-  const exp = typeof payload?.exp === 'number' ? (payload.exp as number) : undefined;
-  if (exp === undefined) return null;
-  const remaining = Math.round(exp - Date.now() / 1000);
-  if (remaining <= 0) {
-    return <Badge variant="destructive">expired</Badge>;
-  }
-  const m = Math.floor(remaining / 60);
-  const s = remaining % 60;
-  return <Badge variant="secondary">{m > 0 ? `${m}m ${s}s left` : `${s}s left`}</Badge>;
-}
-
-function TokenCard({ hop, primary }: { hop: ChainHop; primary?: boolean }) {
-  return (
-    <Card className={primary ? 'border-primary/40' : undefined}>
-      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
-        <CardTitle className="flex items-center gap-2 font-mono text-sm">
-          {primary ? <KeyRound className="h-4 w-4 text-primary" /> : <Layers className="h-4 w-4 text-muted-foreground" />}
-          {hop.hop}
-        </CardTitle>
-        <TtlBadge payload={hop.payload} />
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <JsonBlock data={{ header: hop.header, payload: hop.payload }} />
-        {hop.token ? (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Raw JWT</span>
-              <CopyButton value={hop.token} label="Copy token" />
-            </div>
-            <pre className="max-h-32 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-foreground/70">
-              {hop.token}
-            </pre>
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">Raw token unavailable for this hop.</p>
-        )}
-      </CardContent>
-    </Card>
-  );
+  chain: LedgerHop[];
 }
 
 export function InspectView() {
@@ -95,7 +41,6 @@ export function InspectView() {
   }, [load]);
 
   const chain = data?.chain ?? [];
-  const [userToken, ...exchanged] = chain;
 
   return (
     <div className="space-y-6">
@@ -103,8 +48,9 @@ export function InspectView() {
         <div className="flex items-start gap-2">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
           <p className="text-sm text-muted-foreground">
-            Every token available to this session right now — the Curity-issued user access token and
-            each RFC&nbsp;8693 exchanged token. Raw JWTs are copyable. <strong>Debug-only.</strong>
+            Every token available to this session right now — the Curity-issued user access token
+            (hop 0) and each RFC&nbsp;8693 exchanged token, diffed against the token it was exchanged
+            from. Raw JWTs are copyable under each hop. <strong>Debug-only.</strong>
           </p>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
@@ -115,33 +61,13 @@ export function InspectView() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {!error && userToken && (
-        <section className="space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            User access token (Curity)
-          </h2>
-          <TokenCard hop={userToken} primary />
-        </section>
+      {!error && chain.length === 0 && !loading && (
+        <p className="text-sm text-muted-foreground">
+          No tokens yet — run a copilot request first, then refresh.
+        </p>
       )}
 
-      {!error && (
-        <section className="space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Exchanged tokens (RFC 8693 on-behalf-of)
-          </h2>
-          {exchanged.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No exchanged tokens yet — run a copilot request first, then refresh.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {exchanged.map((hop, i) => (
-                <TokenCard key={`${hop.hop}-${i}`} hop={hop} />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      {!error && chain.length > 0 && <DelegationLedger chain={chain} showRaw />}
     </div>
   );
 }

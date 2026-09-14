@@ -16,6 +16,7 @@ import { CurityAuthError, oboLog, summarizeJwt } from '@ai-agents-demo/auth-curi
 import { getCimdIdentity } from './cimd-identity.js';
 import { spiffeIdHandler } from './spiffe-route.js';
 import { lastTokenHandler } from './last-token-route.js';
+import { buildToolsHandler } from './tools-route.js';
 
 const SYSTEM_PROMPT = `You are an SRE/DevOps copilot. The user is asking questions about a running Kubernetes cluster.
 
@@ -56,6 +57,10 @@ async function main(): Promise<void> {
   app.get('/last-token', authMiddleware(cfg), (req, res) => {
     void lastTokenHandler(req, res);
   });
+
+  // Debug visibility: per-tier tools/list as agentgateway filters it for this
+  // user (read tier directly; write tier via the specialist's own gates).
+  app.get('/tools', authMiddleware(cfg), buildToolsHandler(cfg));
 
   app.post('/chat', authMiddleware(cfg), async (req, res) => {
     const authed = req as AuthedRequest;

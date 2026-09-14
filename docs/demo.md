@@ -66,6 +66,15 @@ The copilot exchanges Alice's token for an `obs:read` token scoped to
 no MFA prompt. The trace shows `act=[obs-mcp, agentgateway, copilot]`,
 `scope=obs:read`.
 
+Now click **Show chain** on the *On-behalf-of chain* card. Each row is one
+token, diffed against the token it was exchanged from: on hop 1 the scopes
+Alice's login token carried but the copilot did *not* pass on (`ops:write`,
+`llm:invoke`) stay on screen struck through, the audience narrows to
+`mcp-gateway`, and `act` gains exactly one workload. The `may_act` line on each
+row names who may present that token next — and the green check on the *next*
+row confirms that is who did. This is the delegation story as a picture; the
+raw JWT is one click away under each row for anyone who wants the claims.
+
 ### Act 2 — Cross-tier remediation (privileged, with step-up)
 
 > Alice asks: *"Roll order-service back to the previous image and restart it."*
@@ -109,13 +118,24 @@ things, decided in different places.
 > asks to *change its image*.
 
 Carol holds `oncall`, so Curity grants her `ops:write` and the restart succeeds.
-But when the specialist calls `set_deployment_image`, **`mcp-ops`** refuses it
-with a legible role-denial — that tool is `sre`-only (`Config.setImageRequiredRoles`).
-**Expected:** restart works; the image change comes back as a clear "requires the
-`sre` role" message the specialist relays. The teaching point: the gateway grants
-the *tier* (`ops:write`), but the fine-grained per-tool split is enforced
-**downstream at the resource tier** — carol even *sees* `set_deployment_image` in
-`tools/list` (the gateway lists all ops tools); it's the **call** that's denied.
+But when the specialist calls `set_deployment_image`, the call is refused with a
+legible role-denial — that tool is `sre`-only. Two layers enforce it: agentgateway's
+HTTP-layer `authorization` rule (keyed on `Mcp-Name`, answers a bare 403 that the
+toolset turns into a factual tool result) and, authoritatively, **`mcp-ops`**
+(`Config.setImageRequiredRoles`). **Expected:** restart works; the image change
+comes back as a clear "not authorized" message the specialist relays. The
+teaching point: the gateway grants the *tier* (`ops:write`), but the per-tool
+split is finer than the tier — carol even *sees* `set_deployment_image` in
+`tools/list`; it's the **call** that's denied.
+
+Make the "she can see it" half visible with the **What this identity can see**
+card (**Check tools**): the write-tier column lists all three ops tools for carol,
+exactly as agentgateway's `tools/list` returned them for her token. Contrast with
+the other two personas on the same card — bob's write column shows Curity's
+`access_denied` from the exchange, and alice *before* MFA shows a step-up notice
+because the specialist refused to even ask for an `ops:write` token without
+`acr=mfa`. Nothing on that card is persona-specific: each verdict comes from the
+same exchange a real remediation would perform.
 
 ---
 
@@ -226,6 +246,25 @@ open https://app.localtest.me
 Log in as **alice** and walk Acts 1–2 (read, then step-up remediation). Then log
 in as **bob** for the role denial (Act 3), and **carol** for the per-tool split
 (Act 4).
+
+Below the chat, three cards turn the identity plumbing into something the room
+can see; all three are on-demand buttons so nothing is minted until you press:
+
+| Card | Button | What it shows |
+|---|---|---|
+| **Workload identities** | *Show identities* | Each pod's live SPIFFE JWT-SVID — the `actor_token` of every exchange. |
+| **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. |
+| **What this identity can see** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
+
+The same ledger, with copyable raw JWTs, is at `https://app.localtest.me/inspect`
+(debug-only, `AUTH_DEBUG=true`) — useful on a projector when the chat is busy.
+
+> **Spoken aside for the `may_act` row.** `act` is the audit trail (who *did*
+> act); `may_act` is authorization (who *may* act next). The copilot mints the
+> specialist's token, so it holds a copy — and could try to spend that delegation
+> itself. If it does, Curity refuses:
+> `actor … is not authorized by the subject token may_act (…)`. That refusal is
+> the "prove it" moment: the chain isn't just recorded, it's constrained.
 
 ### 5.4 (Optional) Verify auth behavior headlessly
 

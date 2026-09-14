@@ -12,6 +12,7 @@ import { buildExecutor } from './executor.js';
 import { buildLastTokenHandlers } from './last-token-route.js';
 import { getCimdIdentity } from './cimd-identity.js';
 import { spiffeIdHandler } from './spiffe-route.js';
+import { buildToolsHandler } from './tools-route.js';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -76,6 +77,11 @@ async function main(): Promise<void> {
   // Debug-only; gate behind a DEBUG flag before production.
   const { authn: lastTokenAuth, handler: lastTokenHandler } = buildLastTokenHandlers(cfg);
   app.get('/last-token', lastTokenAuth, lastTokenHandler);
+
+  // Debug visibility: what agentgateway's tools/list returns for THIS caller on
+  // the write tier — after the same acr pre-check + ops:write exchange a real
+  // remediation performs. Feeds the web UI's "What this identity can see" card.
+  app.get('/tools', buildToolsHandler(cfg));
 
   app.listen(cfg.port, () => {
     console.log(
