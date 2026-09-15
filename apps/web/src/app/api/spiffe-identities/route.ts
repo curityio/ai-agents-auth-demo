@@ -65,7 +65,10 @@ async function readLocalWebSvid(): Promise<SvidView> {
 // mirrors the chain the user just exercised (every MCP hop now goes THROUGH the
 // agentgateway, so it appears in both flows):
 //   - read (default): web → agent-copilot → agentgateway → mcp-observability
-//   - privileged:      web → agent-copilot → agent-specialist → agentgateway → mcp-ops
+//   - privileged:      web → agent-copilot → agent-specialist → agentgateway → mcp-observability + mcp-ops
+// The specialist is an inspect → act → verify loop holding TWO tokens: it reads
+// the deployment through mcp-observability before and after it writes through
+// mcp-ops, so both MCP servers present their SVID as actor_token in that flow.
 // (The obs-api/ops-api resource servers are intentionally omitted: they receive the
 // exchanged token but perform no exchange of their own, so they aren't token-exchange
 // participants.)
@@ -77,6 +80,7 @@ export async function GET(req: Request) {
       ? [
           fetchRemote('agent-specialist', SPECIALIST_URL),
           fetchRemote('agentgateway', AGENTGATEWAY_URL),
+          fetchRemote('mcp-observability', MCP_URL),
           fetchRemote('mcp-ops', MCP_OPS_URL),
         ]
       : [

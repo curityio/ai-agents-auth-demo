@@ -67,13 +67,25 @@ no MFA prompt. The trace shows `act=[obs-mcp, agentgateway, copilot]`,
 `scope=obs:read`.
 
 Now click **Show chain** on the *On-behalf-of chain* card. Each row is one
-token, diffed against the token it was exchanged from: on hop 1 the scopes
-Alice's login token carried but the copilot did *not* pass on (`ops:write`,
-`llm:invoke`) stay on screen struck through, the audience narrows to
+token, diffed against the token it was exchanged from. The first row under
+Alice's login token is the **model call** (`agent-copilot → agentgateway (/llm)`,
+marked *leaf*): the same delegation narrowed to `aud=llm-gateway` and
+`scope=llm:invoke` — `openid`, `obs:read` and `ops:write` struck through — with
+the copilot nested into `act` and **no `may_act`**, because the LLM provider
+sits outside the trust domain and nothing exchanges that token onward. That is
+least privilege applied to the model itself, and it is why the vendor key never
+has to exist in the agent. On the MCP row the scopes the copilot did *not* pass
+on (`ops:write`, `llm:invoke`) stay struck through, the audience narrows to
 `mcp-gateway`, and `act` gains exactly one workload. The `may_act` line on each
 row names who may present that token next — and the green check on the *next*
 row confirms that is who did. This is the delegation story as a picture; the
 raw JWT is one click away under each row for anyone who wants the claims.
+
+> The leaf rides with the flow it was minted in: the copilot only calls the
+> model on the read path, so under a restart the leaf you see is the
+> *specialist's* (`agent-specialist → agentgateway (/llm)`), minted from the
+> `aud=agent-specialist` delegation token. If a flow is refused before it
+> reaches the model (step-up, wrong role), no leaf is shown for it.
 
 ### Act 2 — Cross-tier remediation (privileged, with step-up)
 
@@ -130,7 +142,12 @@ split is finer than the tier — carol even *sees* `set_deployment_image` in
 
 Make the "she can see it" half visible with the **What this identity can see**
 card (**Check tools**): the write-tier column lists all three ops tools for carol,
-exactly as agentgateway's `tools/list` returned them for her token. Contrast with
+exactly as agentgateway's `tools/list` returned them for her token — with
+`set_deployment_image` marked **needs sre** and a *Listed ≠ callable* note. That
+marker is not hard-coded in the UI: `mcp-ops` publishes the tool's required roles
+in its `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
+`SET_IMAGE_REQUIRED_ROLES` config its call-time gate enforces), the gateway relays
+it, and the specialist compares it with the caller's `roles`. Contrast with
 the other two personas on the same card — bob's write column shows Curity's
 `access_denied` from the exchange, and alice *before* MFA shows a step-up notice
 because the specialist refused to even ask for an `ops:write` token without
@@ -253,7 +270,7 @@ can see; all three are on-demand buttons so nothing is minted until you press:
 | Card | Button | What it shows |
 |---|---|---|
 | **Workload identities** | *Show identities* | Each pod's live SPIFFE JWT-SVID — the `actor_token` of every exchange. |
-| **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. |
+| **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. The `aud=llm-gateway` token appears as a *leaf* row (no `may_act`) under the agent that called the model. |
 | **What this identity can see** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
 
 The same ledger, with copyable raw JWTs, is at `https://app.localtest.me/inspect`

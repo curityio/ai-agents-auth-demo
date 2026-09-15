@@ -83,6 +83,8 @@ interface DecodedView {
 
 interface ChainHopView extends DecodedView {
   hop: string;
+  /** Presenter-facing caveat from the emitting agent (today: the LLM leaf). */
+  note?: string;
 }
 
 interface OboChainResponse {

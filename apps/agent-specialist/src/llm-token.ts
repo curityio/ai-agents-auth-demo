@@ -10,6 +10,15 @@ const svidSource = new SpiffeJwtSvidSource({
 });
 const llmCache = new TokenExchangeCache({ ttlMs: 60_000 });
 
+// Mirror obs-token.ts's peekLastObsExchange: the most recent aud=llm-gateway
+// token this process minted (or reused), so /last-token can surface the model
+// call as a LEAF of the OBO chain. Stamped on cache hits too — the route
+// orders it against the ops:write exchange of the same run by `at`.
+let lastLlmExchange: { accessToken: string; at: number } | undefined;
+export function peekLastLlmExchange(): { accessToken: string; at: number } | undefined {
+  return lastLlmExchange ? { ...lastLlmExchange } : undefined;
+}
+
 /**
  * RFC 8693 exchange → aud=llm-gateway, scope=llm:invoke. Subject = the user
  * token (on-behalf-of), actor = this agent's SPIFFE JWT-SVID. 60 s TTL cache
@@ -29,7 +38,10 @@ export async function obtainLlmToken(opts: {
     acr: subjectAcr,
   };
   const cached = llmCache.get(key);
-  if (cached) return cached.accessToken;
+  if (cached) {
+    lastLlmExchange = { accessToken: cached.accessToken, at: Date.now() };
+    return cached.accessToken;
+  }
 
   const svid = await svidSource.getSvid(SVID_AUDIENCE);
   if (!svid) {
@@ -60,5 +72,6 @@ export async function obtainLlmToken(opts: {
     expiresInSec: result.expiresInSec,
     scope: result.scope,
   });
+  lastLlmExchange = { accessToken: result.accessToken, at: Date.now() };
   return result.accessToken;
 }

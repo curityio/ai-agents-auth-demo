@@ -14,6 +14,18 @@ import type { Config } from './config.js';
  */
 const X_MCP_HEADER_NAMESPACE = { 'x-mcp-header': 'Namespace' } as const;
 
+/**
+ * `_meta` key under which a tool publishes the roles a caller needs to CALL it.
+ * agentgateway couples `tools/list` visibility to its own MCP-layer authz, so the
+ * `set_deployment_image` = sre split is enforced downstream (here, `imageRoleDenial`)
+ * and the tool stays visible to every ops:write caller. Publishing the rule next to
+ * the tool lets the UI say "listed, but not callable for you" from the SAME config
+ * value the call-time gate enforces — not from a second copy that could drift.
+ * Read by `requiredRolesOf` in packages/agent-runtime (same literal, pinned by
+ * tests on both sides). Reverse-DNS prefixed per the MCP `_meta` convention.
+ */
+export const REQUIRED_ROLES_META = 'io.curity.demo/required-roles';
+
 /** Per-request context: the inbound (validated) Bearer to use as subject_token. */
 export interface ToolContext {
   subjectToken: string;
@@ -129,6 +141,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           .meta(X_MCP_HEADER_NAMESPACE),
         reason: z.string().max(512).optional().describe('Human-readable reason.'),
       }),
+      _meta: { [REQUIRED_ROLES_META]: cfg.setImageRequiredRoles },
     },
     async ({ name, image, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;

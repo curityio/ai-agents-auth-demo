@@ -104,7 +104,7 @@ describe('buildLedger', () => {
     },
   };
   const copilotToGateway = {
-    hop: 'agent-copilot → agentgateway',
+    hop: 'agent-copilot → agentgateway (/observability/mcp)',
     payload: {
       sub: 'alice',
       aud: 'mcp-gateway',
@@ -152,7 +152,7 @@ describe('buildLedger', () => {
 
   it('flags a hop whose actor was NOT the one may_act named', () => {
     const rogue = {
-      hop: 'agent-copilot → agentgateway',
+      hop: 'agent-copilot → agentgateway (/observability/mcp)',
       payload: { ...copilotToGateway.payload, act: { sub: SPECIALIST } },
     };
     const rows = buildLedger([user, rogue]);
@@ -187,7 +187,7 @@ describe('buildLedger', () => {
       },
     };
     const specToGatewayRead = {
-      hop: 'agent-specialist → agentgateway (obs:read)',
+      hop: 'agent-specialist → agentgateway (/observability/mcp)',
       payload: {
         sub: 'alice',
         aud: 'mcp-gateway',
@@ -208,7 +208,7 @@ describe('buildLedger', () => {
       },
     };
     const specToGatewayWrite = {
-      hop: 'agent-specialist → agentgateway (ops:write)',
+      hop: 'agent-specialist → agentgateway (/ops/mcp)',
       payload: {
         sub: 'alice',
         aud: 'mcp-gateway',
@@ -223,5 +223,71 @@ describe('buildLedger', () => {
     expect(rows[4]!.diff.scopesDropped).toEqual(['obs:read', 'llm:invoke']);
     expect(rows[4]!.diff.scopesKept).toEqual(['ops:write']);
     expect(rows[4]!.diff.actAppended).toBe('agent-specialist');
+  });
+
+  it('parents an LLM leaf to the agent token it was minted from, and lets the next hop skip past it', () => {
+    // The copilot's aud=llm-gateway token is a sibling of the mcp-gateway token,
+    // not a step toward it: both descend from hop 0. Sitting between them in the
+    // list must not make the mcp-gateway hop diff against the leaf.
+    const copilotToLlm = {
+      hop: 'agent-copilot → agentgateway (/llm)',
+      payload: {
+        sub: 'alice',
+        aud: 'llm-gateway',
+        scope: 'llm:invoke',
+        acr: 'mfa',
+        act: { sub: COPILOT },
+      },
+    };
+    const rows = buildLedger([user, copilotToLlm, copilotToGateway, gatewayToObs]);
+    expect(rows[1]!.parentIndex).toBe(0);
+    expect(rows[1]!.diff.scopesKept).toEqual(['llm:invoke']);
+    expect(rows[1]!.diff.scopesDropped).toEqual(['openid', 'obs:read', 'ops:write']);
+    expect(rows[1]!.diff.audChanged).toBe(true);
+    expect(rows[1]!.diff.mayActHonoured).toBe(true);
+    expect(rows[1]!.summary.mayAct).toBeUndefined();
+    // The real read branch still diffs against hop 0, not against the leaf.
+    expect(rows[2]!.parentIndex).toBe(0);
+    expect(rows[3]!.parentIndex).toBe(2);
+  });
+
+  it('parents the specialist\'s LLM leaf to the delegation token, mid-branch', () => {
+    const copilotToSpecialist = {
+      hop: 'agent-copilot → agent-specialist',
+      payload: {
+        sub: 'alice',
+        aud: 'agent-specialist',
+        scope: 'obs:read ops:write llm:invoke',
+        acr: 'mfa',
+        act: { sub: COPILOT },
+        may_act: { sub: SPECIALIST },
+      },
+    };
+    const specToLlm = {
+      hop: 'agent-specialist → agentgateway (/llm)',
+      payload: {
+        sub: 'alice',
+        aud: 'llm-gateway',
+        scope: 'llm:invoke',
+        acr: 'mfa',
+        act: { sub: SPECIALIST, act: { sub: COPILOT } },
+      },
+    };
+    const specToGatewayRead = {
+      hop: 'agent-specialist → agentgateway (/observability/mcp)',
+      payload: {
+        sub: 'alice',
+        aud: 'mcp-gateway',
+        scope: 'obs:read',
+        acr: 'mfa',
+        act: { sub: SPECIALIST, act: { sub: COPILOT } },
+        may_act: { sub: GATEWAY },
+      },
+    };
+    const rows = buildLedger([user, copilotToSpecialist, specToLlm, specToGatewayRead]);
+    expect(rows[2]!.parentIndex).toBe(1);
+    expect(rows[2]!.diff.scopesDropped).toEqual(['obs:read', 'ops:write']);
+    expect(rows[2]!.diff.mayActHonoured).toBe(true);
+    expect(rows[3]!.parentIndex).toBe(1);
   });
 });

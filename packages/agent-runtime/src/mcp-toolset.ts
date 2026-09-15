@@ -5,8 +5,43 @@ import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 export interface McpToolset {
   /** AI-SDK-shaped tools, one per discovered MCP tool. */
   tools: ToolSet;
+  /**
+   * The server's `tools/list` entries as advertised (name, description, `_meta`).
+   * The AI SDK's tool object has nowhere to carry `_meta`, and that is where
+   * mcp-ops publishes per-tool required roles — see `requiredRolesOf`.
+   */
+  listed: ListedTool[];
   /** Close the underlying transport once a chat turn finishes. */
   close: () => Promise<void>;
+}
+
+export interface ListedTool {
+  name: string;
+  description?: string;
+  /** The tool's `_meta` from `tools/list`, verbatim. */
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * `_meta` key under which an MCP server publishes the roles a caller needs to
+ * CALL a tool that the gateway nevertheless LISTS. Must match
+ * `REQUIRED_ROLES_META` in apps/mcp-ops/src/mcp.ts (pinned by tests on both
+ * sides). Reverse-DNS prefixed per the MCP `_meta` convention.
+ */
+export const MCP_TOOL_META_REQUIRED_ROLES = 'io.curity.demo/required-roles';
+
+export function toListedTool(t: { name: string; description?: string; _meta?: Record<string, unknown> }): ListedTool {
+  return {
+    name: t.name,
+    ...(typeof t.description === 'string' ? { description: t.description } : {}),
+    ...(t._meta ? { meta: t._meta } : {}),
+  };
+}
+
+/** The tool's published required roles, or undefined when it publishes none (or something unreadable). */
+export function requiredRolesOf(t: ListedTool): string[] | undefined {
+  const v = t.meta?.[MCP_TOOL_META_REQUIRED_ROLES];
+  return Array.isArray(v) && v.every((r) => typeof r === 'string') ? (v as string[]) : undefined;
 }
 
 /**
@@ -112,6 +147,7 @@ export async function openMcpToolset(opts: {
 
   return {
     tools,
+    listed: listed.tools.map(toListedTool),
     close: async () => {
       try {
         await client.close();

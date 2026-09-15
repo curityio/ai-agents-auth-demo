@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Check, Clock, KeyRound, ShieldAlert, X } from 'lucide-react';
+import { ArrowRight, Check, Clock, KeyRound, ShieldAlert, Sparkles, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { JsonBlock } from '@/components/json-block';
@@ -14,6 +14,13 @@ export interface LedgerHop {
   payload: Record<string, unknown> | null;
   /** Raw JWT — only present on the debug /inspect surface. */
   token?: string;
+  /**
+   * Presenter-facing caveat set by the agent that emitted the hop. Today only
+   * the aud=llm-gateway rows carry one: the token is a real narrowing of the
+   * user's delegation, but the model provider is outside the trust domain, so
+   * the row is a LEAF of the chain, not a step toward the cluster.
+   */
+  note?: string;
 }
 
 function fmtSeconds(s: number): string {
@@ -69,6 +76,12 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span className="font-mono text-sm font-semibold">{row.hop}</span>
           <div className="flex flex-wrap items-center gap-1.5">
+            {hop.note && (
+              <Badge variant="outline" className="gap-1 font-mono" title={hop.note}>
+                <Sparkles className="h-3 w-3" />
+                leaf
+              </Badge>
+            )}
             {s.acr && (
               <Badge variant={s.acr === 'mfa' ? 'success' : 'secondary'} className="font-mono">
                 acr {s.acr}
@@ -77,6 +90,8 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
             <TtlBadge iat={s.iat} exp={s.exp} />
           </div>
         </div>
+
+        {hop.note && <p className="mb-3 text-xs text-muted-foreground">{hop.note}</p>}
 
         <div className="space-y-2 text-sm">
           <Row>

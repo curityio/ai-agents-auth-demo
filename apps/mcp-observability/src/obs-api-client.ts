@@ -9,9 +9,19 @@ const svidSource = new SpiffeJwtSvidSource({
 
 // Snapshot of the most recent mcp-observability → obs-api exchange, for the
 // /last-token OBO-chain visualization. Single global slot (demo only).
-let lastExchange: { accessToken: string; at: number } | undefined;
+// `subjectToken` is the INBOUND aud=mcp-observability token this call ran with — kept so
+// /last-token can show the real agentgateway → mcp-observability leg. It must not decode
+// its own request bearer for that: the chain walk also travels through the
+// gateway, so that bearer is one the exchange-shim minted for the walk itself.
+export interface LastExchange {
+  subjectToken: string;
+  accessToken: string;
+  at: number;
+}
 
-export function peekLastExchange(): { accessToken: string; at: number } | undefined {
+let lastExchange: LastExchange | undefined;
+
+export function peekLastExchange(): LastExchange | undefined {
   return lastExchange ? { ...lastExchange } : undefined;
 }
 
@@ -56,7 +66,7 @@ export async function obtainObsApiToken(opts: {
     audience: cfg.obsApiAudience,
     scope: cfg.obsApiScope,
   });
-  lastExchange = { accessToken: result.accessToken, at: Date.now() };
+  lastExchange = { subjectToken, accessToken: result.accessToken, at: Date.now() };
   return result.accessToken;
 }
 

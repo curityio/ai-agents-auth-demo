@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import type { Config } from './config.js';
-import { peekLastExchange } from './obs-api-client.js';
+import { peekLastExchange, type LastExchange } from './obs-api-client.js';
 
 /** Decode a JWT segment (0 = header, 1 = payload) without verifying. */
 function decodePart(token: string, idx: number): Record<string, unknown> | null {
@@ -46,6 +46,36 @@ function lastTokenAuth(cfg: Config) {
   };
 }
 
+export interface ChainHop {
+  hop: string;
+  header: Record<string, unknown> | null;
+  payload: Record<string, unknown> | null;
+  /** Raw JWT — only when the caller asked for `?raw=1` (debug inspect). */
+  token?: string;
+}
+
+/**
+ * The two rows this server contributes, BOTH taken from the last real tool
+ * call: the inbound aud=mcp-observability token the agentgateway minted for it (via the
+ * exchange-shim — the leg the agent can't see), then the obs-api token we
+ * exchanged it for. Pure, so the rule "never the request's own bearer" is
+ * testable: the /last-token request travels through the gateway too, and its
+ * bearer is a token minted for the walk, not for the flow.
+ */
+export function buildChain(last: LastExchange | undefined, includeRaw: boolean): ChainHop[] {
+  if (!last) return [];
+  const hop = (name: string, token: string): ChainHop => ({
+    hop: name,
+    header: decodePart(token, 0),
+    payload: decodePart(token, 1),
+    ...(includeRaw ? { token } : {}),
+  });
+  return [
+    hop('agentgateway → mcp-observability', last.subjectToken),
+    hop('mcp-observability → obs-api', last.accessToken),
+  ];
+}
+
 export function buildLastTokenHandlers(cfg: Config): {
   authn: ReturnType<typeof lastTokenAuth>;
   handler: (req: Request, res: Response) => void;
@@ -53,38 +83,7 @@ export function buildLastTokenHandlers(cfg: Config): {
   return {
     authn: lastTokenAuth(cfg),
     handler(req: Request, res: Response) {
-      const includeRaw = req.query.raw === '1';
-      const chain: Array<{
-        hop: string;
-        header: Record<string, unknown> | null;
-        payload: Record<string, unknown> | null;
-        token?: string;
-      }> = [];
-      // Inbound hop: the aud=mcp-observability token the agentgateway minted for
-      // us (via the exchange-shim). Reveals the gateway → mcp leg the caller can't
-      // see (that token is minted inside the gateway pod, not by the agent).
-      const authz = req.header('authorization') ?? '';
-      const inbound = authz.toLowerCase().startsWith('bearer ')
-        ? authz.slice('bearer '.length).trim()
-        : '';
-      if (inbound) {
-        chain.push({
-          hop: 'agentgateway → mcp-observability',
-          header: decodePart(inbound, 0),
-          payload: decodePart(inbound, 1),
-          ...(includeRaw ? { token: inbound } : {}),
-        });
-      }
-      const last = peekLastExchange();
-      if (last) {
-        chain.push({
-          hop: 'mcp-observability → obs-api',
-          header: decodePart(last.accessToken, 0),
-          payload: decodePart(last.accessToken, 1),
-          ...(includeRaw ? { token: last.accessToken } : {}),
-        });
-      }
-      res.json({ chain });
+      res.json({ chain: buildChain(peekLastExchange(), req.query.raw === '1') });
     },
   };
 }
