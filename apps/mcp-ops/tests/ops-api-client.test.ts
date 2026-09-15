@@ -18,7 +18,7 @@ vi.mock('@ai-agents-demo/spiffe', () => ({
 }));
 
 import { exchangeToken } from '@ai-agents-demo/auth-curity';
-import { obtainOpsApiToken, callOpsApiRestart } from '../src/ops-api-client.js';
+import { peekLastExchange, obtainOpsApiToken, callOpsApiRestart } from '../src/ops-api-client.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
@@ -55,6 +55,23 @@ describe('obtainOpsApiToken', () => {
         scope: 'ops:write',
       }),
     );
+  });
+  it('records the INBOUND subject token next to the exchanged one, so /last-token can show the real gateway → mcp-ops leg', async () => {
+    // /last-token used to decode its own request bearer as that leg — but the
+    // chain walk itself travels through agentgateway, so that bearer is a token
+    // minted for the walk, not the one the tool call ran with (fresh TTL, other jti).
+    vi.mocked(exchangeToken).mockResolvedValueOnce({
+      accessToken: 'exchanged-token',
+      tokenType: 'Bearer',
+      expiresInSec: 300,
+      scope: 'ops:write',
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+    });
+    await obtainOpsApiToken({ cfg, subjectToken: 'inbound-from-tool-call' });
+    expect(peekLastExchange()).toMatchObject({
+      subjectToken: 'inbound-from-tool-call',
+      accessToken: 'exchanged-token',
+    });
   });
 });
 
