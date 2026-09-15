@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
-import type { ToolSet } from 'ai';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
+import { requiredRolesOf, type ListedTool } from '@ai-agents-demo/agent-runtime';
 import type { AuthedRequest } from './auth-middleware.js';
 import { obtainMcpToken, openMcpToolset } from './mcp-client.js';
 import { obtainSpecialistToken } from './specialist-client.js';
@@ -24,6 +24,10 @@ import type { Config } from './config.js';
 export interface ToolInfo {
   name: string;
   description?: string;
+  /** Roles a tool publishes as required to CALL it — see the specialist's ToolInfo. */
+  requiredRoles?: string[];
+  /** Whether THIS caller holds one of `requiredRoles`. Present iff `requiredRoles` is. */
+  callable?: boolean;
 }
 
 export type TierStatus =
@@ -50,12 +54,20 @@ export interface ToolsSubject {
   bearer: string;
   sub: string;
   acr: string;
+  roles?: string[];
 }
 
-export function toolInfos(tools: ToolSet): ToolInfo[] {
-  return Object.entries(tools).map(([name, t]) => {
-    const description = (t as { description?: unknown }).description;
-    return { name, ...(typeof description === 'string' ? { description } : {}) };
+/** Same shape and rule as the specialist's `toolInfos`; the read tier publishes no roles today. */
+export function toolInfos(listed: ListedTool[], callerRoles: string[]): ToolInfo[] {
+  return listed.map((t) => {
+    const requiredRoles = requiredRolesOf(t);
+    return {
+      name: t.name,
+      ...(t.description !== undefined ? { description: t.description } : {}),
+      ...(requiredRoles
+        ? { requiredRoles, callable: requiredRoles.some((r) => callerRoles.includes(r)) }
+        : {}),
+    };
   });
 }
 
@@ -87,7 +99,7 @@ async function listReadTier(cfg: Config, subject: ToolsSubject, deps: ToolTiersD
       clientName: 'agent-copilot',
       label: 'mcp-observability (tools/list probe)',
     });
-    return { status: 'ok', tools: toolInfos(toolset.tools) };
+    return { status: 'ok', tools: toolInfos(toolset.listed, subject.roles ?? []) };
   } catch (e) {
     return { status: 'error', error: 'mcp_unavailable', description: String(e) };
   } finally {
@@ -163,10 +175,16 @@ const defaultDeps: ToolTiersDeps = {
 export function buildToolsHandler(cfg: Config) {
   return async (req: Request, res: Response): Promise<void> => {
     const authed = req as AuthedRequest;
+    const rawRoles = (authed.caller?.payload as { roles?: unknown } | undefined)?.roles;
     const subject: ToolsSubject = {
       bearer: authed.bearerToken!,
       sub: String(authed.caller?.payload.sub ?? 'unknown'),
       acr: String(authed.caller?.payload.acr ?? ''),
+      roles: Array.isArray(rawRoles)
+        ? rawRoles.map(String)
+        : typeof rawRoles === 'string'
+          ? rawRoles.split(/\s+/).filter(Boolean)
+          : [],
     };
     try {
       res.json(await collectToolTiers({ cfg, subject }));

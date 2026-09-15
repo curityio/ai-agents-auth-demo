@@ -8,6 +8,10 @@ import { cn } from '@/lib/utils';
 export interface ToolInfo {
   name: string;
   description?: string;
+  /** Roles the tool requires to be CALLED, as published by the MCP server in tools/list `_meta`. */
+  requiredRoles?: string[];
+  /** Whether the current user holds one of `requiredRoles`. Present iff `requiredRoles` is. */
+  callable?: boolean;
 }
 
 export type TierStatus =
@@ -37,20 +41,68 @@ const TIER_META: Record<TierResult['tier'], { title: string; scope: string; blur
 
 function Verdict({ tier }: { tier: TierResult }) {
   switch (tier.status) {
-    case 'ok':
+    case 'ok': {
+      const gated = tier.tools.filter((t) => t.requiredRoles);
+      const refused = gated.filter((t) => t.callable === false);
       return (
-        <div className="flex flex-wrap gap-1.5">
-          {tier.tools.length === 0 && (
-            <span className="text-sm text-muted-foreground">The gateway listed no tools for this token.</span>
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {tier.tools.length === 0 && (
+              <span className="text-sm text-muted-foreground">The gateway listed no tools for this token.</span>
+            )}
+            {tier.tools.map((t) => {
+              // Listed by the gateway, but the server publishes a per-tool role rule
+              // this user does not meet: the CALL will be refused. Keep it on screen
+              // (that is the point) and say so, instead of letting "listed" read as
+              // "allowed".
+              if (t.callable === false) {
+                return (
+                  <Badge
+                    key={t.name}
+                    variant="warning"
+                    className="gap-1 font-mono"
+                    title={`${t.description ?? t.name} — listed, but calling it requires role ${t.requiredRoles!.join(' or ')}`}
+                  >
+                    <Lock className="h-3 w-3" />
+                    {t.name}
+                    <span className="font-sans font-normal opacity-80">· needs {t.requiredRoles!.join('/')}</span>
+                  </Badge>
+                );
+              }
+              return (
+                <Badge
+                  key={t.name}
+                  variant="success"
+                  className="gap-1 font-mono"
+                  title={
+                    t.requiredRoles
+                      ? `${t.description ?? t.name} — calling it requires role ${t.requiredRoles.join(' or ')}, which this user holds`
+                      : t.description
+                  }
+                >
+                  <Wrench className="h-3 w-3" />
+                  {t.name}
+                </Badge>
+              );
+            })}
+          </div>
+          {refused.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              <span className="text-warn">Listed ≠ callable.</span> The gateway filters{' '}
+              <span className="font-mono">tools/list</span> by tier scope only, so{' '}
+              {refused.map((t, i) => (
+                <span key={t.name}>
+                  {i > 0 && ', '}
+                  <span className="font-mono">{t.name}</span>
+                </span>
+              ))}{' '}
+              stays visible — but the server refuses the call without role{' '}
+              <span className="font-mono">{[...new Set(refused.flatMap((t) => t.requiredRoles ?? []))].join(' / ')}</span>.
+            </p>
           )}
-          {tier.tools.map((t) => (
-            <Badge key={t.name} variant="success" className="gap-1 font-mono" title={t.description}>
-              <Wrench className="h-3 w-3" />
-              {t.name}
-            </Badge>
-          ))}
         </div>
       );
+    }
     case 'step-up':
       return (
         <div className="flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/10 p-3 text-sm text-warn">

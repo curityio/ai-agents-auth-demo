@@ -1,7 +1,6 @@
 import type { Request, Response } from 'express';
-import type { ToolSet } from 'ai';
 import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
-import { openMcpToolset } from '@ai-agents-demo/agent-runtime';
+import { openMcpToolset, requiredRolesOf, type ListedTool } from '@ai-agents-demo/agent-runtime';
 import { obtainOpsToken } from './mcp-ops-client.js';
 import type { Config } from './config.js';
 
@@ -24,6 +23,15 @@ import type { Config } from './config.js';
 export interface ToolInfo {
   name: string;
   description?: string;
+  /**
+   * Roles the tool publishes as required to CALL it (mcp-ops `_meta`). Present
+   * only for tools with such a rule. agentgateway lists these tools for every
+   * ops:write caller — a tool it would refuse is also hidden from tools/list —
+   * so the sre split is enforced downstream and visibility ≠ callability.
+   */
+  requiredRoles?: string[];
+  /** Whether THIS caller holds one of `requiredRoles`. Present iff `requiredRoles` is. */
+  callable?: boolean;
 }
 
 export type OpsToolsResult =
@@ -42,7 +50,7 @@ const defaultDeps: ToolsDeps = { obtainOpsToken, openMcpToolset };
 export async function listOpsTools(args: {
   cfg: Config;
   bearer: string;
-  claims: { sub: string; acr?: string };
+  claims: { sub: string; acr?: string; roles?: string[] };
   deps?: ToolsDeps;
 }): Promise<OpsToolsResult> {
   const { cfg, bearer, claims } = args;
@@ -78,7 +86,7 @@ export async function listOpsTools(args: {
       clientName: 'agent-specialist',
       label: 'mcp-ops (tools/list probe)',
     });
-    return { status: 'ok', tools: toolInfos(toolset.tools) };
+    return { status: 'ok', tools: toolInfos(toolset.listed, claims.roles ?? []) };
   } catch (e) {
     return { status: 'error', error: 'mcp_unavailable', description: String(e) };
   } finally {
@@ -86,11 +94,29 @@ export async function listOpsTools(args: {
   }
 }
 
-export function toolInfos(tools: ToolSet): ToolInfo[] {
-  return Object.entries(tools).map(([name, t]) => {
-    const description = (t as { description?: unknown }).description;
-    return { name, ...(typeof description === 'string' ? { description } : {}) };
+/**
+ * Per-tool view for the card. `callable` applies the SAME rule as mcp-ops's
+ * `imageRoleDenial` — the caller holds ANY of the required roles — over the roles
+ * the server published; the set of roles itself is never decided here.
+ */
+export function toolInfos(listed: ListedTool[], callerRoles: string[]): ToolInfo[] {
+  return listed.map((t) => {
+    const requiredRoles = requiredRolesOf(t);
+    return {
+      name: t.name,
+      ...(t.description !== undefined ? { description: t.description } : {}),
+      ...(requiredRoles
+        ? { requiredRoles, callable: requiredRoles.some((r) => callerRoles.includes(r)) }
+        : {}),
+    };
   });
+}
+
+/** `roles` arrives as an array or a space-delimited string depending on how Curity hydrated it. */
+function rolesClaim(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === 'string') return v.split(/\s+/).filter(Boolean);
+  return [];
 }
 
 /** Express handler: verifies the inbound aud=agent-specialist bearer, then probes. */
@@ -102,7 +128,7 @@ export function buildToolsHandler(cfg: Config) {
       return;
     }
     const bearer = authz.slice('bearer '.length).trim();
-    let claims: { sub: string; acr?: string };
+    let claims: { sub: string; acr?: string; roles: string[] };
     try {
       const v = await verifyJwt(bearer, {
         issuer: cfg.curityIssuer,
@@ -112,6 +138,7 @@ export function buildToolsHandler(cfg: Config) {
       claims = {
         sub: String(v.payload.sub ?? 'unknown'),
         acr: v.payload.acr != null ? String(v.payload.acr) : undefined,
+        roles: rolesClaim((v.payload as { roles?: unknown }).roles),
       };
     } catch (e) {
       if (e instanceof CurityAuthError) {

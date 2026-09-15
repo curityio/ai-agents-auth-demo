@@ -495,6 +495,15 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
       evaluate true if the `roles` claim is missing, so it fails open. The downstream
       `imageRoleDenial` check is what makes the split unconditional.
+    - **"Listed ≠ callable" is made visible from the server's own rule, not a UI copy.**
+      Because the tool stays in `tools/list` for carol, the *What this identity can see*
+      card would otherwise read "allowed". mcp-ops publishes the required roles in the
+      tool's `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
+      `setImageRequiredRoles` the gate enforces); agentgateway relays `_meta` untouched
+      (v1.4.1 `merge_tools` rewrites only `name`, and rmcp serialises the field as
+      `_meta`); `openMcpToolset` exposes the raw entries as `listed`; the specialist's
+      `toolInfos` stamps `requiredRoles` + `callable` per caller. Don't hard-code `sre`
+      in the web app — the config value is the single source of truth.
     - **A gateway denial costs the legible error, and that has to be bought back.**
       agentgateway answers with a bare HTTP 403 — it cannot put a message in the body
       — so the denial reaches the client as a TRANSPORT error, not an MCP tool result.

@@ -143,6 +143,21 @@ describe('mcp-ops MCP HTTP route', () => {
   // The role gate is the reason `roles` rides in AuthInfo.extra: the per-request
   // factory has no access to the express request, so a regression here would
   // silently hand every caller sre powers.
+  it('publishes set_deployment_image\'s required roles in tools/list _meta, from config, and on no other tool', async () => {
+    // The card in the web UI marks a tool as "listed but not callable for you"
+    // from THIS field, so the source of truth stays the same config value the
+    // call-time gate (imageRoleDenial) enforces — never a second copy in the UI.
+    const { client } = await connect();
+    const listed = await client.listTools();
+    const byName = Object.fromEntries(listed.tools.map((t) => [t.name, t]));
+    expect(byName.set_deployment_image!._meta).toMatchObject({
+      'io.curity.demo/required-roles': ['sre'],
+    });
+    for (const name of ['restart_deployment', 'scale_deployment']) {
+      expect(byName[name]!._meta?.['io.curity.demo/required-roles']).toBeUndefined();
+    }
+  });
+
   it('allows set_deployment_image for an sre caller', async () => {
     callerRoles = ['sre'];
     opsApiCalls.length = 0;

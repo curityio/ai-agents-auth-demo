@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { asSchema } from 'ai';
-import { mcpInputSchema } from './mcp-toolset.js';
+import { mcpInputSchema, toListedTool, requiredRolesOf } from './mcp-toolset.js';
 
 /**
  * The JSON Schema mcp-ops actually advertises for `scale_deployment`, copied
@@ -87,5 +87,34 @@ describe('mcpInputSchema', () => {
       const converted = await asSchema(mcpInputSchema(input)).jsonSchema;
       expect(converted).toEqual({ type: 'object', properties: {} });
     }
+  });
+});
+
+describe('toListedTool / requiredRolesOf', () => {
+  // `openMcpToolset` exposes the raw tools/list entries as `listed` next to the
+  // AI-SDK `tools`, because the AI SDK's tool object has nowhere to carry the
+  // server's `_meta` — and that is where mcp-ops publishes per-tool required roles.
+  it('keeps name, description and _meta from the server entry', () => {
+    const t = toListedTool({
+      name: 'set_deployment_image',
+      description: 'Set image',
+      inputSchema: { type: 'object', properties: {} },
+      _meta: { 'io.curity.demo/required-roles': ['sre'] },
+    });
+    expect(t).toEqual({
+      name: 'set_deployment_image',
+      description: 'Set image',
+      meta: { 'io.curity.demo/required-roles': ['sre'] },
+    });
+  });
+
+  it('omits description and meta when the server sent none', () => {
+    expect(toListedTool({ name: 'list_pods', inputSchema: { type: 'object' } })).toEqual({ name: 'list_pods' });
+  });
+
+  it('reads the required-roles meta as a string list, and undefined when absent or malformed', () => {
+    expect(requiredRolesOf({ name: 'x', meta: { 'io.curity.demo/required-roles': ['sre', 'oncall'] } })).toEqual(['sre', 'oncall']);
+    expect(requiredRolesOf({ name: 'x' })).toBeUndefined();
+    expect(requiredRolesOf({ name: 'x', meta: { 'io.curity.demo/required-roles': 'sre' } })).toBeUndefined();
   });
 });

@@ -142,7 +142,12 @@ split is finer than the tier — carol even *sees* `set_deployment_image` in
 
 Make the "she can see it" half visible with the **What this identity can see**
 card (**Check tools**): the write-tier column lists all three ops tools for carol,
-exactly as agentgateway's `tools/list` returned them for her token. Contrast with
+exactly as agentgateway's `tools/list` returned them for her token — with
+`set_deployment_image` marked **needs sre** and a *Listed ≠ callable* note. That
+marker is not hard-coded in the UI: `mcp-ops` publishes the tool's required roles
+in its `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
+`SET_IMAGE_REQUIRED_ROLES` config its call-time gate enforces), the gateway relays
+it, and the specialist compares it with the caller's `roles`. Contrast with
 the other two personas on the same card — bob's write column shows Curity's
 `access_denied` from the exchange, and alice *before* MFA shows a step-up notice
 because the specialist refused to even ask for an `ops:write` token without

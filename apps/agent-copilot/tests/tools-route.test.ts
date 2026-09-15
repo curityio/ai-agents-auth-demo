@@ -22,10 +22,11 @@ function deps(overrides: Partial<ToolTiersDeps> = {}): ToolTiersDeps {
   return {
     obtainMcpToken: vi.fn(async () => 'OBS_TOKEN'),
     openMcpToolset: vi.fn(async () => ({
-      tools: {
-        list_pods: { description: 'List pods' },
-        get_pod_logs: { description: 'Get logs' },
-      },
+      tools: {},
+      listed: [
+        { name: 'list_pods', description: 'List pods' },
+        { name: 'get_pod_logs', description: 'Get logs' },
+      ],
       close: vi.fn(async () => {}),
     })) as unknown as ToolTiersDeps['openMcpToolset'],
     obtainSpecialistToken: vi.fn(async () => 'SPEC_TOKEN'),
@@ -83,6 +84,26 @@ describe('collectToolTiers', () => {
     expect(d.fetchSpecialistTools).not.toHaveBeenCalled();
   });
 
+  it('relays the specialist\'s per-tool callable verdicts untouched (the copilot has no view of the write tier\'s rules)', async () => {
+    const d = deps({
+      fetchSpecialistTools: vi.fn(async () => ({
+        status: 'ok' as const,
+        tools: [
+          { name: 'restart_deployment' },
+          { name: 'set_deployment_image', requiredRoles: ['sre'], callable: false },
+        ],
+      })),
+    });
+    const out = await collectToolTiers({ cfg, subject: { ...subject, sub: 'carol' }, deps: d });
+    expect(out.tiers[1]).toMatchObject({
+      status: 'ok',
+      tools: [
+        { name: 'restart_deployment' },
+        { name: 'set_deployment_image', requiredRoles: ['sre'], callable: false },
+      ],
+    });
+  });
+
   it('relays a step-up verdict from the specialist verbatim', async () => {
     const d = deps({
       fetchSpecialistTools: vi.fn(async () => ({
@@ -135,6 +156,7 @@ describe('collectToolTiers', () => {
     const d = deps({
       openMcpToolset: vi.fn(async () => ({
         tools: {},
+        listed: [],
         close,
       })) as unknown as ToolTiersDeps['openMcpToolset'],
     });

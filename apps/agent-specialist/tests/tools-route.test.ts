@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
-import { listOpsTools, type ToolsDeps } from '../src/tools-route.js';
+import { listOpsTools, toolInfos, type ToolsDeps } from '../src/tools-route.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
@@ -21,10 +21,11 @@ function deps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
   return {
     obtainOpsToken: vi.fn(async () => 'OPS_TOKEN'),
     openMcpToolset: vi.fn(async () => ({
-      tools: {
-        restart_deployment: { description: 'Restart a deployment' },
-        scale_deployment: { description: 'Scale a deployment' },
-      },
+      tools: {},
+      listed: [
+        { name: 'restart_deployment', description: 'Restart a deployment' },
+        { name: 'scale_deployment', description: 'Scale a deployment' },
+      ],
       close: vi.fn(async () => {}),
     })) as unknown as ToolsDeps['openMcpToolset'],
     ...overrides,
@@ -62,19 +63,20 @@ describe('listOpsTools', () => {
     const close = vi.fn(async () => {});
     const d = deps({
       openMcpToolset: vi.fn(async () => ({
-        tools: {
-          restart_deployment: { description: 'Restart a deployment' },
-          set_deployment_image: { description: 'Set image' },
-        },
+        tools: {},
+        listed: [
+          { name: 'restart_deployment', description: 'Restart a deployment' },
+          { name: 'set_deployment_image', description: 'Set image', meta: { 'io.curity.demo/required-roles': ['sre'] } },
+        ],
         close,
       })) as unknown as ToolsDeps['openMcpToolset'],
     });
-    const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'mfa' }, deps: d });
+    const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'mfa', roles: ['sre', 'oncall'] }, deps: d });
     expect(out).toEqual({
       status: 'ok',
       tools: [
         { name: 'restart_deployment', description: 'Restart a deployment' },
-        { name: 'set_deployment_image', description: 'Set image' },
+        { name: 'set_deployment_image', description: 'Set image', requiredRoles: ['sre'], callable: true },
       ],
     });
     expect(close).toHaveBeenCalledTimes(1);
@@ -101,5 +103,51 @@ describe('listOpsTools', () => {
       error: 'mcp_unavailable',
       description: 'Error: connect ECONNREFUSED',
     });
+  });
+
+  it('marks a tool the gateway LISTS but mcp-ops will REFUSE for this caller (carol: oncall, set_deployment_image: sre)', async () => {
+    // agentgateway couples tools/list visibility to its own MCP-layer authz, so
+    // the sre split is deliberately enforced downstream and the tool stays
+    // visible to carol. The card must say so, or "listed" reads as "allowed".
+    const d = deps({
+      openMcpToolset: vi.fn(async () => ({
+        tools: {},
+        listed: [
+          { name: 'restart_deployment', description: 'Restart' },
+          { name: 'set_deployment_image', description: 'Set image', meta: { 'io.curity.demo/required-roles': ['sre'] } },
+        ],
+        close: vi.fn(async () => {}),
+      })) as unknown as ToolsDeps['openMcpToolset'],
+    });
+    const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'carol', acr: 'mfa', roles: ['oncall'] }, deps: d });
+    expect(out).toEqual({
+      status: 'ok',
+      tools: [
+        { name: 'restart_deployment', description: 'Restart' },
+        { name: 'set_deployment_image', description: 'Set image', requiredRoles: ['sre'], callable: false },
+      ],
+    });
+  });
+});
+
+describe('toolInfos', () => {
+  it('adds requiredRoles + callable only for tools that publish required roles', () => {
+    const listed = [
+      { name: 'restart_deployment' },
+      { name: 'set_deployment_image', meta: { 'io.curity.demo/required-roles': ['sre'] } },
+    ];
+    expect(toolInfos(listed, ['oncall'])).toEqual([
+      { name: 'restart_deployment' },
+      { name: 'set_deployment_image', requiredRoles: ['sre'], callable: false },
+    ]);
+    expect(toolInfos(listed, [])).toEqual([
+      { name: 'restart_deployment' },
+      { name: 'set_deployment_image', requiredRoles: ['sre'], callable: false },
+    ]);
+  });
+
+  it('is callable when the caller holds ANY of the required roles — the same rule as imageRoleDenial', () => {
+    const listed = [{ name: 'set_deployment_image', meta: { 'io.curity.demo/required-roles': ['sre', 'oncall'] } }];
+    expect(toolInfos(listed, ['oncall'])[0]).toMatchObject({ callable: true });
   });
 });

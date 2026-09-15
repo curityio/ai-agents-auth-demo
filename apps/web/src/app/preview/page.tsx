@@ -159,7 +159,7 @@ const PREVIEW: ChatPreview = {
         tools: [
           { name: 'restart_deployment', description: 'Rollout-restart a deployment' },
           { name: 'scale_deployment', description: 'Set replica count' },
-          { name: 'set_deployment_image', description: 'Set the container image (sre only)' },
+          { name: 'set_deployment_image', description: 'Set the container image', requiredRoles: ['sre'], callable: true },
         ],
       },
     ],
