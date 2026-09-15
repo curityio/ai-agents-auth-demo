@@ -13,6 +13,7 @@ import {
   SendHorizontal,
   ShieldCheck,
   Sparkles,
+  Wrench,
 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -35,6 +36,8 @@ import {
   type RestartIntent,
   type SpecialistView,
 } from '@/components/agent-trace';
+import { DelegationLedger } from '@/components/delegation-ledger';
+import { ToolVisibility, type ToolTiersResponse } from '@/components/tool-visibility';
 
 interface AgentStep {
   toolCalls?: Array<{ name: string; args: unknown }>;
@@ -78,28 +81,6 @@ interface DecodedView {
   payload: Record<string, unknown> | null;
 }
 
-/** Derive token lifetime + remaining seconds from a decoded payload's iat/exp. */
-function tokenTtl(payload: Record<string, unknown> | null): {
-  total?: number;
-  remaining: number;
-} | null {
-  const exp = payload?.exp;
-  if (typeof exp !== 'number') return null;
-  const iat = payload?.iat;
-  const nowSec = Date.now() / 1000;
-  return {
-    total: typeof iat === 'number' ? Math.round(exp - iat) : undefined,
-    remaining: Math.round(exp - nowSec),
-  };
-}
-
-function fmtSeconds(s: number): string {
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return rem ? `${m}m ${rem}s` : `${m}m`;
-}
-
 interface ChainHopView extends DecodedView {
   hop: string;
 }
@@ -134,6 +115,7 @@ export interface ChatPreview {
   response?: AgentResponse | null;
   svids?: SvidView[] | null;
   obo?: OboChainResponse | null;
+  tools?: ToolTiersResponse | null;
 }
 
 export function Chat({ preview }: { preview?: ChatPreview } = {}) {
@@ -150,6 +132,10 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
   const [obo, setObo] = useState<OboChainResponse | null>(preview?.obo ?? null);
   const [oboLoading, setOboLoading] = useState(false);
   const [oboError, setOboError] = useState<string | null>(null);
+
+  const [tools, setTools] = useState<ToolTiersResponse | null>(preview?.tools ?? null);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsError, setToolsError] = useState<string | null>(null);
 
   // Restore the prompt the user submitted before a step-up redirect, and
   // (one-shot) auto-retry it now that they've authenticated with MFA.
@@ -264,6 +250,24 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       setOboError("Couldn't load the on-behalf-of chain. Please try again.");
     } finally {
       setOboLoading(false);
+    }
+  }
+
+  async function loadTools() {
+    setToolsLoading(true);
+    setToolsError(null);
+    setTools(null);
+    try {
+      const r = await fetch('/api/tools', { cache: 'no-store' });
+      if (!r.ok) {
+        setToolsError(await friendlyFetchError(r, 'the visible tools'));
+        return;
+      }
+      setTools((await r.json()) as ToolTiersResponse);
+    } catch {
+      setToolsError("Couldn't load the visible tools. Please try again.");
+    } finally {
+      setToolsLoading(false);
     }
   }
 
@@ -549,10 +553,11 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 On-behalf-of chain
               </CardTitle>
               <CardDescription className="max-w-xl">
-                Each hop is one OAuth 2 token the request traveled with. Watch the{' '}
-                <code className="font-mono">act</code> claim nest as authority is delegated —
-                the outermost <code className="font-mono">sub</code> is the most recent actor.
-                A privileged action materializes the deeper chain at the specialist → ops hop.
+                Each hop is one OAuth 2 token the request traveled with, diffed against the
+                token it was exchanged from: <code className="font-mono">scope</code> narrows
+                (dropped scopes stay struck through), <code className="font-mono">act</code> grows
+                by exactly one workload, and <code className="font-mono">may_act</code> names who
+                is allowed to present the token next — which the following hop then proves.
               </CardDescription>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => void loadObo()} disabled={oboLoading}>
@@ -574,37 +579,43 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 No hops yet — ask the copilot a question first, then refresh.
               </p>
             )}
-            {obo && obo.chain.length > 0 && (
-              <ol className="relative space-y-4 before:absolute before:left-[11px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-border">
-                {obo.chain.map((hop, i) => {
-                  const ttl = tokenTtl(hop.payload);
-                  const expired = ttl ? ttl.remaining <= 0 : false;
-                  return (
-                    <li key={`${i}-${hop.hop}`} className="relative pl-9">
-                      <span className="mesh-hero absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ring-2 ring-background">
-                        {i}
-                      </span>
-                      <div className="rounded-xl border border-border bg-secondary/60 p-3.5">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="font-mono text-sm font-semibold">{hop.hop}</span>
-                          {ttl && (
-                            <Badge
-                              variant={expired ? 'destructive' : 'muted'}
-                              className="gap-1 font-mono"
-                            >
-                              <Clock className="h-3 w-3" />
-                              {ttl.total != null && `ttl ${fmtSeconds(ttl.total)} · `}
-                              {expired ? 'expired' : `${fmtSeconds(ttl.remaining)} left`}
-                            </Badge>
-                          )}
-                        </div>
-                        <JsonBlock data={{ header: hop.header, payload: hop.payload }} />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
+            {obo && obo.chain.length > 0 && <DelegationLedger chain={obo.chain} />}
+          </CardContent>
+        )}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <CardTitle className="flex items-center gap-2.5 text-lg">
+                <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
+                  <Wrench />
+                </span>
+                What this identity can see
+              </CardTitle>
+              <CardDescription className="max-w-xl">
+                The MCP <code className="font-mono">tools/list</code> agentgateway returns for{' '}
+                <em>your</em> token on each tier. The gateway filters the list by tier scope, and the
+                write tier is only asked for after the same MFA and role gates a real remediation
+                passes — so what you see here is what the agents can even attempt.
+              </CardDescription>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadTools()} disabled={toolsLoading}>
+              {toolsLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {toolsLoading ? 'Probing…' : tools ? 'Refresh' : 'Check tools'}
+            </Button>
+          </div>
+        </CardHeader>
+        {(toolsError || tools) && (
+          <CardContent>
+            {toolsError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-sm">{toolsError}</AlertDescription>
+              </Alert>
             )}
+            {tools && <ToolVisibility tiers={tools.tiers} />}
           </CardContent>
         )}
       </Card>

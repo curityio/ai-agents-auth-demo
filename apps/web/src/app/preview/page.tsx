@@ -51,41 +51,99 @@ const PREVIEW: ChatPreview = {
     },
   ],
   obo: {
+    // The real read path, as /api/obo-chain returns it today: the user token,
+    // then one exchanged token per hop through agentgateway to obs-api.
     chain: [
       {
-        hop: 'user → web',
+        hop: 'user → agent-copilot (inbound)',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
-          scope: 'openid obs:read',
+          aud: 'agent-copilot',
+          scope: 'openid obs:read ops:write llm:invoke',
+          acr: 'mfa',
+          roles: ['sre', 'oncall'],
+          may_act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
           iat: nowSec - 60,
           exp: nowSec + 540,
         },
       },
       {
-        hop: 'web → agent-copilot',
+        hop: 'agent-copilot → agentgateway',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
+          aud: 'mcp-gateway',
           scope: 'obs:read',
-          act: { sub: 'spiffe://demo.curity.local/ns/web/sa/web' },
+          acr: 'mfa',
+          roles: ['sre', 'oncall'],
+          act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+          may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
           iat: nowSec - 40,
           exp: nowSec + 260,
         },
       },
       {
-        hop: 'agent-copilot → mcp-observability',
+        hop: 'agentgateway → mcp-observability',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
+          aud: 'mcp-observability',
           scope: 'obs:read',
+          acr: 'mfa',
+          roles: ['sre', 'oncall'],
           act: {
-            sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot',
-            act: { sub: 'spiffe://demo.curity.local/ns/web/sa/web' },
+            sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
+            act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+          },
+          may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability' },
+          iat: nowSec - 30,
+          exp: nowSec + 270,
+        },
+      },
+      {
+        hop: 'mcp-observability → obs-api',
+        header: { alg: 'RS256', kid: 'curity-1' },
+        payload: {
+          sub: 'alice',
+          aud: 'obs-api',
+          scope: 'obs:read',
+          acr: 'mfa',
+          roles: ['sre', 'oncall'],
+          act: {
+            sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability',
+            act: {
+              sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
+              act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+            },
           },
           iat: nowSec - 20,
-          exp: nowSec + 110,
+          exp: nowSec + 280,
         },
+      },
+    ],
+  },
+  tools: {
+    tiers: [
+      {
+        tier: 'observability',
+        route: '/observability/mcp',
+        status: 'ok',
+        tools: [
+          { name: 'list_pods', description: 'List pods in a namespace' },
+          { name: 'get_pod_logs', description: 'Fetch recent logs for a pod' },
+          { name: 'get_deployment', description: 'Describe a deployment' },
+        ],
+      },
+      {
+        tier: 'ops',
+        route: '/ops/mcp',
+        status: 'ok',
+        tools: [
+          { name: 'restart_deployment', description: 'Rollout-restart a deployment' },
+          { name: 'scale_deployment', description: 'Set replica count' },
+          { name: 'set_deployment_image', description: 'Set the container image (sre only)' },
+        ],
       },
     ],
   },
