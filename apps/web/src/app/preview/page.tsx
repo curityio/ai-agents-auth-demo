@@ -76,6 +76,7 @@ const PREVIEW: ChatPreview = {
           aud: 'mcp-gateway',
           scope: 'obs:read',
           acr: 'mfa',
+          roles: ['sre', 'oncall'],
           act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
           may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
           iat: nowSec - 40,
@@ -90,6 +91,7 @@ const PREVIEW: ChatPreview = {
           aud: 'mcp-observability',
           scope: 'obs:read',
           acr: 'mfa',
+          roles: ['sre', 'oncall'],
           act: {
             sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
             act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
@@ -107,6 +109,7 @@ const PREVIEW: ChatPreview = {
           aud: 'obs-api',
           scope: 'obs:read',
           acr: 'mfa',
+          roles: ['sre', 'oncall'],
           act: {
             sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability',
             act: {

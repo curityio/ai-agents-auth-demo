@@ -82,15 +82,6 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
           <Row>
             <Label>sub</Label>
             <span className="font-mono">{s.sub ?? '—'}</span>
-            {s.roles.length > 0 && (
-              <span className="flex flex-wrap gap-1">
-                {s.roles.map((r) => (
-                  <Badge key={r} variant="secondary" className="font-mono text-[11px]">
-                    {r}
-                  </Badge>
-                ))}
-              </span>
-            )}
           </Row>
 
           <Row>
@@ -131,6 +122,18 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
               {s.scopes.length === 0 && diff.scopesDropped.length === 0 && (
                 <span className="text-muted-foreground">—</span>
               )}
+            </span>
+          </Row>
+
+          <Row>
+            <Label>roles</Label>
+            <span className="flex flex-wrap items-center gap-1.5">
+              {s.roles.map((r) => (
+                <Badge key={r} variant="secondary" className="font-mono">
+                  {r}
+                </Badge>
+              ))}
+              {s.roles.length === 0 && <span className="text-muted-foreground">—</span>}
             </span>
           </Row>
 
