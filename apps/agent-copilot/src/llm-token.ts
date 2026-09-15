@@ -1,3 +1,4 @@
+import { decodeJwt } from 'jose';
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { SpiffeJwtSvidSource } from '@ai-agents-demo/spiffe';
 import { TokenExchangeCache } from './token-exchange-cache.js';
@@ -9,6 +10,33 @@ const svidSource = new SpiffeJwtSvidSource({
   audiences: [{ audience: SVID_AUDIENCE, filePath: SVID_FILE }],
 });
 const llmCache = new TokenExchangeCache({ ttlMs: 60_000 });
+
+/** Best-effort `jti` extraction from an already-verified JWT (no throw). */
+function jtiOf(token: string): string | undefined {
+  try {
+    const jti = decodeJwt(token).jti;
+    return typeof jti === 'string' ? jti : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+let lastLlmExchange:
+  | { sub: string; accessToken: string; at: number; subjectJti?: string }
+  | undefined;
+
+/**
+ * The most recent aud=llm-gateway exchange this process performed, across ALL
+ * users — same single-slot, last-writer-wins shape as `peekLastExchange` in
+ * mcp-client.ts, and the same rule for consumers: filter by (sub, subjectJti)
+ * before surfacing. /last-token renders it as a LEAF of the OBO chain (the
+ * model call is a sibling of the MCP branch, not a step toward the cluster).
+ */
+export function peekLastLlmExchange():
+  | { sub: string; accessToken: string; at: number; subjectJti?: string }
+  | undefined {
+  return lastLlmExchange ? { ...lastLlmExchange } : undefined;
+}
 
 /**
  * RFC 8693 exchange → aud=llm-gateway, scope=llm:invoke. Subject = the user
@@ -29,7 +57,18 @@ export async function obtainLlmToken(opts: {
     acr: subjectAcr,
   };
   const cached = llmCache.get(key);
-  if (cached) return cached.accessToken;
+  if (cached) {
+    // Stamp the slot on a cache hit too: /last-token orders the leaf against the
+    // MCP exchange of the same request by `at`, so a hit must still read as
+    // "used now", exactly as obtainMcpToken does.
+    lastLlmExchange = {
+      sub: subjectSub,
+      accessToken: cached.accessToken,
+      at: Date.now(),
+      subjectJti: jtiOf(subjectToken),
+    };
+    return cached.accessToken;
+  }
 
   const svid = await svidSource.getSvid(SVID_AUDIENCE);
   if (!svid) {
@@ -60,5 +99,11 @@ export async function obtainLlmToken(opts: {
     expiresInSec: result.expiresInSec,
     scope: result.scope,
   });
+  lastLlmExchange = {
+    sub: subjectSub,
+    accessToken: result.accessToken,
+    at: Date.now(),
+    subjectJti: jtiOf(subjectToken),
+  };
   return result.accessToken;
 }

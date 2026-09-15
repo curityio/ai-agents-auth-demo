@@ -69,7 +69,24 @@ const PREVIEW: ChatPreview = {
         },
       },
       {
-        hop: 'agent-copilot → agentgateway',
+        // The model call: the same delegation narrowed to llm:invoke, the
+        // copilot nested into act, and no may_act — a leaf, not a hop.
+        hop: 'agent-copilot → agentgateway (/llm)',
+        header: { alg: 'RS256', kid: 'curity-1' },
+        payload: {
+          sub: 'alice',
+          aud: 'llm-gateway',
+          scope: 'llm:invoke',
+          acr: 'mfa',
+          roles: ['sre', 'oncall'],
+          act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+          iat: nowSec - 40,
+          exp: nowSec + 260,
+        },
+        note: 'Model call — a leaf, not a hop toward the cluster. The LLM provider sits outside the trust domain, so nothing exchanges this token onward.',
+      },
+      {
+        hop: 'agent-copilot → agentgateway (/observability/mcp)',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',

@@ -3,6 +3,7 @@ import { decodeJwt, decodeProtectedHeader } from 'jose';
 import type { AuthedRequest } from './auth-middleware.js';
 import { peekLastExchange } from './mcp-client.js';
 import { peekLastSpecialistExchange } from './specialist-client.js';
+import { peekLastLlmExchange } from './llm-token.js';
 import type { Config } from './config.js';
 
 interface ChainHop {
@@ -11,14 +12,29 @@ interface ChainHop {
   payload: ReturnType<typeof decodeJwt>;
   /** Raw JWT — included only when the caller requests `?raw=1` (debug inspect). */
   token?: string;
+  /**
+   * Presenter-facing caveat the UI shows on the row. Set on hops whose place in
+   * the chain is not what the shape alone suggests — today the LLM leaf.
+   */
+  note?: string;
 }
 
-function decode(hop: string, token: string, includeRaw: boolean): ChainHop {
+/**
+ * Shown on the aud=llm-gateway row. The token is a real RFC 8693 narrowing of
+ * the user's delegation (scope down to llm:invoke, the agent nested into
+ * `act`), but the model provider sits outside the trust domain, so this token
+ * is never exchanged onward and is not a step toward the cluster.
+ */
+export const LLM_LEAF_NOTE =
+  'Model call — a leaf, not a hop toward the cluster. The LLM provider sits outside the trust domain, so nothing exchanges this token onward.';
+
+function decode(hop: string, token: string, includeRaw: boolean, note?: string): ChainHop {
   return {
     hop,
     header: decodeProtectedHeader(token),
     payload: decodeJwt(token),
     ...(includeRaw ? { token } : {}),
+    ...(note ? { note } : {}),
   };
 }
 
@@ -38,12 +54,21 @@ interface ExchangeSlot {
  * session's exchange for the SAME user from leaking in after a fresh login when
  * no flow has run yet. A single /chat takes exactly ONE path (observe XOR
  * privileged), so when both slots match we show only the most recent.
+ *
+ * The LLM slot is a LEAF, not a third branch. The copilot exchanges to
+ * aud=llm-gateway only on the observe path, and only AFTER that request's
+ * mcp-gateway exchange — so the leaf is shown iff the observe branch is shown
+ * and the leaf was stamped after it. A leaf stamped earlier belongs to a
+ * previous read flow (this one failed before reaching the model), and under
+ * the privileged branch the copilot's leaf is never shown at all: on that path
+ * the model is called by the specialist, whose own /last-token reports it.
  */
 export function selectDownstreamBranch(
   inbound: { sub: unknown; jti: unknown },
   obs: ExchangeSlot | undefined,
   spec: ExchangeSlot | undefined,
-): { showObs: boolean; showSpec: boolean } {
+  llm?: ExchangeSlot | undefined,
+): { showObs: boolean; showSpec: boolean; showLlm: boolean } {
   const belongs = (e: ExchangeSlot | undefined): boolean =>
     !!e &&
     e.sub === inbound.sub &&
@@ -53,12 +78,14 @@ export function selectDownstreamBranch(
   const obsOk = belongs(obs);
   const specOk = belongs(spec);
 
+  let showObs = obsOk;
+  let showSpec = specOk;
   if (obsOk && specOk) {
-    return obs!.at >= spec!.at
-      ? { showObs: true, showSpec: false }
-      : { showObs: false, showSpec: true };
+    showObs = obs!.at >= spec!.at;
+    showSpec = !showObs;
   }
-  return { showObs: obsOk, showSpec: specOk };
+  const showLlm = showObs && belongs(llm) && llm!.at >= obs!.at;
+  return { showObs, showSpec, showLlm };
 }
 
 /**
@@ -120,18 +147,27 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
   // most-recently-exercised path (a /chat is observe XOR privileged).
   const obsExch = peekLastExchange();
   const specExch = peekLastSpecialistExchange();
-  const { showObs, showSpec } = selectDownstreamBranch(
+  const llmExch = peekLastLlmExchange();
+  const { showObs, showSpec, showLlm } = selectDownstreamBranch(
     { sub: subjectSub, jti: subjectJti },
     obsExch,
     specExch,
+    llmExch,
   );
+
+  // The LLM leaf goes directly under the token it was minted from (hop 0) and
+  // BEFORE the MCP branch: the ledger finds each row's parent by act-chain
+  // prefix, so the mcp-gateway row still diffs against hop 0, not the leaf.
+  if (showLlm && llmExch) {
+    chain.push(decode('agent-copilot → agentgateway (/llm)', llmExch.accessToken, includeRaw, LLM_LEAF_NOTE));
+  }
 
   if (showObs && obsExch) {
     // This token is aud=mcp-gateway — the agent now reaches mcp-observability
     // THROUGH the agentgateway, which re-exchanges (via the shim) to
     // aud=mcp-observability. The gateway → mcp-observability + mcp-observability →
     // obs-api legs come from the downstream /last-token walk below.
-    chain.push(decode('agent-copilot → agentgateway', obsExch.accessToken, includeRaw));
+    chain.push(decode('agent-copilot → agentgateway (/observability/mcp)', obsExch.accessToken, includeRaw));
     if (cfg) {
       const url = cfg.mcpObservabilityUrl.replace(/\/mcp\/?$/, '') + '/last-token';
       chain.push(...(await fetchDownstreamChain(url, obsExch.accessToken, includeRaw)));
