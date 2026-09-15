@@ -191,13 +191,15 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
               {diff.mayActHonoured ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
               {diff.mayActHonoured ? (
                 <span>
-                  <span className="font-mono">{diff.actAppended}</span> presented hop {row.parentIndex}’s
-                  token — the actor its <span className="font-mono">may_act</span> named
+                  Minted from hop {row.parentIndex}’s token, presented by{' '}
+                  <span className="font-mono">{diff.actAppended}</span>, the actor hop {row.parentIndex}’s{' '}
+                  <span className="font-mono">may_act</span> permitted
                 </span>
               ) : (
                 <span>
-                  <span className="font-mono">{diff.actAppended}</span> presented hop {row.parentIndex}’s
-                  token, but its <span className="font-mono">may_act</span> named someone else
+                  Minted from hop {row.parentIndex}’s token, but presented by{' '}
+                  <span className="font-mono">{diff.actAppended}</span>, not the actor hop {row.parentIndex}’s{' '}
+                  <span className="font-mono">may_act</span> permitted
                 </span>
               )}
             </div>
