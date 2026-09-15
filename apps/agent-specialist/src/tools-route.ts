@@ -56,7 +56,12 @@ export async function listOpsTools(args: {
   // 2. The privileged exchange — Curity's role gate and the ACR TIA fire here.
   let opsToken: string;
   try {
-    opsToken = await deps.obtainOpsToken({ cfg, subjectToken: bearer, subjectSub: claims.sub });
+    opsToken = await deps.obtainOpsToken({
+      cfg,
+      subjectToken: bearer,
+      subjectSub: claims.sub,
+      recordLastExchange: false,
+    });
   } catch (e) {
     if (e instanceof CurityAuthError) {
       return { status: 'denied', error: e.code, description: e.message };

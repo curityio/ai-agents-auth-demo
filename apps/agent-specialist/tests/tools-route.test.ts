@@ -83,6 +83,12 @@ describe('listOpsTools', () => {
     );
   });
 
+  it('does NOT record the probe as the last ops exchange (keeps /last-token truthful about real flows)', async () => {
+    const d = deps();
+    await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'mfa' }, deps: d });
+    expect(d.obtainOpsToken).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+  });
+
   it('turns a toolset connection failure into an error status rather than throwing', async () => {
     const d = deps({
       openMcpToolset: vi.fn(async () => {

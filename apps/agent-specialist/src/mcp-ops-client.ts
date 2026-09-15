@@ -77,6 +77,14 @@ export async function obtainOpsToken(opts: {
   cfg: Config;
   subjectToken: string;
   subjectSub: string;
+  /**
+   * Whether this call should be recorded as the process's "most recent
+   * exchange" for the debug /last-token route. Defaults to true. The tools/list
+   * PROBE passes false: it mints the same tokens a real flow would, but it is
+   * not a flow, and recording it made the OBO-chain view flip to a branch the
+   * user never exercised.
+   */
+  recordLastExchange?: boolean;
 }): Promise<string> {
   const { cfg, subjectToken, subjectSub } = opts;
   const svid = await svidSource.getSvid(SVID_AUDIENCE);
@@ -101,7 +109,9 @@ export async function obtainOpsToken(opts: {
     audience: cfg.mcpOpsAudience,
     scope: cfg.mcpOpsScope,
   });
-  lastExchange = { sub: subjectSub, accessToken: result.accessToken, at: Date.now() };
+  if (opts.recordLastExchange !== false) {
+    lastExchange = { sub: subjectSub, accessToken: result.accessToken, at: Date.now() };
+  }
   return result.accessToken;
 }
 

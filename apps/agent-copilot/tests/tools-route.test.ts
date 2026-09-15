@@ -117,6 +117,19 @@ describe('collectToolTiers', () => {
     });
   });
 
+  it('does NOT record itself as the session\'s last flow (the OBO-chain view must not flip to a branch the probe touched)', async () => {
+    // Regression: after "list the pods" (read branch), pressing "Check tools"
+    // made the On-behalf-of chain show the specialist branch, because the probe's
+    // obtainSpecialistToken stamped the process-global last-exchange slot newer
+    // than the real read flow's. The probe must opt out of that recording.
+    const d = deps();
+    await collectToolTiers({ cfg, subject, deps: d });
+    expect(d.obtainMcpToken).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.obtainSpecialistToken).toHaveBeenCalledWith(
+      expect.objectContaining({ recordLastExchange: false }),
+    );
+  });
+
   it('closes the read toolset after listing', async () => {
     const close = vi.fn(async () => {});
     const d = deps({

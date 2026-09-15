@@ -74,6 +74,7 @@ async function listReadTier(cfg: Config, subject: ToolsSubject, deps: ToolTiersD
       subjectToken: subject.bearer,
       subjectSub: subject.sub,
       subjectAcr: subject.acr,
+      recordLastExchange: false,
     });
   } catch (e) {
     return authFailure(e);
@@ -102,6 +103,7 @@ async function listWriteTier(cfg: Config, subject: ToolsSubject, deps: ToolTiers
       subjectToken: subject.bearer,
       subjectSub: subject.sub,
       subjectAcr: subject.acr,
+      recordLastExchange: false,
     });
   } catch (e) {
     return authFailure(e);

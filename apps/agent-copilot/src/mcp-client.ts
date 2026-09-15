@@ -58,8 +58,17 @@ export async function obtainMcpToken(opts: {
   subjectToken: string;
   subjectSub: string;
   subjectAcr: string;
+  /**
+   * Whether this call should be recorded as the process's "most recent
+   * exchange" for the debug /last-token route. Defaults to true. The tools/list
+   * PROBE passes false: it mints the same tokens a real flow would, but it is
+   * not a flow, and recording it made the OBO-chain view flip to a branch the
+   * user never exercised.
+   */
+  recordLastExchange?: boolean;
 }): Promise<string> {
   const { cfg, subjectToken, subjectSub, subjectAcr } = opts;
+  const record = opts.recordLastExchange !== false;
   const key = {
     sub: subjectSub,
     scope: cfg.mcpObservabilityScope,
@@ -70,7 +79,7 @@ export async function obtainMcpToken(opts: {
   if (cached) {
     // Refresh the "last used" marker even on a cache hit so the OBO-chain
     // assembler can tell which path was exercised most recently.
-    lastExchange = {
+    if (record) lastExchange = {
       sub: subjectSub,
       accessToken: cached.accessToken,
       at: Date.now(),
@@ -108,7 +117,7 @@ export async function obtainMcpToken(opts: {
     expiresInSec: result.expiresInSec,
     scope: result.scope,
   });
-  lastExchange = {
+  if (record) lastExchange = {
     sub: subjectSub,
     accessToken: result.accessToken,
     at: Date.now(),
