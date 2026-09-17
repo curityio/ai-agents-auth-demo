@@ -89,8 +89,8 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
               </h1>
 
               <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/85 sm:text-lg">
-                A DevOps copilot that reads observability data and restarts workloads on a
-                user&rsquo;s behalf — every hop authenticated, scoped to least privilege,
+                A DevOps copilot that reads observability data and manages workloads on a
+                user&rsquo;s behalf. Every hop authenticated, scoped to least privilege,
                 MFA-gated for privileged actions, and fully traceable. No standing credentials,
                 no over-broad access.
               </p>

@@ -559,7 +559,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 token it was exchanged from: <code className="font-mono">scope</code> narrows
                 (dropped scopes stay struck through), <code className="font-mono">act</code> grows
                 by exactly one workload, and <code className="font-mono">may_act</code> names who
-                is allowed to present the token next — which the following hop then proves.
+                is allowed to present the token next which the following hop then proves.
               </CardDescription>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => void loadObo()} disabled={oboLoading}>
@@ -594,13 +594,12 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
                   <Wrench />
                 </span>
-                What this identity can see
+                MCP Tools Visibility
               </CardTitle>
               <CardDescription className="max-w-xl">
-                The MCP <code className="font-mono">tools/list</code> agentgateway returns for{' '}
-                <em>your</em> token on each tier. The gateway filters the list by tier scope, and the
-                write tier is only asked for after the same MFA and role gates a real remediation
-                passes — so what you see here is what the agents can even attempt.
+                The MCP tools agentgateway lists for <em>your</em> token, per tier. The list is
+                filtered by tier scope, and the write tier is only probed after the MFA and role
+                claim conditions are met. So what you see here is what the agents can even attempt.
               </CardDescription>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => void loadTools()} disabled={toolsLoading}>

@@ -96,7 +96,7 @@ function Verdict({ tier }: { tier: TierResult }) {
                   <span className="font-mono">{t.name}</span>
                 </span>
               ))}{' '}
-              stays visible — but the server refuses the call without role{' '}
+              stays visible but the gateway refuses the call without role{' '}
               <span className="font-mono">{[...new Set(refused.flatMap((t) => t.requiredRoles ?? []))].join(' / ')}</span>.
             </p>
           )}
