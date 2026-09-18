@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
+import { Fingerprint, KeyRound, ShieldAlert, ShieldCheck, Radar, ArrowUpRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { SignInButton } from '@/components/sign-in-button';
@@ -35,9 +35,16 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
           <div className="flex items-center gap-3.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/curity-logo-landscape-white.svg" alt="Curity" className="h-6 w-auto" />
-            <span className="inline-flex h-7 items-center rounded-full border border-white/20 px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/75">
-              SRE Copilot
-            </span>
+            <span aria-hidden className="h-6 w-px bg-white/15" />
+            <div className="flex items-center gap-2.5">
+              <span className="tile tile-spot h-8 w-8">
+                <ShieldCheck className="h-4 w-4" />
+              </span>
+              <div className="leading-tight">
+                <div className="text-sm font-semibold tracking-tight">SRE Copilot</div>
+                <div className="text-[11px] text-muted-foreground">Secure AI agent operations</div>
+              </div>
+            </div>
           </div>
           {signedIn ? (
             <UserMenu
