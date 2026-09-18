@@ -59,6 +59,18 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        surface: {
+          darker: 'hsl(var(--surface-darker))',
+        },
+        // Admin UI spot-purple family + perspective colours (see globals.css).
+        spot: {
+          DEFAULT: 'hsl(var(--spot))',
+          light: 'hsl(var(--spot-light))',
+          text: 'hsl(var(--spot-text))',
+          dark: 'hsl(var(--spot-dark))',
+          green: 'hsl(var(--spot-green))',
+          blue: 'hsl(var(--spot-blue))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -75,24 +87,14 @@ const config: Config = {
           to: { height: '0' },
         },
         'fade-in-up': {
-          from: { opacity: '0', transform: 'translateY(10px)' },
+          from: { opacity: '0', transform: 'translateY(6px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
-        },
-        'gradient-pan': {
-          '0%, 100%': { backgroundPosition: '0% 50%' },
-          '50%': { backgroundPosition: '100% 50%' },
-        },
-        float: {
-          '0%, 100%': { transform: 'translateY(0)' },
-          '50%': { transform: 'translateY(-6px)' },
         },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
-        'fade-in-up': 'fade-in-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
-        'gradient-pan': 'gradient-pan 12s ease infinite',
-        float: 'float 6s ease-in-out infinite',
+        'fade-in-up': 'fade-in-up 0.35s cubic-bezier(0.16,1,0.3,1) both',
       },
     },
   },

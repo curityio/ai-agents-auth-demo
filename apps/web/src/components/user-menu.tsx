@@ -34,8 +34,8 @@ export function UserMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="h-10 gap-2 pl-1.5 pr-2.5">
-          <Avatar className="h-7 w-7">
+        <Button variant="outline" size="pill" className="h-9 gap-2 border-white/30 pl-1 pr-2.5 hover:nav-pill">
+          <Avatar className="h-6 w-6">
             <AvatarFallback className="text-xs">{initials(name)}</AvatarFallback>
           </Avatar>
           <span className="hidden max-w-[10rem] truncate text-sm font-medium sm:inline">

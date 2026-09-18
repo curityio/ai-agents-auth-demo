@@ -5,26 +5,32 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  // Admin UI buttons: 8px radius, medium weight, no drop shadow; focus is a
+  // 2px spot-purple ring (common/buttons/_buttons-base.scss).
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
+        // .button-primary: --color-spot-strong fill inside a 1px --color-spot hairline.
         default:
-          'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.98]',
+          'border border-spot/90 bg-primary text-primary-foreground hover:bg-primary/85 active:bg-primary/75',
         destructive:
-          'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 active:scale-[0.98]',
+          'border border-destructive/60 bg-destructive text-destructive-foreground hover:bg-destructive/85',
+        // .button-white-outline: transparent with a white hairline.
         outline:
-          'border border-input bg-background shadow-sm hover:bg-secondary hover:text-secondary-foreground',
+          'border border-white/80 bg-transparent text-foreground hover:bg-white/10 active:bg-white/15',
         secondary:
-          'bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80',
-        ghost: 'hover:bg-secondary hover:text-secondary-foreground',
-        link: 'text-primary underline-offset-4 hover:underline',
+          'border border-border bg-secondary text-secondary-foreground hover:bg-accent',
+        ghost: 'hover:bg-white/10 hover:text-foreground',
+        link: 'text-spot-text underline-offset-4 hover:text-spot-light hover:underline',
       },
       size: {
         default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-11 rounded-md px-6',
+        sm: 'h-8 px-3 text-xs',
+        lg: 'h-11 px-6',
         icon: 'h-9 w-9',
+        // Fully-rounded nav/toolbar pill (Expert, Recent Work…).
+        pill: 'h-8 rounded-full px-3.5 text-xs',
       },
     },
     defaultVariants: {

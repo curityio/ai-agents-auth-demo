@@ -14,8 +14,8 @@ export default async function Home() {
       {session ? (
         <Chat />
       ) : (
-        <div className="glass animate-fade-in-up mx-auto max-w-md rounded-2xl p-8 text-center">
-          <div className="mesh-hero mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
+        <div className="surface-card mx-auto max-w-md p-8 text-center">
+          <div className="tile tile-spot mx-auto mb-4 h-14 w-14 rounded-lg">
             <ShieldCheck className="h-7 w-7" />
           </div>
           <h2 className="text-xl font-bold tracking-tight">Sign in to get started</h2>

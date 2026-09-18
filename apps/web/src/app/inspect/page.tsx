@@ -36,7 +36,7 @@ export default async function InspectPage() {
           Back to copilot
         </Link>
         <div className="flex items-center gap-2.5">
-          <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
+          <div className="tile tile-blue h-9 w-9">
             <KeyRound className="h-5 w-5" />
           </div>
           <div className="leading-tight">

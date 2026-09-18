@@ -4,7 +4,7 @@ export function JsonBlock({ data, className }: { data: unknown; className?: stri
   return (
     <pre
       className={cn(
-        'max-h-[28rem] overflow-auto rounded-lg border bg-muted/40 p-3.5 font-mono text-xs leading-relaxed text-foreground/80',
+        'scrollbar-thin max-h-[28rem] overflow-auto rounded-md border border-white/10 bg-surface-darker p-3.5 font-mono text-xs leading-relaxed text-foreground/85',
         className,
       )}
     >

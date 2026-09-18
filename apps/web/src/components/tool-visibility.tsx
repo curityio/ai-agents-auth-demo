@@ -152,13 +152,13 @@ export function ToolVisibility({ tiers }: { tiers: TierResult[] }) {
           <div
             key={t.tier}
             className={cn(
-              'rounded-xl border bg-secondary/60 p-4',
-              ok ? 'border-border' : 'border-dashed border-border/80',
+              'min-w-0 rounded-lg border bg-surface-darker/70 p-4',
+              ok ? 'border-border' : 'border-dashed border-white/25',
             )}
           >
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Eye className="h-4 w-4 text-primary" />
+                <Eye className="h-4 w-4 text-spot" />
                 <span className="text-sm font-semibold">{meta.title}</span>
                 <Badge variant="outline" className="font-mono text-[11px]">
                   {t.route}

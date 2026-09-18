@@ -69,10 +69,10 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
 
   return (
     <li className="relative pl-9">
-      <span className="mesh-hero absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ring-2 ring-background">
+      <span className="absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-1 ring-spot/80">
         {row.index}
       </span>
-      <div className="rounded-xl border border-border bg-secondary/60 p-3.5">
+      <div className="rounded-lg border border-border bg-surface-darker/70 p-3.5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <span className="font-mono text-sm font-semibold">{row.hop}</span>
           <div className="flex flex-wrap items-center gap-1.5">

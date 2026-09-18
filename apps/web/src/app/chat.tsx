@@ -278,7 +278,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2.5 text-lg">
-            <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
+            <span className="tile tile-spot h-8 w-8 [&_svg]:h-4 [&_svg]:w-4">
               <Sparkles />
             </span>
             Ask the copilot
@@ -308,7 +308,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 key={s}
                 type="button"
                 onClick={() => setMessage(s)}
-                className="rounded-full border border-dashed border-border bg-secondary/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
+                className="rounded-full border border-white/20 bg-transparent px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-white/40 hover:bg-white/10 hover:text-foreground"
               >
                 {s}
               </button>
@@ -411,7 +411,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               </TabsList>
 
               <TabsContent value="answer" className="space-y-4">
-                <div className="whitespace-pre-wrap rounded-xl border border-border bg-secondary/60 p-4 text-[15px] leading-relaxed">
+                <div className="whitespace-pre-wrap rounded-lg border border-border bg-surface-darker/70 p-4 text-[15px] leading-relaxed">
                   {response.answer}
                 </div>
                 <IntentBadges intent={response.intent} />
@@ -489,7 +489,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2.5 text-lg">
-                <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
+                <span className="tile tile-blue h-8 w-8 [&_svg]:h-4 [&_svg]:w-4">
                   <Fingerprint />
                 </span>
                 Workload identities
@@ -519,7 +519,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
             {svids && (
               <div className="grid gap-3 sm:grid-cols-2">
                 {svids.map((s) => (
-                  <div key={s.workload} className="rounded-xl border border-border bg-secondary/60 p-4 transition-shadow hover:shadow-md">
+                  <div key={s.workload} className="min-w-0 rounded-lg border border-border bg-surface-darker/70 p-4 transition-colors hover:border-white/30">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="font-mono text-sm font-semibold">{s.workload}</span>
                       {!s.error && typeof s.ttl_seconds === 'number' && (
@@ -549,7 +549,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2.5 text-lg">
-                <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
+                <span className="tile tile-strong h-8 w-8 [&_svg]:h-4 [&_svg]:w-4">
                   <Layers />
                 </span>
                 On-behalf-of chain
@@ -591,7 +591,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
               <CardTitle className="flex items-center gap-2.5 text-lg">
-                <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
+                <span className="tile tile-green h-8 w-8 [&_svg]:h-4 [&_svg]:w-4">
                   <Wrench />
                 </span>
                 MCP Tools Visibility

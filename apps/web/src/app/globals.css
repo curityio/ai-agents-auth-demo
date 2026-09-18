@@ -2,57 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Curity 2026 brand palette (v2.1): dark-first — deep-navy base, purple-mid
-   surfaces, single purple accent with lilac highlight, amber warm accent for
-   step-up. Light text. Replaces the 2023 light theme. (curity.io / styleguide-2026) */
+/* Palette mirrors the Curity Admin UI (curity-web-ui, themes/_curity.scss):
+   three flat purple-navy surfaces, ONE purple accent family (spot #c084fc,
+   strong #6d28d9, text #966ff1, light #e8d2ff), and a small set of status
+   colours that carry meaning only — green ok, red denied, amber step-up,
+   teal read tier, blue identity. No pink/magenta. Cards are flat with a
+   hairline gradient ring, never blurred or shadowed. */
 @layer base {
   :root {
-    --background: 248 41% 7%; /* deep navy #0D0B1A */
-    --foreground: 0 0% 100%; /* white headings; body uses /70–/80 */
+    --background: 254 29% 19%; /* --surface #2a2340 — page */
+    --foreground: 0 0% 100%;
 
-    --card: 250 51% 11%; /* midnight #130E2B */
+    --card: 255 32% 15%; /* --surface-dark #201a32 — nav, sidebar, cards */
     --card-foreground: 0 0% 100%;
 
-    --popover: 251 53% 13%; /* card fill #1C1440 */
+    --popover: 255 32% 15%;
     --popover-foreground: 0 0% 100%;
 
-    --primary: 270 80% 66%; /* spot purple, deepened from #C084FC so white text clears AA */
-    --primary-foreground: 0 0% 100%; /* white */
+    --surface-darker: 253 77% 7%; /* --surface-darker #0a041f — inputs, code */
 
-    /* Brand accents — collapsed to the purple/lilac family (teal/magenta gone) */
-    --accent-violet: 263 100% 83%; /* lilac #C9A8FF */
-    --accent-cyan: 260 61% 57%; /* purple */
-    --accent-fuchsia: 270 95% 75%; /* bright purple #C084FC */
+    --primary: 263 70% 50%; /* --color-spot-strong #6d28d9 — primary button, counter pill */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 250 40% 16%; /* dark purple surface */
-    --secondary-foreground: 231 30% 90%;
+    /* Spot purple family */
+    --spot: 270 95% 75%; /* --color-spot #c084fc */
+    --spot-light: 269 100% 91%; /* --color-spot-light #e8d2ff */
+    --spot-text: 258 82% 69%; /* --color-spot-text #966ff1 — links */
+    --spot-dark: 266 54% 36%; /* --color-spot-dark #552a8d */
+    --spot-green: 175 38% 47%; /* --color-spot-green #4aa69e — read tier */
+    --spot-blue: 242 71% 33%; /* --color-spot-blue #1b188f — identity */
 
-    --muted: 250 40% 16%;
-    --muted-foreground: 231 20% 72%; /* readable lavender-grey */
+    /* Kept for existing call sites; all resolve inside the spot family. */
+    --accent-violet: 269 100% 91%;
+    --accent-cyan: 258 82% 69%;
+    --accent-fuchsia: 270 95% 75%;
 
-    --accent: 254 45% 22%; /* purple tint for hover/active states (matches spot purple) */
-    --accent-foreground: 263 100% 83%; /* lilac */
+    --secondary: 254 29% 24%; /* one step above --card, for inset panels */
+    --secondary-foreground: 0 0% 100%;
 
-    --destructive: 0 72% 62%; /* bright red, legible on dark */
+    --muted: 254 29% 24%;
+    --muted-foreground: 250 6% 76%; /* white at ~72% over --card, flattened so /opacity modifiers keep working */
+
+    --accent: 254 21% 23%; /* white/10 hover wash over --card, flattened */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 1 60% 55%; /* between --color-danger #ca2e2b and -medium #cf504e, legible on dark */
     --destructive-foreground: 0 0% 100%;
 
-    --success: 142 60% 58%; /* green, legible on dark */
-    --success-foreground: 240 30% 8%;
+    --success: 123 50% 56%; /* --color-success #57c75c */
+    --success-foreground: 253 77% 7%;
 
-    --warn: 32 90% 59%; /* amber #F59E3A — step-up */
-    --warn-foreground: 240 30% 8%;
+    --warn: 32 90% 59%; /* --color-spot-amber #f59e3a — step-up */
+    --warn-foreground: 253 77% 7%;
 
-    --border: 254 35% 22%; /* purple-tinted */
-    --input: 254 35% 22%;
-    --ring: 270 80% 66%;
+    --border: 254 15% 27%; /* admin borders are white-alpha (~14% over --card), flattened */
+    --input: 254 15% 27%;
+    --ring: 270 95% 75%; /* spot */
 
-    --radius: 0.5rem;
+    --radius: 0.5rem; /* admin --button-border-radius: 8px */
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+  }
+  html {
+    color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground;
@@ -62,81 +78,107 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
+  ::selection {
+    background-color: hsl(var(--spot) / 0.35);
+  }
 }
 
 @layer utilities {
-  /* Page backdrop: deep-navy base with a purple radial aurora that brightens
-     toward the top-right (per the 2026 guide). */
+  /* Page backdrop — the admin dashboard recipe verbatim: two violet side
+     washes and a dark vignette top and bottom over --surface. */
   .bg-app {
-    background-color: hsl(248 41% 7%);
-    background-image:
-      radial-gradient(60rem 60rem at 100% -10%, hsl(260 61% 57% / 0.22), transparent 60%),
-      radial-gradient(52rem 52rem at 0% 0%, hsl(254 59% 26% / 0.2), transparent 55%),
-      radial-gradient(45rem 45rem at 50% 120%, hsl(270 95% 75% / 0.08), transparent 60%);
+    background-color: hsl(var(--background));
     background-attachment: fixed;
-  }
-
-  /* Subtle dotted grid overlay (low-alpha white reads on dark). */
-  .bg-grid {
-    background-image: radial-gradient(hsl(0 0% 100% / 0.08) 1px, transparent 1px);
-    background-size: 26px 26px;
-  }
-
-  /* Brand icon surface — magenta-pink aurora, aligned with the Enterprise hero
-     (badges, sign-in icon, chat/OBO nodes). Corner-weighted so it stays vibrant
-     at small sizes. */
-  .mesh-hero {
-    background-color: hsl(320 50% 28%);
+    background-repeat: no-repeat;
     background-image:
-      radial-gradient(40rem 30rem at -2% -10%, hsl(328 100% 85% / 0.35), transparent 58%),
-      radial-gradient(36rem 30rem at 104% 4%, hsl(322 85% 68% / 0.55), transparent 54%),
-      radial-gradient(42rem 36rem at 86% 116%, hsl(328 72% 56% / 0.78), transparent 62%),
-      radial-gradient(34rem 30rem at 4% 122%, hsl(260 40% 16%), transparent 55%);
+      radial-gradient(ellipse 55% 70% at 0% 50%, rgb(125 75 200 / 0.32) 0%, rgb(125 75 200 / 0) 75%),
+      radial-gradient(ellipse 55% 70% at 100% 50%, rgb(150 95 218 / 0.22) 0%, rgb(150 95 218 / 0) 75%),
+      radial-gradient(ellipse 80% 40% at 50% -10%, rgb(10 4 31 / 0.5) 0%, rgb(10 4 31 / 0) 75%),
+      radial-gradient(ellipse 80% 40% at 50% 110%, rgb(10 4 31 / 0.5) 0%, rgb(10 4 31 / 0) 75%);
   }
 
-  /* Hero banner in the "Enterprise" flavor — echoes curity.io/pricing's
-     Enterprise card: magenta-pink (#E0529D ≈ hsl(328 70% 60%)) over a deep
-     purple-navy base, strongest toward the bottom (the card's 6%→24% wash). */
-  .mesh-hero-enterprise {
-    background-color: hsl(252 44% 14%);
+  /* Flat admin card: --surface-dark fill, 8px radius, and a 1px gradient
+     hairline ring (white 30% → 4%) drawn with a masked pseudo-element so
+     the ring follows the radius. No blur, no drop shadow. */
+  .surface-card {
+    position: relative;
+    background-color: hsl(var(--card));
+    border-radius: var(--radius);
+  }
+  .surface-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.3) 0%,
+      rgb(255 255 255 / 0.1) 50%,
+      rgb(255 255 255 / 0.04) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 1; /* stay above positioned children so the ring is never painted over */
+  }
+
+  /* Hero panel — same card, but the fill is a purple wash: the spot colour
+     bleeding in from the top-right over --surface-dark. The one place the
+     purple is allowed to be loud. */
+  .surface-hero {
+    background-color: hsl(var(--card));
     background-image:
-      radial-gradient(58rem 42rem at 50% 128%, hsl(328 72% 58% / 0.55), transparent 68%),
-      radial-gradient(42rem 32rem at 104% 2%, hsl(320 72% 60% / 0.34), transparent 58%),
-      radial-gradient(38rem 30rem at -2% -8%, hsl(284 58% 56% / 0.24), transparent 60%),
-      linear-gradient(180deg, hsl(252 44% 11% / 0), hsl(328 60% 46% / 0.24));
+      radial-gradient(ellipse 70% 100% at 100% 0%, hsl(var(--spot) / 0.42) 0%, hsl(var(--spot) / 0) 70%),
+      radial-gradient(ellipse 60% 70% at 0% 100%, hsl(var(--spot-dark) / 0.6) 0%, hsl(var(--spot-dark) / 0) 70%);
   }
 
-  /* Frosted dark-purple cards: 1px purple-tinted border, soft shadow,
-     hairline lilac top-light, and a subtle inner glow on hover. */
-  .glass {
-    background-color: hsl(251 53% 13% / 0.72);
-    backdrop-filter: blur(12px);
-    border: 1px solid hsl(254 40% 34% / 0.55);
-    box-shadow:
-      0 1px 2px hsl(248 60% 3% / 0.4),
-      0 10px 30px -16px hsl(248 60% 3% / 0.7),
-      inset 0 1px 0 hsl(263 100% 83% / 0.06);
-    transition: box-shadow 0.2s ease;
-  }
-  .glass:hover {
-    box-shadow:
-      0 1px 2px hsl(248 60% 3% / 0.4),
-      0 12px 34px -14px hsl(248 60% 3% / 0.75),
-      inset 0 0 34px hsl(270 95% 75% / 0.08),
-      inset 0 1px 0 hsl(263 100% 83% / 0.08);
-  }
-  .glass-strong {
-    background-color: hsl(251 53% 13% / 0.85);
-    backdrop-filter: blur(14px);
-    border: 1px solid hsl(254 40% 38% / 0.6);
-    box-shadow:
-      0 14px 40px -16px hsl(248 60% 3% / 0.8),
-      inset 0 1px 0 hsl(263 100% 83% / 0.08);
+  /* Nav pill — the admin's active-tab / active-sidebar treatment:
+     white 18%→4% gradient fill inside a white/28% hairline, fully rounded. */
+  .nav-pill {
+    background-image: linear-gradient(135deg, rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.04));
+    border: 1px solid rgb(255 255 255 / 0.28);
+    border-radius: 2rem;
   }
 
-  /* Gradient text for emphasis spans (lilac → bright purple). */
+  /* Perspective icon tiles — 32px, 6px radius, solid colour, white glyph
+     (admin profile-icon). The colour is the tier/perspective, so it is
+     information, not decoration. */
+  .tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border-radius: 6px;
+    color: #fff;
+  }
+  .tile-spot {
+    background-color: hsl(var(--spot));
+    color: hsl(var(--surface-darker));
+  }
+  .tile-strong {
+    background-color: hsl(var(--primary));
+  }
+  .tile-green {
+    background-color: hsl(var(--spot-green));
+  }
+  .tile-amber {
+    background-color: hsl(var(--warn));
+    color: hsl(var(--surface-darker));
+  }
+  .tile-blue {
+    background-color: hsl(var(--spot-blue));
+  }
+
+  /* Gradient text for the one accented headline word (spot-light → spot). */
   .text-gradient {
-    background-image: linear-gradient(100deg, hsl(263 100% 83%), hsl(270 95% 75%));
+    background-image: linear-gradient(100deg, hsl(var(--spot-light)), hsl(var(--spot)));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -150,5 +192,15 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: hsl(0 0% 100% / 0.18);
     border-radius: 9999px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
