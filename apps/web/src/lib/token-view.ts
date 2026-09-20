@@ -22,8 +22,12 @@ export interface HopSummary {
   roles: string[];
   /** Actor chain oldest → newest, as short workload names. */
   act: string[];
+  /** The same chain as full SPIFFE IDs (same order as `act`), for tooltips. */
+  actIds: string[];
   /** Short name of the workload permitted to present this token next. */
   mayAct?: string;
+  /** Full SPIFFE ID behind `mayAct`, for the tooltip. */
+  mayActId?: string;
   iat?: number;
   exp?: number;
 }
@@ -67,33 +71,44 @@ export function listClaim(v: unknown): string[] {
   return [String(v)];
 }
 
-export function flattenActChain(act: unknown): string[] {
+/** Full actor IDs oldest → newest (the nested `act` claim is newest-outermost). */
+export function actChainIds(act: unknown): string[] {
   const newestFirst: string[] = [];
   let cur: unknown = act;
   let guard = 0;
   while (cur && typeof cur === 'object' && guard++ < 16) {
     const node = cur as { sub?: unknown; act?: unknown };
-    if (node.sub != null) newestFirst.push(shortSpiffe(String(node.sub)));
+    if (node.sub != null) newestFirst.push(String(node.sub));
     cur = node.act;
   }
   return newestFirst.reverse();
 }
 
-export function mayActSub(v: unknown): string | undefined {
+export function flattenActChain(act: unknown): string[] {
+  return actChainIds(act).map(shortSpiffe);
+}
+
+/** Full ID named by `may_act`, whatever shape Curity hydrated the claim in. */
+export function mayActId(v: unknown): string | undefined {
   if (v == null) return undefined;
   let obj: unknown = v;
   if (typeof v === 'string') {
     try {
       obj = JSON.parse(v);
     } catch {
-      return shortSpiffe(v);
+      return v;
     }
   }
   if (obj && typeof obj === 'object' && 'sub' in obj) {
     const sub = (obj as { sub?: unknown }).sub;
-    return sub == null ? undefined : shortSpiffe(String(sub));
+    return sub == null ? undefined : String(sub);
   }
   return undefined;
+}
+
+export function mayActSub(v: unknown): string | undefined {
+  const id = mayActId(v);
+  return id === undefined ? undefined : shortSpiffe(id);
 }
 
 export function summarizeHop(payload: JwtPayload): HopSummary {
@@ -105,7 +120,9 @@ export function summarizeHop(payload: JwtPayload): HopSummary {
     acr: p.acr != null ? String(p.acr) : undefined,
     roles: listClaim(p.roles),
     act: flattenActChain(p.act),
+    actIds: actChainIds(p.act),
     mayAct: mayActSub(p.may_act),
+    mayActId: mayActId(p.may_act),
     iat: typeof p.iat === 'number' ? p.iat : undefined,
     exp: typeof p.exp === 'number' ? p.exp : undefined,
   };

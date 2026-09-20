@@ -20,6 +20,7 @@ const SPIFFE = (ns: string, sa: string) => `spiffe://demo.curity.local/ns/${ns}/
 const COPILOT = SPIFFE('agents', 'agent-copilot');
 const SPECIALIST = SPIFFE('agents', 'agent-specialist');
 const GATEWAY = SPIFFE('mcp', 'agentgateway');
+const OBS = SPIFFE('mcp', 'mcp-observability');
 
 describe('shortSpiffe', () => {
   it('reduces a SPIFFE ID to its service-account name', () => {
@@ -85,10 +86,31 @@ describe('summarizeHop', () => {
       acr: 'mfa',
       roles: ['sre'],
       act: ['agent-copilot'],
+      actIds: [COPILOT],
       mayAct: 'agentgateway',
+      mayActId: GATEWAY,
       iat: 100,
       exp: 700,
     });
+  });
+});
+
+describe('summarizeHop full identities', () => {
+  it('keeps the full SPIFFE IDs beside the short actor names, in the same order', () => {
+    const s = summarizeHop({
+      act: { sub: GATEWAY, act: { sub: COPILOT } },
+      may_act: { sub: OBS },
+    });
+    expect(s.act).toEqual(['agent-copilot', 'agentgateway']);
+    expect(s.actIds).toEqual([COPILOT, GATEWAY]);
+    expect(s.mayAct).toBe('mcp-observability');
+    expect(s.mayActId).toBe(OBS);
+  });
+
+  it('has no ids when the claims are absent', () => {
+    const s = summarizeHop({});
+    expect(s.actIds).toEqual([]);
+    expect(s.mayActId).toBeUndefined();
   });
 });
 
@@ -144,7 +166,7 @@ describe('buildLedger', () => {
     expect(rows[2]!.diff.actAppended).toBe('agentgateway');
   });
 
-  it('confirms the appended actor is the one the parent token\'s may_act permitted', () => {
+  it("confirms the appended actor is the one the parent token's may_act permitted", () => {
     const rows = buildLedger([user, copilotToGateway, gatewayToObs]);
     expect(rows[1]!.diff.mayActHonoured).toBe(true);
     expect(rows[2]!.diff.mayActHonoured).toBe(true);
@@ -218,7 +240,13 @@ describe('buildLedger', () => {
         may_act: { sub: GATEWAY },
       },
     };
-    const rows = buildLedger([user, copilotToSpecialist, specToGatewayRead, gwToObs, specToGatewayWrite]);
+    const rows = buildLedger([
+      user,
+      copilotToSpecialist,
+      specToGatewayRead,
+      gwToObs,
+      specToGatewayWrite,
+    ]);
     expect(rows[4]!.parentIndex).toBe(1);
     expect(rows[4]!.diff.scopesDropped).toEqual(['obs:read', 'llm:invoke']);
     expect(rows[4]!.diff.scopesKept).toEqual(['ops:write']);
@@ -251,7 +279,7 @@ describe('buildLedger', () => {
     expect(rows[3]!.parentIndex).toBe(2);
   });
 
-  it('parents the specialist\'s LLM leaf to the delegation token, mid-branch', () => {
+  it("parents the specialist's LLM leaf to the delegation token, mid-branch", () => {
     const copilotToSpecialist = {
       hop: 'agent-copilot → agent-specialist',
       payload: {

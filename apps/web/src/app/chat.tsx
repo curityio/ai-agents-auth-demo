@@ -312,22 +312,21 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               </button>
             ))}
           </div>
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1">
-              <Eye className="h-3 w-3" /> read-only, answered inline
-            </span>
-            <span className="inline-flex items-center gap-1 text-warn/90">
-              <Lock className="h-3 w-3" /> privileged, triggers MFA step-up
-            </span>
-          </p>
-
-          <div className="flex items-center justify-between gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              Press <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘</kbd>{' '}
-              +{' '}
-              <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">Enter</kbd>{' '}
-              to send
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
+            {/* Legend for the example prompts above, kept on its own row and
+                behind a divider so it reads as a key rather than as more options. */}
+            <ul className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs" aria-label="Prompt legend">
+              <li className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <Eye className="h-3.5 w-3.5" />
+                <span aria-hidden className="text-muted-foreground/60">→</span>
+                read-only, answered inline
+              </li>
+              <li className="inline-flex items-center gap-1.5 text-warn/90">
+                <Lock className="h-3.5 w-3.5" />
+                <span aria-hidden className="text-warn/60">→</span>
+                privileged, triggers MFA step-up
+              </li>
+            </ul>
             <Button type="button" onClick={() => void submit()} disabled={loading || !message.trim()}>
               {loading ? (
                 <>

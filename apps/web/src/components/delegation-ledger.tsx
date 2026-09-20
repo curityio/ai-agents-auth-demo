@@ -162,13 +162,15 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
               )}
               {s.act.map((a, i) => {
                 const newest = i === s.act.length - 1;
+                const appended = newest && diff.actAppended;
+                const id = s.actIds[i] ?? a;
                 return (
                   <span key={`${a}-${i}`} className="flex items-center gap-1">
                     {i > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
                     <Badge
-                      variant={newest && diff.actAppended ? 'default' : 'outline'}
-                      className={cn('font-mono', newest && diff.actAppended && 'ring-2 ring-primary/40')}
-                      title={newest && diff.actAppended ? 'Appended by this exchange' : undefined}
+                      variant={appended ? 'default' : 'outline'}
+                      className={cn('font-mono', appended && 'ring-2 ring-primary/40')}
+                      title={appended ? `${id} — appended by this exchange` : id}
                     >
                       {a}
                     </Badge>
@@ -184,7 +186,7 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
               {s.mayAct ? (
                 <>
                   <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                  <Badge variant="outline" className="font-mono">
+                  <Badge variant="outline" className="font-mono" title={s.mayActId ?? s.mayAct}>
                     {s.mayAct}
                   </Badge>
                   <span className="text-xs text-muted-foreground">may present this token next</span>
