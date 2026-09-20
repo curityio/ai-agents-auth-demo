@@ -142,6 +142,112 @@
     color: transparent;
   }
 
+  /* Markdown answer body (react-markdown output, see components/markdown.tsx).
+     Kept to what model prose actually uses: paragraphs, lists, inline + block
+     code, tables, emphasis, headings. */
+  .md > :first-child {
+    margin-top: 0;
+  }
+  .md > :last-child {
+    margin-bottom: 0;
+  }
+  .md p,
+  .md ul,
+  .md ol,
+  .md pre,
+  .md table,
+  .md blockquote {
+    margin: 0.6em 0;
+  }
+  .md ul {
+    list-style: disc;
+    padding-left: 1.4em;
+  }
+  .md ol {
+    list-style: decimal;
+    padding-left: 1.4em;
+  }
+  .md li + li {
+    margin-top: 0.2em;
+  }
+  .md h1,
+  .md h2,
+  .md h3,
+  .md h4 {
+    margin: 0.9em 0 0.4em;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .md h1 {
+    font-size: 1.15em;
+  }
+  .md h2 {
+    font-size: 1.08em;
+  }
+  .md h3,
+  .md h4 {
+    font-size: 1em;
+  }
+  .md strong {
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+  .md a {
+    color: hsl(var(--accent-foreground));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .md code {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.85em;
+    background: hsl(0 0% 100% / 0.08);
+    border: 1px solid hsl(var(--border) / 0.8);
+    border-radius: 0.3rem;
+    padding: 0.1em 0.35em;
+  }
+  .md pre {
+    overflow-x: auto;
+    background: hsl(var(--muted) / 0.4);
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    padding: 0.75rem 0.9rem;
+    font-size: 0.8em;
+    line-height: 1.55;
+  }
+  .md pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+  }
+  .md table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.9em;
+  }
+  .md th,
+  .md td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.35em 0.7em;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .md th {
+    background: hsl(var(--muted) / 0.5);
+    font-weight: 600;
+  }
+  .md blockquote {
+    border-left: 2px solid hsl(var(--primary) / 0.6);
+    padding-left: 0.9em;
+    color: hsl(var(--muted-foreground));
+  }
+  .md hr {
+    border-color: hsl(var(--border));
+    margin: 1em 0;
+  }
+
   /* Thin scrollbar for code blocks. */
   .scrollbar-thin::-webkit-scrollbar {
     height: 6px;

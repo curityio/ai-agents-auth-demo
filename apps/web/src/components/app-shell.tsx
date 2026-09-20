@@ -73,8 +73,8 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
             <div className="relative">
               <span className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white backdrop-blur">
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success shadow-[0_0_8px_2px_hsl(var(--success)/0.7)]" />
                 </span>
                 Live demo
               </span>
@@ -124,9 +124,9 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
             />
             <span>· SPIFFE · Istio Ambient — AI agent authentication &amp; authorization demo</span>
           </span>
-          {signedIn && (
+          {signedIn && process.env.AUTH_DEBUG === 'true' && (
             <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-              <Link href="/api/whoami">
+              <Link href="/inspect">
                 Inspect session
                 <ArrowUpRight className="h-3 w-3" />
               </Link>

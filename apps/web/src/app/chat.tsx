@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import {
   AlertTriangle,
+  ChevronUp,
   Clock,
+  Eye,
   Fingerprint,
   Layers,
   Loader2,
@@ -29,21 +31,21 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { JsonBlock } from '@/components/json-block';
+import { Markdown } from '@/components/markdown';
+import { ResultSkeleton } from '@/components/result-skeleton';
 import { friendlyFetchError } from '@/lib/fetch-error';
+import { flowOf, panelsToRefresh, SUGGESTIONS } from '@/lib/chat-rules';
+import { stashStepUp, takeStepUpReturn, type StepUpReturn } from '@/lib/step-up-return';
+import type { TraceStep as AgentStep } from '@/lib/trace-view';
 import {
   IntentBadges,
   PrivilegedTrace,
+  ReadTrace,
   type RestartIntent,
   type SpecialistView,
 } from '@/components/agent-trace';
 import { DelegationLedger } from '@/components/delegation-ledger';
 import { ToolVisibility, type ToolTiersResponse } from '@/components/tool-visibility';
-
-interface AgentStep {
-  toolCalls?: Array<{ name: string; args: unknown }>;
-  toolResults?: Array<{ name: string; result: unknown }>;
-  finishReason?: string;
-}
 
 interface AgentResponse {
   answer: string;
@@ -91,28 +93,6 @@ interface OboChainResponse {
   chain: ChainHopView[];
 }
 
-// Example prompts, chosen to exercise every MCP tool the copilot can reach.
-// Read tier (observe path → mcp-observability): list_pods, get_pod_logs,
-// get_deployment. Write tier (privileged path → agent-specialist → mcp-ops):
-// restart_deployment, scale_deployment, set_deployment_image. Reads run inline;
-// the writes route to the specialist and trigger MFA step-up.
-const SUGGESTIONS = [
-  // Read / observe
-  'List all pods in the prod namespace',
-  'Show recent logs for the checkout-service deployment in prod',
-  'What image and replica count is order-service running in prod?',
-  // Write / privileged (step-up gated)
-  'Restart the order-service deployment in prod',
-  'Scale checkout-service to 3 replicas in prod',
-  'Update order-service to image busybox:1.36 and verify the rollout',
-];
-
-// A step-up (MFA) is a full-page OIDC redirect, which remounts this component
-// and would otherwise discard the user's typed prompt. We stash it here before
-// redirecting and restore + auto-retry it once on return.
-const PENDING_KEY = 'sre.pendingMessage';
-const RETRY_KEY = 'sre.autoRetry';
-
 export interface ChatPreview {
   response?: AgentResponse | null;
   svids?: SvidView[] | null;
@@ -126,6 +106,9 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
   const [response, setResponse] = useState<AgentResponse | null>(preview?.response ?? null);
   const [error, setError] = useState<string | null>(null);
   const [stepUp, setStepUp] = useState<StepUpState | null>(null);
+  // Set when the page remounted after an MFA step-up redirect: the prompt the
+  // user typed is being retried on their behalf, and the banner says so.
+  const [mfaReturn, setMfaReturn] = useState<StepUpReturn | null>(null);
 
   const [svids, setSvids] = useState<SvidView[] | null>(preview?.svids ?? null);
   const [svidLoading, setSvidLoading] = useState(false);
@@ -140,26 +123,27 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
   const [toolsError, setToolsError] = useState<string | null>(null);
 
   // Restore the prompt the user submitted before a step-up redirect, and
-  // (one-shot) auto-retry it now that they've authenticated with MFA.
+  // (one-shot) auto-retry it now that they've authenticated with MFA. A
+  // step-up is a full-page OIDC redirect, which remounts this component.
   useEffect(() => {
-    const pending = sessionStorage.getItem(PENDING_KEY);
-    if (!pending) return;
-    sessionStorage.removeItem(PENDING_KEY);
-    setMessage(pending);
-    if (sessionStorage.getItem(RETRY_KEY)) {
-      sessionStorage.removeItem(RETRY_KEY);
-      void submit(pending);
+    const back = takeStepUpReturn(sessionStorage);
+    if (!back) return;
+    setMessage(back.message);
+    if (back.retry) {
+      setMfaReturn(back);
+      void submit(back.message, { fromStepUp: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function submit(overrideMessage?: string) {
+  async function submit(overrideMessage?: string, opts: { fromStepUp?: boolean } = {}) {
     const outgoing = overrideMessage ?? message;
     if (!outgoing.trim()) return;
     setLoading(true);
     setError(null);
     setResponse(null);
     setStepUp(null);
+    if (!opts.fromStepUp) setMfaReturn(null);
     try {
       const r = await fetch('/api/agent', {
         method: 'POST',
@@ -200,11 +184,16 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
 
       const resp = body as AgentResponse;
       setResponse(resp);
-      // If the identities panel is already open, refresh it to the flow just run
-      // so it shows the relevant workloads (read vs privileged) without a manual click.
-      if (svids !== null) {
-        void loadSvids(resp.route || resp.specialist ? 'privileged' : 'read');
-      }
+      // A new answer refreshes the panels that explain it — only the ones the
+      // presenter already opened; nothing opens by itself.
+      const plan = panelsToRefresh({
+        svidsOpen: svids !== null,
+        oboOpen: obo !== null,
+        toolsOpen: tools !== null,
+      });
+      if (plan.chain) void loadObo();
+      if (plan.svids) void loadSvids(flowOf(resp));
+      if (plan.tools) void loadTools();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -220,8 +209,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       // Show only the workloads in the flow the user just ran. The privileged
       // (A2A → mcp-ops) path is signalled by `route`/`specialist` on the response;
       // anything else is the read path through mcp-observability.
-      const flow =
-        flowOverride ?? (response?.route || response?.specialist ? 'privileged' : 'read');
+      const flow = flowOverride ?? (response ? flowOf(response) : 'read');
       const r = await fetch(`/api/spiffe-identities?flow=${flow}`, { cache: 'no-store' });
       if (!r.ok) {
         setSvidError(`${r.status}: ${await r.text()}`);
@@ -305,15 +293,33 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <div className="flex flex-wrap gap-2">
             {SUGGESTIONS.map((s) => (
               <button
-                key={s}
+                key={s.text}
                 type="button"
-                onClick={() => setMessage(s)}
-                className="rounded-full border border-dashed border-border bg-secondary/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
+                onClick={() => setMessage(s.text)}
+                title={
+                  s.tier === 'write'
+                    ? 'Privileged: routes to the specialist and requires MFA step-up'
+                    : 'Read-only: answered inline via mcp-observability'
+                }
+                className={
+                  s.tier === 'write'
+                    ? 'inline-flex items-center gap-1.5 rounded-full border border-dashed border-warn/40 bg-warn/5 px-3 py-1 text-xs text-warn/90 transition-colors hover:border-warn/70 hover:bg-warn/15 hover:text-warn'
+                    : 'inline-flex items-center gap-1.5 rounded-full border border-dashed border-border bg-secondary/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground'
+                }
               >
-                {s}
+                {s.tier === 'write' ? <Lock className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {s.text}
               </button>
             ))}
           </div>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Eye className="h-3 w-3" /> read-only, answered inline
+            </span>
+            <span className="inline-flex items-center gap-1 text-warn/90">
+              <Lock className="h-3 w-3" /> privileged, triggers MFA step-up
+            </span>
+          </p>
 
           <div className="flex items-center justify-between gap-3">
             <span className="hidden text-xs text-muted-foreground sm:inline">
@@ -347,6 +353,23 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
         </Alert>
       )}
 
+      {mfaReturn && (
+        <Alert variant="info" className="animate-fade-in-up">
+          <ShieldCheck className="h-4 w-4" />
+          <AlertTitle>Re-authenticated with MFA</AlertTitle>
+          <AlertDescription>
+            Curity issued a fresh token with <code className="font-mono">acr=mfa</code>
+            {mfaReturn.scope && (
+              <>
+                {' '}
+                and scope <code className="font-mono">{mfaReturn.scope}</code>
+              </>
+            )}
+            . {loading ? 'Retrying your request now…' : 'Your request was retried automatically.'}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {stepUp && (
         <Alert variant="warning">
           <Lock className="h-4 w-4" />
@@ -361,8 +384,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               type="button"
               size="sm"
               onClick={() => {
-                sessionStorage.setItem(PENDING_KEY, message);
-                sessionStorage.setItem(RETRY_KEY, '1');
+                stashStepUp(sessionStorage, message, stepUp.scope);
                 void signIn(
                   'curity',
                   { callbackUrl: '/' },
@@ -384,6 +406,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           </AlertDescription>
         </Alert>
       )}
+
+      {loading && !response && <ResultSkeleton />}
 
       {response && (
         <Card className="animate-fade-in-up">
@@ -411,9 +435,9 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               </TabsList>
 
               <TabsContent value="answer" className="space-y-4">
-                <div className="whitespace-pre-wrap rounded-xl border border-border bg-secondary/60 p-4 text-[15px] leading-relaxed">
+                <Markdown className="rounded-xl border border-border bg-secondary/60 p-4 text-[15px] leading-relaxed">
                   {response.answer}
-                </div>
+                </Markdown>
                 <IntentBadges intent={response.intent} />
               </TabsContent>
 
@@ -466,7 +490,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
 
               <TabsContent value="trace">
                 {response.steps && response.steps.length > 0 ? (
-                  <JsonBlock data={response.steps} />
+                  <ReadTrace steps={response.steps} />
                 ) : response.route || response.specialist ? (
                   <PrivilegedTrace
                     route={response.route}
@@ -500,10 +524,18 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 token exchange that delegates the user’s authority down the chain.
               </CardDescription>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadSvids()} disabled={svidLoading}>
-              {svidLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              {svidLoading ? 'Fetching…' : svids ? 'Refresh' : 'Show identities'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {(svids || svidError) && !svidLoading && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setSvids(null); setSvidError(null); }}>
+                  <ChevronUp />
+                  Hide
+                </Button>
+              )}
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadSvids()} disabled={svidLoading}>
+                {svidLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                {svidLoading ? 'Fetching…' : svids ? 'Refresh' : 'Show identities'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         {(svidError || svids) && (
@@ -562,10 +594,18 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 is allowed to present the token next which the following hop then proves.
               </CardDescription>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadObo()} disabled={oboLoading}>
-              {oboLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              {oboLoading ? 'Loading…' : obo ? 'Refresh' : 'Show chain'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {(obo || oboError) && !oboLoading && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setObo(null); setOboError(null); }}>
+                  <ChevronUp />
+                  Hide
+                </Button>
+              )}
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadObo()} disabled={oboLoading}>
+                {oboLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                {oboLoading ? 'Loading…' : obo ? 'Refresh' : 'Show chain'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         {(oboError || obo) && (
@@ -602,10 +642,18 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 claim conditions are met. So what you see here is what the agents can even attempt.
               </CardDescription>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadTools()} disabled={toolsLoading}>
-              {toolsLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              {toolsLoading ? 'Probing…' : tools ? 'Refresh' : 'Check tools'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {(tools || toolsError) && !toolsLoading && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setTools(null); setToolsError(null); }}>
+                  <ChevronUp />
+                  Hide
+                </Button>
+              )}
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadTools()} disabled={toolsLoading}>
+                {toolsLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                {toolsLoading ? 'Probing…' : tools ? 'Refresh' : 'Check tools'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         {(toolsError || tools) && (

@@ -6,11 +6,14 @@ import {
   Lock,
   RotateCw,
   Workflow,
+  Wrench,
   XCircle,
 } from 'lucide-react';
 
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { JsonBlock } from '@/components/json-block';
+import { cn } from '@/lib/utils';
+import { buildTraceRows, type TraceStep } from '@/lib/trace-view';
 
 /** The deterministic intent the copilot parsed for a privileged action. */
 export interface RestartIntent {
@@ -134,6 +137,111 @@ export function PrivilegedTrace({
         </summary>
         <div className="px-3.5 pb-3.5">
           <JsonBlock data={{ route, intent, specialist }} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+/**
+ * Readable rendering of the read path's LLM tool-calling loop: one row per
+ * tool call, with the arguments the model chose and a one-line result summary.
+ * The raw step payload stays available on demand.
+ */
+export function ReadTrace({ steps }: { steps: TraceStep[] }) {
+  const rows = buildTraceRows(steps);
+  // The loop's overall outcome is the LAST step's finish reason (usually
+  // 'stop' on the final, tool-free answer step), not the last tool call's.
+  const finishReason = steps[steps.length - 1]?.finishReason;
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        The copilot's LLM chose these tool calls, in order. Each one travelled through
+        agentgateway to mcp-observability on a token narrowed to{' '}
+        <code className="font-mono">obs:read</code>.
+      </p>
+
+      <ol className="relative space-y-3 before:absolute before:left-[11px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-border">
+        {rows.map((r) => (
+          <li key={r.index} className="relative pl-9">
+            <span
+              className={cn(
+                'absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ring-2 ring-background',
+                r.failed ? 'bg-destructive' : 'mesh-hero',
+              )}
+            >
+              {r.index}
+            </span>
+            <div className="rounded-xl border border-border bg-secondary/60 p-3.5">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 font-mono text-sm font-semibold">
+                  <Wrench className="h-3.5 w-3.5 text-primary" />
+                  {r.tool}
+                </span>
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="muted" className="font-mono text-[11px]">
+                    step {r.step}
+                  </Badge>
+                  <Badge variant={r.failed ? 'destructive' : 'success'} className="gap-1">
+                    {r.failed ? <XCircle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                    {r.failed ? 'failed' : 'ok'}
+                  </Badge>
+                </span>
+              </div>
+
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground pt-0.5">
+                  args
+                </dt>
+                <dd className="flex flex-wrap gap-1.5">
+                  {r.args.length === 0 && <span className="text-muted-foreground">none</span>}
+                  {r.args.map(([k, v]) => (
+                    <Badge key={k} variant="outline" className="font-mono">
+                      <span className="text-muted-foreground">{k}=</span>
+                      {v}
+                    </Badge>
+                  ))}
+                </dd>
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground pt-0.5">
+                  result
+                </dt>
+                <dd className={cn('font-mono text-xs', r.failed ? 'text-destructive' : 'text-foreground/80')}>
+                  {r.summary}
+                </dd>
+              </dl>
+
+              {r.result !== undefined && (
+                <details className="mt-2 rounded-lg border bg-muted/10">
+                  <summary className="cursor-pointer px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+                    Full result
+                  </summary>
+                  <div className="px-3 pb-3">
+                    <JsonBlock data={r.result} />
+                  </div>
+                </details>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {rows.length} tool call{rows.length === 1 ? '' : 's'} across {steps.length} step
+        {steps.length === 1 ? '' : 's'}
+        {finishReason && (
+          <>
+            <span aria-hidden>·</span>
+            finished: <span className="font-mono">{finishReason}</span>
+          </>
+        )}
+      </div>
+
+      <details className="rounded-lg border bg-muted/10">
+        <summary className="cursor-pointer px-3.5 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+          Raw steps
+        </summary>
+        <div className="px-3.5 pb-3.5">
+          <JsonBlock data={steps} />
         </div>
       </details>
     </div>

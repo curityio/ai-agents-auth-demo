@@ -6,6 +6,9 @@ export default defineConfig({
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     environment: 'node',
   },
+  // Component tests render with react-dom/server; the app's tsconfig keeps
+  // `jsx: preserve` for Next, so tell esbuild to use the automatic runtime here.
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
