@@ -104,3 +104,22 @@ describe('AppShell hero', () => {
     expect(out).toContain('SPIFFE workload identity');
   });
 });
+
+describe('HeroStage play/pause', () => {
+  it('offers a pause button beside the legend, playing by default', () => {
+    const html = renderToStaticMarkup(<HeroStage signedIn />);
+    const btn = html.match(/<button[^>]*data-hero-toggle[^>]*>[\s\S]*?<\/button>/)?.[0] ?? '';
+    expect(btn).toMatch(/aria-label="Pause animation"/);
+    expect(btn).toMatch(/aria-pressed="false"/);
+    expect(btn).toMatch(/lucide-pause/);
+    expect(btn).toMatch(/type="button"/);
+  });
+  it('reads as Play once stopped', () => {
+    const html = renderToStaticMarkup(<HeroStage signedIn initiallyPaused />);
+    const btn = html.match(/<button[^>]*data-hero-toggle[^>]*>[\s\S]*?<\/button>/)?.[0] ?? '';
+    expect(btn).toMatch(/aria-label="Play animation"/);
+    expect(btn).toMatch(/aria-pressed="true"/);
+    expect(btn).toMatch(/lucide-play/);
+    expect(html).toMatch(/data-hero-stage[^>]*data-paused/);
+  });
+});

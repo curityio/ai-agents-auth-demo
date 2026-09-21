@@ -8,9 +8,11 @@
  * are not shown: at this pace they flip too fast to read; the legend is enough.
  *
  * Motion is a CSS transform transition per leg; the player just schedules the
- * next leg. Hovering pauses, so a presenter can hold a frame or click a node.
+ * next leg. Only the button beside the legend pauses it — hovering does not,
+ * so pointing at the picture while presenting never freezes it.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Pause, Play } from 'lucide-react';
 import {
   CURITY,
   EDGES,
@@ -34,9 +36,8 @@ const toneColor = (t: Tone) => (t === 'privileged' ? AMBER : LILAC);
 
 type Pos = Point & { ms: number; ease: Step['ease'] };
 
-function usePlayer(steps: Step[]) {
+function usePlayer(steps: Step[], paused: boolean) {
   const [i, setI] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [pos, setPos] = useState<Pos>({ x: steps[0].x, y: steps[0].y, ms: 0, ease: 'linear' });
   const last = useRef<Point>({ x: steps[0].x, y: steps[0].y });
 
@@ -65,7 +66,7 @@ function usePlayer(steps: Step[]) {
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [i, paused, steps]);
 
-  return { step: steps[i], pos, setPaused };
+  return { step: steps[i], pos };
 }
 
 const targetOf = (n: TopoNode) => (n.ns === 'apis' ? '#tools' : '#identities');
@@ -90,19 +91,25 @@ function Jump({
   );
 }
 
-export function HeroStage({ signedIn, footer }: { signedIn: boolean; footer?: React.ReactNode }) {
-  const { step, pos, setPaused } = usePlayer(IDLE_LOOP);
+export function HeroStage({
+  signedIn,
+  footer,
+  initiallyPaused = false,
+}: {
+  signedIn: boolean;
+  footer?: React.ReactNode;
+  /** Start stopped — tests use it; the button toggles it at runtime. */
+  initiallyPaused?: boolean;
+}) {
+  const [stopped, setStopped] = useState(initiallyPaused);
+  const { step, pos } = usePlayer(IDLE_LOOP, stopped);
   const lit = new Set<string>(step.lit);
   const edges = new Set(step.edges);
   const links = new Set<string>(step.links);
   const amber = new Set<string>(step.amber);
 
   return (
-    <div
-      data-hero-stage
-      onPointerEnter={() => setPaused(true)}
-      onPointerLeave={() => setPaused(false)}
-    >
+    <div data-hero-stage {...(stopped ? { 'data-paused': true } : {})}>
       <svg
         viewBox={`0 0 ${VIEW.w} ${VIEW.h}`}
         className="w-full"
@@ -275,6 +282,17 @@ export function HeroStage({ signedIn, footer }: { signedIn: boolean; footer?: Re
             token exchange · RFC 8693
           </span>
         </p>
+        <button
+          type="button"
+          data-hero-toggle
+          aria-label={stopped ? 'Play animation' : 'Pause animation'}
+          aria-pressed={stopped}
+          title={stopped ? 'Play the animation' : 'Pause the animation'}
+          onClick={() => setStopped((v) => !v)}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white/80 backdrop-blur transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+        >
+          {stopped ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+        </button>
       </div>
     </div>
   );
