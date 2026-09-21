@@ -64,6 +64,16 @@ export function traceFields(span: Span | undefined): OboTrace {
   return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
 
+/**
+ * The id of the trace the caller is currently inside, for a response to carry
+ * back to a UI that wants to deep-link it (Grafana/Tempo). Undefined when no
+ * valid span is active, so an uninstrumented service reports nothing rather
+ * than 32 zeros that look real.
+ */
+export function activeTraceId(): string | undefined {
+  return traceFields(trace.getActiveSpan()).traceId;
+}
+
 export interface JwtSummary {
   sub?: string;
   aud?: string;

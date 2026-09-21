@@ -13,15 +13,13 @@ export {
   type CimdMetadataDocument,
   type CreateCimdIdentityParams,
 } from './cimd.js';
-export {
-  buildIdentityAttributes,
-  decorateSpanWithIdentity,
-} from './identity-span.js';
+export { buildIdentityAttributes, decorateSpanWithIdentity } from './identity-span.js';
 export { buildExchangeAttributes, type ExchangeSpanInput } from './exchange-span.js';
 export {
   oboLog,
   formatOboLog,
   summarizeJwt,
+  activeTraceId,
   flattenAct,
   type OboKind,
   type OboLogEvent,

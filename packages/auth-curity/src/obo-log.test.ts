@@ -174,8 +174,7 @@ describe('oboLog', () => {
 });
 
 describe('may_act (RFC 8693 §4.4)', () => {
-  const enc = (o: unknown) =>
-    `x.${Buffer.from(JSON.stringify(o)).toString('base64url')}.y`;
+  const enc = (o: unknown) => `x.${Buffer.from(JSON.stringify(o)).toString('base64url')}.y`;
 
   it('surfaces may_act.sub shortened to its service account', () => {
     const jwt = enc({
@@ -208,5 +207,24 @@ describe('may_act (RFC 8693 §4.4)', () => {
   it('ignores a malformed may_act rather than throwing', () => {
     expect(summarizeJwt(enc({ may_act: 'not-an-object' })).mayAct).toBeUndefined();
     expect(summarizeJwt(enc({ may_act: {} })).mayAct).toBeUndefined();
+  });
+});
+
+describe('activeTraceId', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('returns the trace id of the active span, so a response can carry it to the UI', async () => {
+    const { activeTraceId } = await import('./obo-log.js');
+    const span = trace.wrapSpanContext({
+      traceId: 'abcdefabcdefabcdefabcdefabcdef12',
+      spanId: '1234567812345678',
+      traceFlags: 1,
+    });
+    // The bare API ships a no-op context manager, so stub the lookup itself.
+    vi.spyOn(trace, 'getActiveSpan').mockReturnValue(span);
+    expect(activeTraceId()).toBe('abcdefabcdefabcdefabcdefabcdef12');
+  });
+  it('is undefined with no active span — never a string of zeros that looks real', async () => {
+    const { activeTraceId } = await import('./obo-log.js');
+    expect(activeTraceId()).toBeUndefined();
   });
 });

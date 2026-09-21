@@ -18,13 +18,9 @@ import {
 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { JsonBlock } from '@/components/json-block';
-import { Markdown } from '@/components/markdown';
 import { WorkloadIdentities } from '@/components/workload-identities';
 import { FlowBadge } from '@/components/flow-badge';
 import { flowOfChain } from '@/lib/token-view';
@@ -43,27 +39,9 @@ import {
 import type { Asking } from '@/lib/asking';
 import { RequestFailure } from '@/components/request-failure';
 import { stashStepUp, takeStepUpReturn, type StepUpReturn } from '@/lib/step-up-return';
-import type { TraceStep as AgentStep } from '@/lib/trace-view';
-import {
-  IntentBadges,
-  PrivilegedTrace,
-  ReadTrace,
-  type RestartIntent,
-  type SpecialistView,
-} from '@/components/agent-trace';
+import { ResultCard, type AgentResponse } from '@/components/result-card';
 import { DelegationLedger } from '@/components/delegation-ledger';
 import { ToolVisibility, type ToolTiersResponse } from '@/components/tool-visibility';
-
-interface AgentResponse {
-  answer: string;
-  identity: { sub: string; scopes: string[]; roles?: string[]; acr?: string };
-  // Observability path: the LLM tool-calling steps.
-  steps?: AgentStep[];
-  // Privileged path: a deterministic agent-to-agent route (no LLM steps).
-  route?: string;
-  intent?: RestartIntent;
-  specialist?: SpecialistView;
-}
 
 interface StepUpState {
   acrValues: string;
@@ -107,6 +85,9 @@ export function Chat({
   const [message, setMessage] = useState(DEFAULT_PROMPT);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<AgentResponse | null>(preview?.response ?? null);
+  // The prompt the current answer is for — the Result card repeats it, since
+  // the box may have been edited since.
+  const [asked, setAsked] = useState<string | undefined>(undefined);
   const [error, setError] = useState<Exclude<AgentFailure, { kind: 'step-up' }> | null>(null);
   const [stepUp, setStepUp] = useState<StepUpState | null>(null);
   // Set when the page remounted after an MFA step-up redirect: the prompt the
@@ -179,6 +160,7 @@ export function Chat({
 
       const resp = body as AgentResponse;
       setResponse(resp);
+      setAsked(outgoing);
       // A new answer refreshes the panels that explain it — only the ones the
       // presenter already opened; nothing opens by itself.
       const plan = panelsToRefresh({
@@ -454,104 +436,7 @@ export function Chat({
 
       {loading && !response && <ResultSkeleton />}
 
-      {response && (
-        <Card id="result" className="scroll-mt-24 animate-fade-in-up">
-          <CardHeader>
-            <CardTitle className="text-lg">Result</CardTitle>
-            <CardDescription>
-              The agent’s answer plus the identity it presented and the tools it called.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="answer">
-              <TabsList>
-                <TabsTrigger value="answer">
-                  <Sparkles />
-                  Answer
-                </TabsTrigger>
-                <TabsTrigger value="identity">
-                  <Fingerprint />
-                  Identity
-                </TabsTrigger>
-                <TabsTrigger value="trace">
-                  <Layers />
-                  Trace
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="answer" className="space-y-4">
-                <Markdown className="rounded-xl border border-border bg-secondary/60 p-4 text-[15px] leading-relaxed">
-                  {response.answer}
-                </Markdown>
-                <IntentBadges intent={response.intent} />
-              </TabsContent>
-
-              <TabsContent value="identity" className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Subject</span>
-                  <Badge variant="secondary" className="font-mono">
-                    {response.identity.sub}
-                  </Badge>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Scopes</span>
-                  {response.identity.scopes.length > 0 ? (
-                    response.identity.scopes.map((scope) => (
-                      <Badge key={scope} variant="success" className="font-mono">
-                        {scope}
-                      </Badge>
-                    ))
-                  ) : (
-                    <span className="text-sm text-muted-foreground">none</span>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Roles</span>
-                  {response.identity.roles && response.identity.roles.length > 0 ? (
-                    response.identity.roles.map((role) => (
-                      <Badge key={role} variant="secondary" className="font-mono">
-                        {role}
-                      </Badge>
-                    ))
-                  ) : (
-                    <span className="text-sm text-muted-foreground">none</span>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">ACR</span>
-                  {response.identity.acr ? (
-                    <Badge
-                      variant={response.identity.acr === 'mfa' ? 'success' : 'secondary'}
-                      className="font-mono"
-                    >
-                      {response.identity.acr}
-                    </Badge>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">none</span>
-                  )}
-                </div>
-                <JsonBlock data={response.identity} />
-              </TabsContent>
-
-              <TabsContent value="trace">
-                {response.steps && response.steps.length > 0 ? (
-                  <ReadTrace steps={response.steps} />
-                ) : response.route || response.specialist ? (
-                  <PrivilegedTrace
-                    route={response.route}
-                    intent={response.intent}
-                    specialist={response.specialist}
-                  />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No execution trace available for this response.
-                  </p>
-                )}
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      )}
+      {response && <ResultCard response={response} asked={asked} />}
 
       <Card id="identities" className="scroll-mt-24">
         <CardHeader>

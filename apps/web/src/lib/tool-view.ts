@@ -11,6 +11,12 @@ const TOOL_ORDER: Record<ToolTier, string[]> = {
   ops: ['restart_deployment', 'scale_deployment', 'set_deployment_image'],
 };
 
+/** Which tier a tool call went to. Unknown names are read as observability —
+ *  the safe default, since it never claims a call was privileged. */
+export function toolTier(name: string): ToolTier {
+  return TOOL_ORDER.ops.includes(name) ? 'ops' : 'observability';
+}
+
 export function orderTools<T extends { name: string }>(tier: ToolTier, tools: T[]): T[] {
   const known = TOOL_ORDER[tier];
   const rank = (n: string) => {

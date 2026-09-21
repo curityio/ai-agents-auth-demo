@@ -57,3 +57,15 @@ describe('tierVerdict', () => {
     });
   });
 });
+
+describe('toolTier', () => {
+  it('knows the three write tools are ops, everything else observability', async () => {
+    const { toolTier } = await import('../src/lib/tool-view');
+    expect(toolTier('restart_deployment')).toBe('ops');
+    expect(toolTier('scale_deployment')).toBe('ops');
+    expect(toolTier('set_deployment_image')).toBe('ops');
+    expect(toolTier('get_deployment')).toBe('observability');
+    expect(toolTier('list_pods')).toBe('observability');
+    expect(toolTier('something_new')).toBe('observability');
+  });
+});

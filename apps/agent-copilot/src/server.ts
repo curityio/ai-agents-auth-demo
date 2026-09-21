@@ -12,7 +12,7 @@ import {
   buildPrivilegedAnswer,
 } from './specialist-client.js';
 import { detectIntent } from './intent.js';
-import { CurityAuthError, oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
+import { activeTraceId, CurityAuthError, oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 import { getCimdIdentity } from './cimd-identity.js';
 import { spiffeIdHandler } from './spiffe-route.js';
 import { lastTokenHandler } from './last-token-route.js';
@@ -171,7 +171,14 @@ async function main(): Promise<void> {
           intent: { ...intent },
           ...(steps ? { steps } : {}),
           specialist: specialistResp,
-          identity: { sub: userSub, scopes: [...authed.caller!.scopes], roles: userRoles, acr: userAcr },
+          identity: {
+            sub: userSub,
+            scopes: [...authed.caller!.scopes],
+            roles: userRoles,
+            acr: userAcr,
+          },
+          // The trace this request ran in — the web UI deep-links it into Grafana.
+          traceId: activeTraceId(),
         });
         return;
       } catch (e) {
@@ -238,9 +245,7 @@ async function main(): Promise<void> {
       const result = await generateText({
         model: llm,
         instructions: SYSTEM_PROMPT,
-        messages: [
-          { role: 'user', content: `User: ${userSub}\n\nQuestion: ${message}` },
-        ],
+        messages: [{ role: 'user', content: `User: ${userSub}\n\nQuestion: ${message}` }],
         tools: toolset.tools,
         stopWhen: isStepCount(6),
       });
@@ -252,9 +257,7 @@ async function main(): Promise<void> {
         // (input/output) move underneath.
         steps: result.steps.map((s) => {
           const calls = s.toolCalls as Array<{ toolName: string; input: unknown }> | undefined;
-          const results = s.toolResults as
-            | Array<{ toolName: string; output: unknown }>
-            | undefined;
+          const results = s.toolResults as Array<{ toolName: string; output: unknown }> | undefined;
           return {
             toolCalls: calls?.map((tc) => ({ name: tc.toolName, args: tc.input })),
             toolResults: results?.map((tr) => ({ name: tr.toolName, result: tr.output })),
@@ -267,6 +270,8 @@ async function main(): Promise<void> {
           roles: userRoles,
           acr: userAcr,
         },
+        // The trace this request ran in — the web UI deep-links it into Grafana.
+        traceId: activeTraceId(),
       });
     } catch (e) {
       console.error('[agent-copilot] generation error', e);
