@@ -12,7 +12,8 @@ const badgeVariants = cva(
         /** The diff mark: same family as `default`, but tinted so it doesn't glow. */
         accent: 'border-transparent bg-primary/15 text-accent-violet',
         secondary: 'border-transparent bg-secondary text-secondary-foreground',
-        destructive: 'border-transparent bg-destructive text-destructive-foreground',
+        // Tint-and-text like success/warning: an expired or failed pill should read, not glow.
+        destructive: 'border-transparent bg-destructive/15 text-destructive',
         success: 'border-transparent bg-success/15 text-success',
         warning: 'border-transparent bg-warn/15 text-warn',
         outline: 'text-foreground',

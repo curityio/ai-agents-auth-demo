@@ -194,6 +194,23 @@ describe('DelegationLedger', () => {
     expect(legend.match(/bg-primary\/15/g)?.length).toBe(2);
   });
 
+  it('shows an expired token as red text on a red tint, not a solid red pill', () => {
+    const exp = 1_800_000_000;
+    const timed = [
+      {
+        hop: 'user → agent-copilot (inbound)',
+        header: {},
+        payload: { sub: 'alice', iat: exp - 300, exp },
+      },
+    ];
+    const out = renderToStaticMarkup(<DelegationLedger chain={timed} now={(exp + 5) * 1000} />);
+    const pill = out.match(/<[^>]*class="[^"]*"[^>]*>(?:(?!<\/div>).)*expired/s)?.[0];
+    expect(pill, 'expired pill').toBeTruthy();
+    expect(pill).toMatch(/bg-destructive\/15/);
+    expect(pill).toMatch(/text-destructive/);
+    expect(pill).not.toMatch(/bg-destructive /);
+  });
+
   it('renders the time left relative to the clock it is given', () => {
     const exp = 1_800_000_000;
     const timed = [
