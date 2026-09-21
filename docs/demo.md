@@ -140,7 +140,7 @@ teaching point: the gateway grants the *tier* (`ops:write`), but the per-tool
 split is finer than the tier — carol even *sees* `set_deployment_image` in
 `tools/list`; it's the **call** that's denied.
 
-Make the "she can see it" half visible with the **MCP Tools Visibility**
+Make the "she can see it" half visible with the **Tools this token can reach**
 card (**Check tools**): the write-tier column lists all three ops tools for carol,
 exactly as agentgateway's `tools/list` returned them for her token — with
 `set_deployment_image` marked **needs sre** and a *Listed ≠ callable* note. That
@@ -271,7 +271,7 @@ can see; all three are on-demand buttons so nothing is minted until you press:
 |---|---|---|
 | **Workload identities** | *Show identities* | Each pod's live SPIFFE JWT-SVID — the `actor_token` of every exchange. |
 | **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. The `aud=llm-gateway` token appears as a *leaf* row (no `may_act`) under the agent that called the model. |
-| **MCP Tools Visibility** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
+| **Tools this token can reach** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
 
 The same ledger, with copyable raw JWTs, is at `https://app.localtest.me/inspect`
 (debug-only, `AUTH_DEBUG=true`) — useful on a projector when the chat is busy.

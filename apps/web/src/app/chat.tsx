@@ -627,12 +627,12 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
                   <Wrench />
                 </span>
-                MCP Tools Visibility
+                Tools this token can reach
               </CardTitle>
               <CardDescription className="max-w-xl">
                 The MCP tools agentgateway lists for <em>your</em> token, per tier. The list is
-                filtered by tier scope, and the write tier is only probed after the MFA and role
-                claim conditions are met. So what you see here is what the agents can even attempt.
+                filtered by tier scope, and the write tier is only probed once the MFA and role
+                conditions are met.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
