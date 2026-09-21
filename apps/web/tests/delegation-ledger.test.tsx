@@ -46,4 +46,24 @@ describe('DelegationLedger', () => {
     expect(html).toMatch(/>agentgateway</);
     expect(html).not.toMatch(/>spiffe:\/\//);
   });
+
+  it('renders the time left relative to the clock it is given', () => {
+    const exp = 1_800_000_000;
+    const timed = [
+      {
+        hop: 'user → agent-copilot (inbound)',
+        header: {},
+        payload: { sub: 'alice', iat: exp - 300, exp },
+      },
+    ];
+    expect(
+      renderToStaticMarkup(<DelegationLedger chain={timed} now={(exp - 65) * 1000} />),
+    ).toContain('ttl 5m · 1m 5s left');
+    expect(
+      renderToStaticMarkup(<DelegationLedger chain={timed} now={(exp - 64) * 1000} />),
+    ).toContain('ttl 5m · 1m 4s left');
+    expect(
+      renderToStaticMarkup(<DelegationLedger chain={timed} now={(exp + 1) * 1000} />),
+    ).toContain('expired');
+  });
 });

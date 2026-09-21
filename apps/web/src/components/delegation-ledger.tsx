@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { ArrowRight, Check, Clock, KeyRound, ShieldAlert, Sparkles, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -30,9 +31,24 @@ function fmtSeconds(s: number): string {
   return rem ? `${m}m ${rem}s` : `${m}m`;
 }
 
-function TtlBadge({ iat, exp }: { iat?: number; exp?: number }) {
+/**
+ * A ticking clock so "time left" counts down on screen. The tokens themselves
+ * do not change until the next request, so this re-renders locally instead of
+ * polling the chain route — polling would spray extra spans and OBO-log lines
+ * into the very telemetry the demo is showing.
+ */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+function TtlBadge({ iat, exp, now }: { iat?: number; exp?: number; now: number }) {
   if (exp === undefined) return null;
-  const remaining = Math.round(exp - Date.now() / 1000);
+  const remaining = Math.round(exp - now / 1000);
   const total = iat !== undefined ? Math.round(exp - iat) : undefined;
   const expired = remaining <= 0;
   return (
@@ -63,7 +79,17 @@ function Row({ children }: { children: React.ReactNode }) {
  * highlighted), and who may act NEXT (may_act). Between hops, a check confirms
  * the actor that presented the parent token was the one its may_act named.
  */
-function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; showRaw: boolean }) {
+function LedgerRowView({
+  row,
+  hop,
+  showRaw,
+  now,
+}: {
+  row: LedgerRow;
+  hop: LedgerHop;
+  showRaw: boolean;
+  now: number;
+}) {
   const { summary: s, diff } = row;
   const isRoot = row.parentIndex === undefined;
 
@@ -87,7 +113,7 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
                 acr {s.acr}
               </Badge>
             )}
-            <TtlBadge iat={s.iat} exp={s.exp} />
+            <TtlBadge iat={s.iat} exp={s.exp} now={now} />
           </div>
         </div>
 
@@ -262,12 +288,29 @@ function LedgerRowView({ row, hop, showRaw }: { row: LedgerRow; hop: LedgerHop; 
  * the token it was exchanged FROM (see `buildLedger` for how the parent is
  * found — by `act`-chain prefix, not list position).
  */
-export function DelegationLedger({ chain, showRaw = false }: { chain: LedgerHop[]; showRaw?: boolean }) {
+export function DelegationLedger({
+  chain,
+  showRaw = false,
+  now: nowProp,
+}: {
+  chain: LedgerHop[];
+  showRaw?: boolean;
+  /** Clock override (ms since epoch) — tests inject it; the UI ticks its own. */
+  now?: number;
+}) {
+  const tick = useNow(1000);
+  const now = nowProp ?? tick;
   const rows = buildLedger(chain);
   return (
     <ol className="relative space-y-4 before:absolute before:left-[11px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-border">
       {rows.map((row) => (
-        <LedgerRowView key={`${row.index}-${row.hop}`} row={row} hop={chain[row.index]!} showRaw={showRaw} />
+        <LedgerRowView
+          key={`${row.index}-${row.hop}`}
+          row={row}
+          hop={chain[row.index]!}
+          showRaw={showRaw}
+          now={now}
+        />
       ))}
     </ol>
   );

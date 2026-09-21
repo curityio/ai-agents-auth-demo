@@ -70,10 +70,7 @@ export function selectDownstreamBranch(
   llm?: ExchangeSlot | undefined,
 ): { showObs: boolean; showSpec: boolean; showLlm: boolean } {
   const belongs = (e: ExchangeSlot | undefined): boolean =>
-    !!e &&
-    e.sub === inbound.sub &&
-    typeof inbound.jti === 'string' &&
-    e.subjectJti === inbound.jti;
+    !!e && e.sub === inbound.sub && typeof inbound.jti === 'string' && e.subjectJti === inbound.jti;
 
   const obsOk = belongs(obs);
   const specOk = belongs(spec);
@@ -91,26 +88,50 @@ export function selectDownstreamBranch(
 /**
  * Fetch a downstream service's `/last-token` (uniform `{ chain }` shape) using
  * the bearer this hop minted for it, and return its hops to be concatenated.
- * Best-effort: any failure (expired token, service down) yields an empty list
- * so the chain still renders up to the last reachable hop.
+ *
+ * Best-effort with a memory: the walk authenticates to the next service with
+ * the exchanged token, so once that token EXPIRES the next hop answers 401 and
+ * the chain would silently truncate to this process's own hops — the demo's
+ * "tokens are short-lived" beat then looks like a bug. So the last successful
+ * result is kept per exact bearer, and served when the same bearer is later
+ * refused or the service is unreachable. Keyed on the token string itself, a
+ * snapshot can only ever describe the delegation it was fetched with; a fresh
+ * exchange is a new key. Nothing about auth on any /last-token route changes.
+ * Bounded to the last few bearers — this is a debug surface, not a cache.
  */
-async function fetchDownstreamChain(
-  url: string,
-  bearer: string,
-  includeRaw: boolean,
-): Promise<ChainHop[]> {
-  try {
-    // Propagate `?raw=1` so the whole chain carries raw tokens, not just our hop.
-    const fetchUrl = includeRaw ? `${url}?raw=1` : url;
-    const r = await fetch(fetchUrl, { headers: { authorization: `Bearer ${bearer}` } });
-    if (!r.ok) return [];
-    const body = (await r.json()) as { chain?: ChainHop[] };
-    return body.chain ?? [];
-  } catch (e) {
-    console.error('[last-token] downstream fetch failed', url, e);
-    return [];
-  }
+export function createDownstreamChainFetcher(
+  fetchImpl: typeof fetch = fetch,
+  maxSnapshots = 8,
+): (url: string, bearer: string, includeRaw: boolean) => Promise<ChainHop[]> {
+  const snapshots = new Map<string, ChainHop[]>();
+  const remember = (key: string, hops: ChainHop[]) => {
+    snapshots.delete(key);
+    snapshots.set(key, hops);
+    while (snapshots.size > maxSnapshots) {
+      const oldest = snapshots.keys().next().value;
+      if (oldest === undefined) break;
+      snapshots.delete(oldest);
+    }
+  };
+  return async (url, bearer, includeRaw) => {
+    const key = `${url}|${includeRaw ? 'raw' : 'decoded'}|${bearer}`;
+    try {
+      // Propagate `?raw=1` so the whole chain carries raw tokens, not just our hop.
+      const fetchUrl = includeRaw ? `${url}?raw=1` : url;
+      const r = await fetchImpl(fetchUrl, { headers: { authorization: `Bearer ${bearer}` } });
+      if (!r.ok) return snapshots.get(key) ?? [];
+      const body = (await r.json()) as { chain?: ChainHop[] };
+      const hops = body.chain ?? [];
+      remember(key, hops);
+      return hops;
+    } catch (e) {
+      console.error('[last-token] downstream fetch failed', url, e);
+      return snapshots.get(key) ?? [];
+    }
+  };
 }
+
+const fetchDownstreamChain = createDownstreamChainFetcher();
 
 /**
  * Returns the full OBO chain for the calling user, ordered from the USER end
@@ -159,7 +180,9 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
   // BEFORE the MCP branch: the ledger finds each row's parent by act-chain
   // prefix, so the mcp-gateway row still diffs against hop 0, not the leaf.
   if (showLlm && llmExch) {
-    chain.push(decode('agent-copilot → agentgateway (/llm)', llmExch.accessToken, includeRaw, LLM_LEAF_NOTE));
+    chain.push(
+      decode('agent-copilot → agentgateway (/llm)', llmExch.accessToken, includeRaw, LLM_LEAF_NOTE),
+    );
   }
 
   if (showObs && obsExch) {
@@ -167,7 +190,9 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
     // THROUGH the agentgateway, which re-exchanges (via the shim) to
     // aud=mcp-observability. The gateway → mcp-observability + mcp-observability →
     // obs-api legs come from the downstream /last-token walk below.
-    chain.push(decode('agent-copilot → agentgateway (/observability/mcp)', obsExch.accessToken, includeRaw));
+    chain.push(
+      decode('agent-copilot → agentgateway (/observability/mcp)', obsExch.accessToken, includeRaw),
+    );
     if (cfg) {
       const url = cfg.mcpObservabilityUrl.replace(/\/mcp\/?$/, '') + '/last-token';
       chain.push(...(await fetchDownstreamChain(url, obsExch.accessToken, includeRaw)));
