@@ -55,6 +55,13 @@ export interface LedgerRow {
   /** Index of the row this token was exchanged from; undefined for the root. */
   parentIndex?: number;
   diff: HopDiff;
+  /**
+   * A leaf is a real narrowing of the delegation that nothing exchanges onward
+   * (today: the LLM call). It hangs off the spine rather than counting on it.
+   */
+  leaf: boolean;
+  /** Position on the spine (0-based, leaves skipped); undefined for a leaf. */
+  number?: number;
 }
 
 const SPIFFE_SA = /^spiffe:\/\/[^/]+\/ns\/[^/]+\/sa\/([^/]+)$/;
@@ -171,17 +178,55 @@ function diffAgainst(parent: HopSummary | undefined, cur: HopSummary): HopDiff {
   };
 }
 
-export function buildLedger(chain: Array<{ hop: string; payload: JwtPayload }>): LedgerRow[] {
+/**
+ * What every token in the chain carries unchanged from the login token: the
+ * subject, their roles, and the authentication strength. The ledger prints
+ * these once, above the hops, and a hop repeats a field only where it differs
+ * (after a step-up, `acr=mfa` on the re-issued token is the interesting case).
+ */
+export interface ChainBaseline {
+  sub?: string;
+  roles: string[];
+  acr?: string;
+}
+
+export function chainBaseline(rows: LedgerRow[]): ChainBaseline {
+  const root = rows.find((r) => r.parentIndex === undefined) ?? rows[0];
+  if (!root) return { roles: [] };
+  const { sub, roles, acr } = root.summary;
+  return { sub, roles, acr };
+}
+
+export function hopDeltas(
+  s: HopSummary,
+  base: ChainBaseline,
+): { sub: boolean; roles: boolean; acr: boolean } {
+  const key = (r: string[]) => [...r].sort().join(' ');
+  return {
+    sub: s.sub !== base.sub,
+    roles: key(s.roles) !== key(base.roles),
+    acr: s.acr !== base.acr,
+  };
+}
+
+export function buildLedger(
+  chain: Array<{ hop: string; payload: JwtPayload; note?: string }>,
+): LedgerRow[] {
   const summaries = chain.map((h) => summarizeHop(h.payload));
+  let spine = 0;
   return chain.map((h, i) => {
     const parentIndex = findParentIndex(summaries, i);
     const parent = parentIndex === undefined ? undefined : summaries[parentIndex];
+    // Only the agent that emitted a hop knows it is a leaf; it says so in `note`.
+    const leaf = Boolean(h.note);
     return {
       index: i,
       hop: h.hop,
       summary: summaries[i]!,
       parentIndex,
       diff: diffAgainst(parent, summaries[i]!),
+      leaf,
+      number: leaf ? undefined : spine++,
     };
   });
 }

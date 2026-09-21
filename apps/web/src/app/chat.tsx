@@ -20,13 +20,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { JsonBlock } from '@/components/json-block';
@@ -271,8 +265,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
             Ask the copilot
           </CardTitle>
           <CardDescription>
-            Phrase a request in plain language. Read-only questions resolve instantly;
-            privileged actions trigger a step-up MFA prompt.
+            Phrase a request in plain language. Read-only questions resolve instantly; privileged
+            actions trigger a step-up MFA prompt.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -314,19 +308,30 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
             {/* Legend for the example prompts above, kept on its own row and
                 behind a divider so it reads as a key rather than as more options. */}
-            <ul className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs" aria-label="Prompt legend">
+            <ul
+              className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs"
+              aria-label="Prompt legend"
+            >
               <li className="inline-flex items-center gap-1.5 text-muted-foreground">
                 <Eye className="h-3.5 w-3.5" />
-                <span aria-hidden className="text-muted-foreground/60">→</span>
+                <span aria-hidden className="text-muted-foreground/60">
+                  →
+                </span>
                 read-only, answered inline
               </li>
               <li className="inline-flex items-center gap-1.5 text-warn/90">
                 <Lock className="h-3.5 w-3.5" />
-                <span aria-hidden className="text-warn/60">→</span>
+                <span aria-hidden className="text-warn/60">
+                  →
+                </span>
                 privileged, triggers MFA step-up
               </li>
             </ul>
-            <Button type="button" onClick={() => void submit()} disabled={loading || !message.trim()}>
+            <Button
+              type="button"
+              onClick={() => void submit()}
+              disabled={loading || !message.trim()}
+            >
               {loading ? (
                 <>
                   <Loader2 className="animate-spin" />
@@ -374,9 +379,9 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
           <AlertTitle>Step-up authentication required</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>
-              This is a privileged action. Re-authenticate with multi-factor
-              authentication to obtain an <code className="font-mono">acr=mfa</code> token for
-              scope <code className="font-mono">{stepUp.scope}</code>.
+              This is a privileged action. Re-authenticate with multi-factor authentication to
+              obtain an <code className="font-mono">acr=mfa</code> token for scope{' '}
+              <code className="font-mono">{stepUp.scope}</code>.
             </p>
             <Button
               type="button"
@@ -517,20 +522,34 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 Workload Identities
               </CardTitle>
               <CardDescription className="max-w-xl">
-                Each pod carries its own SPIFFE JWT-SVID, distinct from the user token.
-                These serve as the <code className="font-mono">actor_token</code> in the RFC 8693
-                token exchange that delegates the user’s authority down the chain. Shown in
-                chain order for the flow you last ran.
+                Each pod carries its own SPIFFE JWT-SVID, distinct from the user token. These serve
+                as the <code className="font-mono">actor_token</code> in the RFC 8693 token exchange
+                that delegates the user’s authority down the chain. Shown in chain order for the
+                flow you last ran.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {(svids || svidError) && !svidLoading && (
-                <Button type="button" variant="ghost" size="sm" onClick={() => { setSvids(null); setSvidError(null); }}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSvids(null);
+                    setSvidError(null);
+                  }}
+                >
                   <ChevronUp />
                   Hide
                 </Button>
               )}
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadSvids()} disabled={svidLoading}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadSvids()}
+                disabled={svidLoading}
+              >
                 {svidLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                 {svidLoading ? 'Fetching…' : svids ? 'Refresh' : 'Show identities'}
               </Button>
@@ -563,21 +582,32 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 On-behalf-of chain
               </CardTitle>
               <CardDescription className="max-w-xl">
-                Each hop is one OAuth 2 token the request traveled with, diffed against the
-                token it was exchanged from: <code className="font-mono">scope</code> narrows
-                (dropped scopes stay struck through), <code className="font-mono">act</code> grows
-                by exactly one workload, and <code className="font-mono">may_act</code> names who
-                is allowed to present the token next which the following hop then proves.
+                Each hop is one OAuth 2 token the request traveled with, diffed against the token it
+                was exchanged from.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {(obo || oboError) && !oboLoading && (
-                <Button type="button" variant="ghost" size="sm" onClick={() => { setObo(null); setOboError(null); }}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setObo(null);
+                    setOboError(null);
+                  }}
+                >
                   <ChevronUp />
                   Hide
                 </Button>
               )}
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadObo()} disabled={oboLoading}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadObo()}
+                disabled={oboLoading}
+              >
                 {oboLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                 {oboLoading ? 'Loading…' : obo ? 'Refresh' : 'Show chain'}
               </Button>
@@ -637,12 +667,26 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
             </div>
             <div className="flex items-center gap-2">
               {(tools || toolsError) && !toolsLoading && (
-                <Button type="button" variant="ghost" size="sm" onClick={() => { setTools(null); setToolsError(null); }}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setTools(null);
+                    setToolsError(null);
+                  }}
+                >
                   <ChevronUp />
                   Hide
                 </Button>
               )}
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadTools()} disabled={toolsLoading}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadTools()}
+                disabled={toolsLoading}
+              >
                 {toolsLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                 {toolsLoading ? 'Probing…' : tools ? 'Refresh' : 'Check tools'}
               </Button>

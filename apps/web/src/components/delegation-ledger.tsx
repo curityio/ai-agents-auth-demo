@@ -1,13 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowRight, Check, Clock, KeyRound, ShieldAlert, Sparkles, X } from 'lucide-react';
+import {
+  ArrowRight,
+  Check,
+  Clock,
+  CornerDownRight,
+  KeyRound,
+  ShieldAlert,
+  Sparkles,
+  X,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { JsonBlock } from '@/components/json-block';
 import { CopyButton } from '@/components/copy-button';
 import { cn } from '@/lib/utils';
-import { buildLedger, type LedgerRow } from '@/lib/token-view';
+import {
+  buildLedger,
+  chainBaseline,
+  hopDeltas,
+  type ChainBaseline,
+  type LedgerRow,
+} from '@/lib/token-view';
 
 export interface LedgerHop {
   hop: string;
@@ -73,213 +88,328 @@ function Row({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One token, rendered as the story the presenter tells: who the subject is, who
- * it is FOR (aud), what it may DO (scope — with the scopes the exchange dropped
- * kept on screen, struck through), who has ACTED so far (act, newest actor
- * highlighted), and who may act NEXT (may_act). Between hops, a check confirms
- * the actor that presented the parent token was the one its may_act named.
+ * One token, rendered as the story the presenter tells: who it is FOR (aud),
+ * what it may DO (scope — with the scopes the exchange dropped kept on
+ * screen, struck through), who has ACTED so far (act, newest actor
+ * highlighted, with a check when it is the actor the parent's may_act named),
+ * and who may act NEXT (may_act). sub/roles/acr live in the strip above the
+ * hops and are repeated here only where a hop differs from the login token.
+ *
+ * A leaf (the LLM call) hangs off the spine as an indented, dashed side-row
+ * with the same rows as any hop, and takes no spine number — so the spine
+ * reads 0 → 1 → 2 with each hop minted from the one above.
  */
 function LedgerRowView({
   row,
   hop,
   showRaw,
   now,
+  base,
+  numberOf,
 }: {
   row: LedgerRow;
   hop: LedgerHop;
   showRaw: boolean;
   now: number;
+  base: ChainBaseline;
+  /** Spine number to print for a row index (a parent is always on the spine). */
+  numberOf: (index: number) => number | string;
 }) {
-  const { summary: s, diff } = row;
+  const { summary: s, diff, leaf } = row;
   const isRoot = row.parentIndex === undefined;
+  const parentNo = row.parentIndex === undefined ? '' : numberOf(row.parentIndex);
+  // sub/roles/acr are printed once above the hops; repeat only what changed.
+  const changed = hopDeltas(s, base);
+
+  const header = (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <span className="font-mono text-sm font-semibold">{row.hop}</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {leaf && (
+          <Badge variant="outline" className="gap-1 font-mono" title={hop.note}>
+            <Sparkles className="h-3 w-3" />
+            leaf
+          </Badge>
+        )}
+        {s.acr && changed.acr && (
+          <Badge
+            variant={s.acr === 'mfa' ? 'success' : 'secondary'}
+            className="font-mono"
+            title="Differs from the login token"
+          >
+            acr {s.acr}
+          </Badge>
+        )}
+        <TtlBadge iat={s.iat} exp={s.exp} now={now} />
+      </div>
+    </div>
+  );
+
+  const claims = (
+    <>
+      {changed.sub && (
+        <Row>
+          <Label>sub</Label>
+          <span className="font-mono">{s.sub ?? '—'}</span>
+        </Row>
+      )}
+
+      <Row>
+        <Label>aud</Label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          {s.aud.map((a) => (
+            <Badge
+              key={a}
+              variant={diff.audChanged ? 'accent' : 'outline'}
+              className="font-mono"
+              title={diff.audChanged ? 'Audience narrowed by this exchange' : undefined}
+            >
+              {a}
+            </Badge>
+          ))}
+          {s.aud.length === 0 && <span className="text-muted-foreground">—</span>}
+        </span>
+      </Row>
+
+      <Row>
+        <Label>scope</Label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          {s.scopes.map((sc) => (
+            <Badge key={sc} variant="success" className="font-mono">
+              {sc}
+            </Badge>
+          ))}
+          {diff.scopesDropped.map((sc) => (
+            <Badge
+              key={`dropped-${sc}`}
+              variant="muted"
+              className="font-mono line-through opacity-60"
+              title="Held by the parent token, dropped by this exchange"
+            >
+              {sc}
+            </Badge>
+          ))}
+          {s.scopes.length === 0 && diff.scopesDropped.length === 0 && (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </span>
+      </Row>
+
+      {changed.roles && (
+        <Row>
+          <Label>roles</Label>
+          <span className="flex flex-wrap items-center gap-1.5">
+            {s.roles.map((r) => (
+              <Badge key={r} variant="secondary" className="font-mono">
+                {r}
+              </Badge>
+            ))}
+            {s.roles.length === 0 && <span className="text-muted-foreground">—</span>}
+          </span>
+        </Row>
+      )}
+    </>
+  );
+
+  const delegation = (
+    <>
+      <Row>
+        <Label>act</Label>
+        <span className="flex flex-wrap items-center gap-1">
+          {s.act.length === 0 && (
+            <span className="text-muted-foreground">
+              — {isRoot ? 'nobody has acted yet: this is the user’s own token' : ''}
+            </span>
+          )}
+          {s.act.map((a, i) => {
+            const newest = i === s.act.length - 1;
+            const appended = newest && diff.actAppended;
+            const id = s.actIds[i] ?? a;
+            const badge = (
+              <Badge
+                variant={appended ? 'accent' : 'outline'}
+                className={cn('gap-1 font-mono', appended && 'ring-1 ring-accent-violet/40')}
+                title={
+                  appended
+                    ? diff.mayActHonoured
+                      ? `${id} — appended by this exchange; hop ${parentNo}’s may_act named it`
+                      : `${id} — appended by this exchange`
+                    : id
+                }
+              >
+                {a}
+                {appended && diff.mayActHonoured && (
+                  <Check className="h-3 w-3" aria-label="permitted by the parent’s may_act" />
+                )}
+              </Badge>
+            );
+            return (
+              <span key={`${a}-${i}`} className="flex items-center gap-1">
+                {i > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                {appended ? (
+                  // The SVID this workload presented as actor_token — its card is above.
+                  <a
+                    href="#identities"
+                    className="rounded-full"
+                    aria-label={`${a}: see its workload identity`}
+                  >
+                    {badge}
+                  </a>
+                ) : (
+                  badge
+                )}
+              </span>
+            );
+          })}
+        </span>
+      </Row>
+
+      <Row>
+        <Label>may_act</Label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          {s.mayAct ? (
+            <>
+              <ArrowRight className="h-3 w-3 text-muted-foreground" />
+              <Badge variant="outline" className="font-mono" title={s.mayActId ?? s.mayAct}>
+                {s.mayAct}
+              </Badge>
+              <span className="text-xs text-muted-foreground">may present this token next</span>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              none — terminal token, nothing exchanges it onward
+            </span>
+          )}
+        </span>
+      </Row>
+
+      {diff.mayActHonoured === false && (
+        <div className="mt-1 flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <X className="h-3.5 w-3.5" />
+          <span>
+            Minted from hop {parentNo}’s token, but presented by{' '}
+            <span className="font-mono">{diff.actAppended}</span>, not the actor hop {parentNo}
+            ’s <span className="font-mono">may_act</span> permitted
+          </span>
+        </div>
+      )}
+    </>
+  );
+
+  const raw = (
+    <details className="mt-3 rounded-lg border bg-muted/10">
+      <summary className="cursor-pointer px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+        Raw JWT
+      </summary>
+      <div className="space-y-3 px-3 pb-3">
+        <JsonBlock data={{ header: hop.header, payload: hop.payload }} />
+        {showRaw &&
+          (hop.token ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                  <KeyRound className="h-3 w-3" /> Encoded token
+                </span>
+                <CopyButton value={hop.token} label="Copy token" />
+              </div>
+              <pre className="max-h-32 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-foreground/70">
+                {hop.token}
+              </pre>
+            </div>
+          ) : (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ShieldAlert className="h-3 w-3" /> Raw token unavailable for this hop.
+            </p>
+          ))}
+      </div>
+    </details>
+  );
+
+  if (leaf) {
+    return (
+      <li data-leaf className="relative pl-9 sm:pl-16">
+        <span
+          className="absolute left-2.5 top-1 text-muted-foreground sm:left-9"
+          title="A leaf: this token is not exchanged onward"
+        >
+          <CornerDownRight className="h-4 w-4" />
+        </span>
+        <div className="rounded-xl border border-dashed border-border bg-secondary/30 p-3.5">
+          {header}
+          {hop.note && <p className="mb-3 text-xs text-muted-foreground">{hop.note}</p>}
+          <div className="space-y-2 text-sm">
+            {claims}
+            {delegation}
+          </div>
+          {raw}
+        </div>
+      </li>
+    );
+  }
 
   return (
     <li className="relative pl-9">
-      <span className="mesh-hero absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ring-2 ring-background">
-        {row.index}
+      <span
+        data-spine-number={row.number}
+        className="mesh-hero absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ring-2 ring-background"
+      >
+        {row.number}
       </span>
       <div className="rounded-xl border border-border bg-secondary/60 p-3.5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <span className="font-mono text-sm font-semibold">{row.hop}</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {hop.note && (
-              <Badge variant="outline" className="gap-1 font-mono" title={hop.note}>
-                <Sparkles className="h-3 w-3" />
-                leaf
-              </Badge>
-            )}
-            {s.acr && (
-              <Badge variant={s.acr === 'mfa' ? 'success' : 'secondary'} className="font-mono">
-                acr {s.acr}
-              </Badge>
-            )}
-            <TtlBadge iat={s.iat} exp={s.exp} now={now} />
-          </div>
-        </div>
-
-        {hop.note && <p className="mb-3 text-xs text-muted-foreground">{hop.note}</p>}
-
+        {header}
         <div className="space-y-2 text-sm">
-          <Row>
-            <Label>sub</Label>
-            <span className="font-mono">{s.sub ?? '—'}</span>
-          </Row>
-
-          <Row>
-            <Label>aud</Label>
-            <span className="flex flex-wrap items-center gap-1.5">
-              {s.aud.map((a) => (
-                <Badge
-                  key={a}
-                  variant={diff.audChanged ? 'default' : 'outline'}
-                  className="font-mono"
-                  title={diff.audChanged ? 'Audience narrowed by this exchange' : undefined}
-                >
-                  {a}
-                </Badge>
-              ))}
-              {s.aud.length === 0 && <span className="text-muted-foreground">—</span>}
-            </span>
-          </Row>
-
-          <Row>
-            <Label>scope</Label>
-            <span className="flex flex-wrap items-center gap-1.5">
-              {s.scopes.map((sc) => (
-                <Badge key={sc} variant="success" className="font-mono">
-                  {sc}
-                </Badge>
-              ))}
-              {diff.scopesDropped.map((sc) => (
-                <Badge
-                  key={`dropped-${sc}`}
-                  variant="muted"
-                  className="font-mono line-through opacity-60"
-                  title="Held by the parent token, dropped by this exchange"
-                >
-                  {sc}
-                </Badge>
-              ))}
-              {s.scopes.length === 0 && diff.scopesDropped.length === 0 && (
-                <span className="text-muted-foreground">—</span>
-              )}
-            </span>
-          </Row>
-
-          <Row>
-            <Label>roles</Label>
-            <span className="flex flex-wrap items-center gap-1.5">
-              {s.roles.map((r) => (
-                <Badge key={r} variant="secondary" className="font-mono">
-                  {r}
-                </Badge>
-              ))}
-              {s.roles.length === 0 && <span className="text-muted-foreground">—</span>}
-            </span>
-          </Row>
-
-          <Row>
-            <Label>act</Label>
-            <span className="flex flex-wrap items-center gap-1">
-              {s.act.length === 0 && (
-                <span className="text-muted-foreground">
-                  — {isRoot ? 'nobody has acted yet: this is the user’s own token' : ''}
-                </span>
-              )}
-              {s.act.map((a, i) => {
-                const newest = i === s.act.length - 1;
-                const appended = newest && diff.actAppended;
-                const id = s.actIds[i] ?? a;
-                return (
-                  <span key={`${a}-${i}`} className="flex items-center gap-1">
-                    {i > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
-                    <Badge
-                      variant={appended ? 'default' : 'outline'}
-                      className={cn('font-mono', appended && 'ring-2 ring-primary/40')}
-                      title={appended ? `${id} — appended by this exchange` : id}
-                    >
-                      {a}
-                    </Badge>
-                  </span>
-                );
-              })}
-            </span>
-          </Row>
-
-          <Row>
-            <Label>may_act</Label>
-            <span className="flex flex-wrap items-center gap-1.5">
-              {s.mayAct ? (
-                <>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                  <Badge variant="outline" className="font-mono" title={s.mayActId ?? s.mayAct}>
-                    {s.mayAct}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">may present this token next</span>
-                </>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  none — terminal token, nothing exchanges it onward
-                </span>
-              )}
-            </span>
-          </Row>
-
-          {diff.mayActHonoured !== undefined && (
-            <div
-              className={cn(
-                'mt-1 flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs',
-                diff.mayActHonoured
-                  ? 'border-success/30 bg-success/10 text-success'
-                  : 'border-destructive/40 bg-destructive/10 text-destructive',
-              )}
-            >
-              {diff.mayActHonoured ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
-              {diff.mayActHonoured ? (
-                <span>
-                  Minted from hop {row.parentIndex}’s token, presented by{' '}
-                  <span className="font-mono">{diff.actAppended}</span>, the actor hop {row.parentIndex}’s{' '}
-                  <span className="font-mono">may_act</span> permitted
-                </span>
-              ) : (
-                <span>
-                  Minted from hop {row.parentIndex}’s token, but presented by{' '}
-                  <span className="font-mono">{diff.actAppended}</span>, not the actor hop {row.parentIndex}’s{' '}
-                  <span className="font-mono">may_act</span> permitted
-                </span>
-              )}
-            </div>
-          )}
+          {claims}
+          {delegation}
         </div>
-
-        <details className="mt-3 rounded-lg border bg-muted/10">
-          <summary className="cursor-pointer px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-            Raw JWT
-          </summary>
-          <div className="space-y-3 px-3 pb-3">
-            <JsonBlock data={{ header: hop.header, payload: hop.payload }} />
-            {showRaw &&
-              (hop.token ? (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                      <KeyRound className="h-3 w-3" /> Encoded token
-                    </span>
-                    <CopyButton value={hop.token} label="Copy token" />
-                  </div>
-                  <pre className="max-h-32 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-foreground/70">
-                    {hop.token}
-                  </pre>
-                </div>
-              ) : (
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <ShieldAlert className="h-3 w-3" /> Raw token unavailable for this hop.
-                </p>
-              ))}
-          </div>
-        </details>
+        {raw}
       </div>
     </li>
+  );
+}
+
+const SAMPLE =
+  'inline-flex items-center rounded-full border px-1.5 font-mono text-[10px] leading-4';
+
+/** What the diff marks on a hop mean — the legend the tooltips otherwise carry. */
+function Legend() {
+  return (
+    <div
+      data-chain-legend
+      className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <span className={cn(SAMPLE, 'border-transparent bg-primary/15 text-accent-violet')}>
+          aud
+        </span>
+        narrowed by this exchange
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={cn(
+            SAMPLE,
+            'border-transparent bg-muted text-muted-foreground line-through opacity-60',
+          )}
+        >
+          scope
+        </span>
+        dropped by this exchange
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={cn(
+            SAMPLE,
+            'border-transparent bg-primary/15 text-accent-violet ring-1 ring-accent-violet/40',
+          )}
+        >
+          actor
+        </span>
+        appended by this exchange
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <Check className="h-3 w-3" />
+        the parent’s <span className="font-mono">may_act</span> named it
+      </span>
+    </div>
   );
 }
 
@@ -301,17 +431,46 @@ export function DelegationLedger({
   const tick = useNow(1000);
   const now = nowProp ?? tick;
   const rows = buildLedger(chain);
+  const base = chainBaseline(rows);
+  const numberOf = (i: number) => rows[i]?.number ?? i;
+  const mono = 'font-mono text-foreground/80';
   return (
-    <ol className="relative space-y-4 before:absolute before:left-[11px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-border">
-      {rows.map((row) => (
-        <LedgerRowView
-          key={`${row.index}-${row.hop}`}
-          row={row}
-          hop={chain[row.index]!}
-          showRaw={showRaw}
-          now={now}
-        />
-      ))}
-    </ol>
+    <div className="space-y-3">
+      {rows.length > 0 && (
+        <div data-chain-facts className="text-xs text-muted-foreground">
+          Every token below carries sub <span className={mono}>{base.sub ?? '—'}</span> · roles{' '}
+          {base.roles.length > 0 ? (
+            base.roles.map((r, i) => (
+              <span key={r}>
+                {i > 0 && ', '}
+                <span className={mono}>{r}</span>
+              </span>
+            ))
+          ) : (
+            <span className={mono}>—</span>
+          )}{' '}
+          · acr{' '}
+          <span className={cn(mono, base.acr === 'mfa' && 'text-success')}>{base.acr ?? '—'}</span>
+          <span className="text-muted-foreground/70">
+            {' '}
+            — a hop repeats these only where it differs.
+          </span>
+        </div>
+      )}
+      {rows.length > 0 && <Legend />}
+      <ol className="relative space-y-4 before:absolute before:left-[11px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-border">
+        {rows.map((row) => (
+          <LedgerRowView
+            key={`${row.index}-${row.hop}`}
+            row={row}
+            hop={chain[row.index]!}
+            showRaw={showRaw}
+            now={now}
+            base={base}
+            numberOf={numberOf}
+          />
+        ))}
+      </ol>
+    </div>
   );
 }

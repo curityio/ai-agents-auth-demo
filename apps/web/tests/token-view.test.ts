@@ -16,6 +16,7 @@ import {
   shortSpiffe,
   summarizeHop,
 } from '../src/lib/token-view';
+import { chainBaseline, hopDeltas } from '../src/lib/token-view';
 
 const SPIFFE = (ns: string, sa: string) => `spiffe://demo.curity.local/ns/${ns}/sa/${sa}`;
 const COPILOT = SPIFFE('agents', 'agent-copilot');
@@ -345,5 +346,82 @@ describe('flowOfChain', () => {
   it('is undefined for an empty chain or the inbound token alone', () => {
     expect(flowOfChain([])).toBeUndefined();
     expect(flowOfChain([hop('user → agent-copilot (inbound)', 'agent-copilot')])).toBeUndefined();
+  });
+});
+
+describe('chainBaseline / hopDeltas', () => {
+  const COPILOT = 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot';
+  const rows = buildLedger([
+    {
+      hop: 'user → agent-copilot (inbound)',
+      payload: { sub: 'alice', roles: ['sre', 'oncall'], acr: 'html-form' },
+    },
+    {
+      hop: 'agent-copilot → agentgateway',
+      payload: { sub: 'alice', roles: ['oncall', 'sre'], acr: 'html-form', act: { sub: COPILOT } },
+    },
+    {
+      hop: 'agent-specialist → agentgateway',
+      payload: { sub: 'alice', roles: ['sre'], acr: 'mfa', act: { sub: COPILOT } },
+    },
+  ]);
+  it('takes sub, roles and acr from the root token', () => {
+    expect(chainBaseline(rows)).toEqual({
+      sub: 'alice',
+      roles: ['sre', 'oncall'],
+      acr: 'html-form',
+    });
+  });
+  it('flags nothing on a hop that matches the root, ignoring role order', () => {
+    expect(hopDeltas(rows[1].summary, chainBaseline(rows))).toEqual({
+      sub: false,
+      roles: false,
+      acr: false,
+    });
+  });
+  it('flags the fields a hop changed', () => {
+    expect(hopDeltas(rows[2].summary, chainBaseline(rows))).toEqual({
+      sub: false,
+      roles: true,
+      acr: true,
+    });
+  });
+  it('is empty for an empty chain', () => {
+    expect(chainBaseline([])).toEqual({ roles: [] });
+  });
+});
+
+describe('buildLedger leaves and spine numbers', () => {
+  const COPILOT = 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot';
+  const GATEWAY = 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway';
+  const rows = buildLedger([
+    { hop: 'user → agent-copilot (inbound)', payload: { sub: 'alice', may_act: { sub: COPILOT } } },
+    {
+      hop: 'agent-copilot → agentgateway (/llm)',
+      payload: { sub: 'alice', aud: 'llm-gateway', act: { sub: COPILOT } },
+      note: 'Model call — a leaf',
+    },
+    {
+      hop: 'agent-copilot → agentgateway (/observability/mcp)',
+      payload: {
+        sub: 'alice',
+        aud: 'mcp-gateway',
+        act: { sub: COPILOT },
+        may_act: { sub: GATEWAY },
+      },
+    },
+    {
+      hop: 'agentgateway → mcp-observability',
+      payload: { sub: 'alice', act: { sub: GATEWAY, act: { sub: COPILOT } } },
+    },
+  ]);
+  it('flags a hop with a note as a leaf', () => {
+    expect(rows.map((r) => r.leaf)).toEqual([false, true, false, false]);
+  });
+  it('numbers only the spine, in order, so the leaf does not shift the count', () => {
+    expect(rows.map((r) => r.number)).toEqual([0, undefined, 1, 2]);
+  });
+  it('still diffs the spine row after the leaf against the root', () => {
+    expect(rows[2].parentIndex).toBe(0);
   });
 });
