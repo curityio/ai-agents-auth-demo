@@ -1,153 +1,158 @@
 # Copilot Instructions
 
-## Project Overview
+Condensed guidance for this repository. `CLAUDE.md` at the repo root is the full,
+authoritative version (architecture + 34 hard-won facts); read it before proposing
+structural changes, together with `docs/architecture.md`, `docs/design.md` and
+`docs/demo.md`. The "Phase N" build-log framing is historical and archived under
+`docs/archive/` — don't reintroduce it into code or current docs.
 
-Pedagogically-staged demo of **AI agent authentication and authorization** on Kubernetes (KIND). Six phases progressively layer identity mechanisms:
+## Project overview
 
-| Phase | What lands | State |
-|---|---|---|
-| 1 | Web (Next.js BFF) + 1 agent + 1 MCP + Curity OIDC, bearer JWT only | ✅ |
-| 2 | SPIRE + `spiffe-helper` sidecars + `packages/spiffe` | ✅ |
-| 3 | Istio Ambient mesh (ztunnel L4 mTLS) | ✅ |
-| 4a | RFC 8693 token exchange, SPIFFE JWT-SVID as `actor_token`, single OBO hop | ✅ |
-| 4b | A2A 2nd hop (→ `agent-specialist` → `mcp-ops`), nested `act` per RFC 8693 | ✅ |
-| 5 | RFC 9728 metadata, RFC 9470 step-up, role-based denial | ✅ |
-| 6a | OTel traces with identity span attributes → Collector → Tempo → Grafana | ✅ |
-
-**Scenario:** DevOps/SRE copilot — read-only observability, privileged restart/scale (requires MFA step-up), delegated ticket creation.
-
-Read `docs/archive/implementation-plan.md` before proposing structural changes — many "obvious" simplifications are deliberately deferred to a later phase.
-
-## Architecture
+A runnable demo of **AI agent authentication and authorization** on Kubernetes
+(KIND). A DevOps/SRE copilot reads observability data and restarts/scales/re-images
+workloads on a user's behalf; every hop is authenticated (SPIFFE), least-privilege
+(RFC 8693 token exchange with scope/audience narrowing), MFA-gated for privileged
+actions (RFC 9470 step-up), and traceable (OTel → Tempo → Grafana).
 
 ```
-Browser ──https──▶ Web (Next.js BFF) ──HTTP+JWT──▶ agent-copilot ──MCP+JWT──▶ mcp-observability
-                        │                              │
-                        │                              └── A2A+JWT──▶ agent-specialist ──MCP+JWT──▶ mcp-ops
-                        │
-                        └── OIDC code+PKCE ───────────▶ Curity (sole token issuer)
+Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+                                                                └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
+                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+        agent-copilot / agent-specialist ─ LLM ─▶ agentgateway (/llm; aud=llm-gateway, scope llm:invoke; holds the only provider key) ─▶ LLM provider
+        every agent/MCP/LLM hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
 
-- **Curity is the sole token issuer.** Every component validates JWTs against Curity's JWKS. Never mint tokens elsewhere.
-- **Web app is BFF.** Browser holds httpOnly cookie; access token never leaves the server. `/api/agent` forwards user JWT cluster-internally.
-- **Token exchange (Phase 4+):** Each hop exchanges the user token + its SPIFFE JWT-SVID as `actor_token` via Curity's RFC 8693 endpoint, producing a hop-specific token with growing `act` chain.
-- **`packages/auth-curity`** owns all Curity verification rules (issuer, audience, clock skew, JWKS, token exchange). Don't duplicate these elsewhere.
-- **MCP transport is Streamable HTTP.** Phase 5 adds session awareness for RFC 9470 step-up challenge state.
-- **OTel (Phase 6a):** `packages/otel-bootstrap` is loaded via `node --import` in all Node apps. Identity attributes (`auth.sub`, `auth.act`, `auth.scope`, `auth.acr_name`, `auth.aud`, `auth.roles`) are stamped on spans by `packages/auth-curity`'s `decorateSpanWithIdentity()`. Workload identity (`spiffe.id`) is a resource attribute.
+- **Curity is the sole token issuer.** Validate JWTs against Curity's JWKS; never
+  mint tokens elsewhere.
+- **The web app is a BFF.** Browser holds an httpOnly cookie; the access token
+  never leaves the server. Its identity panels are fed by debug routes
+  (`/spiffe-id`, `/last-token`, `/tools` on the workloads; `/api/obo-chain`,
+  `/api/spiffe-identities`, `/api/tools`, `AUTH_DEBUG`-gated `/api/inspect` on the
+  BFF) — see `CLAUDE.md` fact #34 before touching them.
+- **Every agent/MCP hop performs an RFC 8693 exchange** presenting its SPIFFE
+  JWT-SVID as `actor_token`; Curity narrows scope + audience, nests the workload
+  into `act`, and stamps `may_act` (who may present the token next).
+  `packages/auth-curity` owns *every* "what Curity expects" rule — don't duplicate it.
+- **Client auth is split by tier.** The two agents are **CIMD ephemeral clients**
+  (`client_id` = a self-hosted HTTPS metadata URL, `private_key_jwt`); the MCP
+  servers and `mcp-gateway` are static `client_secret_basic` clients.
+- **Both agents are LLM agents (Vercel AI SDK v7).** The copilot is front-line; the
+  specialist is a privileged cross-tier agent holding **two** `aud=mcp-gateway`
+  tokens (`ops:write` first — role gate + ACR TIA — then `obs:read`) and running an
+  inspect → act → verify loop. Its authz gates run **before** the LLM loop
+  (`apps/agent-specialist/src/executor.ts`, `runRemediation`). Shared plumbing is
+  `packages/agent-runtime` (`buildLlm`, `openMcpToolset`).
+- **All model calls go through agentgateway's `/llm` route** (`@ai-sdk/openai-compatible`,
+  NOT `@ai-sdk/openai`). The gateway holds the only upstream key; the provider
+  (OpenAI/Anthropic/Gemini/Azure) is generated from `.demo.env` — `docs/llm-providers.md`.
+- **agentgateway is the MCP front door** for both MCP servers (`aud=mcp-gateway`,
+  path-routed `/observability/mcp` + `/ops/mcp`, coarse per-tier scope authz +
+  `tools/list` filtering). Its co-located `exchange-shim` performs the per-tool-call
+  OBO exchange and inserts `…/ns/mcp/sa/agentgateway` into every `act` chain. The
+  `set_deployment_image`=`sre` split is authoritative at **mcp-ops**; the gateway's
+  HTTP-layer `authorization` rule (keyed on `Mcp-Name`) is a first line only.
+- **MCP servers are thin clients** that re-exchange to `obs-api`/`ops-api` (ns
+  `apis`), the only workloads with Kubernetes credentials (minimal RBAC in `prod`).
+- **Resource servers enforce, in order:** Bearer → JWT valid → scope → `act`
+  present → exact actor chain → (privileged) `acr=mfa`.
+- **MCP is Streamable HTTP, SDK v2, revision 2026-07-28 ONLY.** No 2025 fallback —
+  the absence is a security property (`CLAUDE.md` fact #26).
 
-### Identity layers per phase
+## Monorepo structure
 
-| Identity | Phase 1 | Phase 2 | Phase 4 | Phase 5 | Phase 6 |
-|---|---|---|---|---|---|
-| Human (Curity OIDC) | ✅ user JWT fwd | ✅ | ✅ as `sub` in exchanged token | ✅ ACR escalates | visible in traces |
-| Workload (SPIFFE JWT-SVID) | — | ✅ delivered | ✅ as `actor_token` | ✅ | `spiffe.id` resource attr |
-| OBO actor chain (`act`) | — | — | ✅ materializes | ✅ | `auth.act` span attr |
+pnpm 9 (via corepack) + Turborepo. `apps/*` are deployable services (each with a
+Dockerfile); `packages/*` are shared `@ai-agents-demo/*` libraries.
 
-## Monorepo Structure
-
-pnpm workspaces + Turborepo. Workspaces live in `apps/*` and `packages/*`:
-
-- `apps/web` — Next.js App Router BFF (Auth.js v5, `@vercel/otel`)
-- `apps/agent-copilot` — Frontline copilot agent (Vercel AI SDK + Express)
-- `apps/agent-specialist` — Specialist agent for privileged ops (A2A protocol)
-- `apps/mcp-observability` — MCP server for read-only logs/metrics
-- `apps/mcp-ops` — MCP server for privileged operations (restart/scale), guarded by ACR + role
-- `packages/auth-curity` — Curity OIDC + JWT verification + token exchange + identity span decorator
-- `packages/spiffe` — SPIFFE identity helpers (verify SVID, read SPIFFE ID)
-- `packages/otel-bootstrap` — OTel NodeSDK bootstrap (loaded via `--import`)
-- `packages/a2a-helpers` — Agent-to-Agent protocol helpers (step-up error propagation)
+- `apps/web` — Next.js App Router BFF (Auth.js v5, `@vercel/otel`); identity panels
+- `apps/agent-copilot` — front-line agent; CIMD client; deterministic intent gate
+- `apps/agent-specialist` — privileged cross-tier LLM agent; A2A server; CIMD client
+- `apps/mcp-observability` / `apps/mcp-ops` — thin MCP servers (zod 4)
+- `apps/obs-api` / `apps/ops-api` — resource servers holding the K8s credentials
+- `apps/exchange-shim` — agentgateway's extAuthz sidecar (Express; see fact #28)
+- `packages/auth-curity` — JWT verify, RFC 8693 exchange, CIMD, identity spans, OBO log
+- `packages/agent-runtime` — `buildLlm` + MCP→AI-SDK toolset adapter
+- `packages/spiffe`, `packages/otel-bootstrap`, `packages/a2a-helpers`
+- `k8s/` — curity (configmap + procedures), spire, istio, observability, workloads, prod, kind
+- `scripts/` — bootstrap + smoke tests; `Makefile` is the lifecycle entry point
 
 ## Commands
 
-### TypeScript dev loop
-
 ```bash
 pnpm install
-pnpm turbo run build typecheck test              # all workspaces
-pnpm --filter @ai-agents-demo/auth-curity test   # single package
-pnpm --filter @ai-agents-demo/auth-curity test -- --watch  # vitest watch
+pnpm turbo run build typecheck test                 # all workspaces
+pnpm --filter @ai-agents-demo/auth-curity test      # one package
+
+make tools-check     # node>=22, pnpm, docker, kind, kubectl, helm, mkcert
+make demo            # full platform on a fresh KIND cluster (prompts for license + LLM key up front)
+make images          # build all 8 app images and kind load them
+make apply           # manifests + embed procedures + embed mkcert CA + routing
+make routing         # re-patch hostAliases + mkcert CA (re-run after cluster recreation)
+make status          # pod health (includes routing-check)
+make smoke           # routing-check + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz
+make configure-llm   # switch LLM provider after editing .demo.env
+make help            # everything else
 ```
 
-`turbo.json` has `typecheck` depending on `build` so Next.js's `.next/types/**` exists when tsc reads it; don't remove that dependency.
+`turbo.json` has `typecheck` depending on `build` (Next.js `.next/types/**`); keep it.
 
-### Kubernetes / infrastructure
+**First-time setup:** `./license.json` → `make demo` → create the alice/carol/bob
+accounts (+ TOTP) through the login flow per `docs/curity-seed.md` → open
+`https://app.localtest.me`. Runbook: `docs/demo.md`.
 
-```bash
-make tools-check         # preflight: node>=20, pnpm, docker, kind, kubectl, helm, mkcert
-make demo                # spin up KIND + certs + nginx ingress + namespaces + TLS secrets
-make images              # build all 5 TS images and kind load them
-make apply               # apply manifests, then auto-run routing patches
-make routing             # patch hostAliases + mkcert CA into app pods (re-run if cluster recreated)
-make seed-web-secret     # prompt for CURITY_CLIENT_SECRET, generate AUTH_SECRET
-make seed-llm-secret     # prompt for AZURE_OPENAI_ENDPOINT + API key
-make observability-install  # deploy Tempo + Grafana + OTel Collector
-make doctor              # read-only Docker + KIND disk audit
-make reset               # tear down cluster + reclaim docker build cache
-```
+## Key conventions
 
-**First-time setup order:** put your Curity license at `./license.json` → `make demo` (gathers inputs up front, then installs platform + secrets + license + images + manifests unattended) → seed the alice/bob accounts in Curity per `docs/curity-seed.md` → open `https://app.localtest.me`.
+- **Secrets are never inline in workload YAML** (`kubectl apply` would clobber real
+  values). Use `make seed-*`. The Curity license and the LLM key are gitignored
+  local files (`license.json`, `.demo.env`).
+- **Hostnames are `*.localtest.me`** — not `nip.io`/`127.0.0.1` (Curity's RFC 8252
+  loopback canonicalization breaks the `iss` check).
+- **Pods reach Curity via hostAliases** injected by `scripts/cluster-routing.sh`
+  (`make routing`); a partial run yields `invalid_token` with an empty reason.
+- **`k8s/curity/configmap.yaml` is a full XML export** — small additive edits only.
+  Procedures are embedded as Base64 from `k8s/curity/procedures/*.js` by
+  `make curity-procedures` (edit the `.js`). Nashorn (ES5.1) validates them at boot:
+  no trailing commas in calls (`.prettierrc` pins `trailingComma: "none"` there).
+- **`rollout restart deploy/curity` wipes the in-memory HSQLDB** — re-seed users.
+  Prefer an `idsh` `load merge` for config changes (fact #33).
+- **TypeScript:** ES2022, NodeNext, strict, ESM, vitest. zod 3 in the agents,
+  zod 4 in the MCP servers — deliberate, not drift.
+- **macOS bash is 3.2** — no `declare -A`.
+- **Docker:** `.dockerignore` (`**/node_modules`) is load-bearing; Next standalone
+  needs `outputFileTracingRoot`; probes hit `/healthz` / `/api/health`, never
+  `/api/whoami`.
+- **OTel:** `node --import @ai-agents-demo/otel-bootstrap` in every plain-Node app;
+  `apps/web` uses `@vercel/otel`; agentgateway exports natively (`config.tracing`).
+  Call `decorateSpanWithIdentity()` after JWT verification. Tempo query API is
+  `:3200`, retention 30 min.
+- **Docs:** Mermaid needs quoted subgraph names / labels with special chars; a bare
+  `;` in sequence-diagram text breaks the parse.
 
-## Key Conventions
+## Pitfalls to check before "fixing" something
 
-### Phase discipline
-
-Each phase has strict boundaries. Don't add Istio config to fix Phase 1 issues, or token exchange before Phase 4. Update `docs/archive/implementation-plan.md` if boundaries need to shift.
-
-### Secrets management
-
-Secrets with real credentials are **never** embedded inline in deployment YAMLs (`kubectl apply` overwrites real values with placeholders). Use `make seed-*` or `kubectl create secret` out-of-band. Credential files are `.gitignore`'d.
-
-### Hostnames
-
-All public hostnames use `*.localtest.me` (resolves to 127.0.0.1). Do **not** use `*.nip.io` or `*.localhost` — Curity's RFC 8252 loopback canonicalization breaks issuer validation with those.
-
-### Pod-to-Curity networking
-
-Pods can't reach `curity.localtest.me` natively (127.0.0.1 = pod itself). `scripts/cluster-routing.sh` (via `make routing`) injects hostAliases pointing to the Istio edge gateway ClusterIP and mounts the mkcert root CA. Re-run `make routing` if the cluster is recreated (ClusterIPs change).
-
-### TypeScript
-
-- Target: ES2022, module: NodeNext, strict mode
-- Prettier: single quotes, trailing commas, 100 char width, 2-space indent
-- All packages use ESM (`"type": "module"`)
-- Tests use Vitest
-
-### Docker
-
-- `.dockerignore` is load-bearing — keeps host `node_modules` (pnpm symlinks) out of builds
-- Next.js standalone output needs `outputFileTracingRoot` set to monorepo root for workspace deps
-- `/api/health` or `/healthz` is the unauthenticated probe target (not `/api/whoami`)
-- Node apps use a SVID-wait loop in CMD: waits for SPIFFE helper to write the JWT-SVID before starting
-
-### Shell scripts
-
-macOS bash is 3.2 — don't use `declare -A` (associative arrays). Use parallel arrays or IFS-split strings.
-
-### Curity configuration
-
-`k8s/curity/configmap.yaml` is a full XML export. The XML schema is positionally significant — small edits are safer than re-arranging blocks. Reload via `kubectl rollout restart deploy/curity -n curity`. Token exchange procedures live at `k8s/curity/procedures/`.
-
-### OTel / Observability
-
-- `packages/otel-bootstrap` is injected via `node --import @ai-agents-demo/otel-bootstrap` in Dockerfiles (not runtime config)
-- `apps/web` uses `@vercel/otel` (Next.js instrumentation hook), NOT otel-bootstrap
-- Identity attributes are set via `decorateSpanWithIdentity()` from `packages/auth-curity` — call it after JWT verification succeeds
-- MCP spans additionally set `mcp.tool` and `mcp.resource_metadata_url`
-- Grafana dashboard at `grafana.localtest.me`, Tempo datasource on port 3200
-
-## Critical Pitfalls
-
-1. **Auth.js v5 requires `secureCookie: true` explicitly** when behind HTTPS (no autodetection from req.url)
-2. **SPIRE hardened chart** needs three pre-existing namespaces: `spire`, `spire-server`, `spire-system`
-3. **`ClusterSPIFFEID.spec.className` must be `spire-spire`** — controller silently skips otherwise
-4. **`spiffe-helper` writes SVIDs mode 0600** — sidecar must run as same UID (1000) as main container
-5. **Curity reserves `acr`** — the auth-context claim is `acr_name` (value is still the ACR string like `mfa`)
-6. **`roles` must propagate through every token-exchange hop** — without re-emitting, the 2nd hop sees empty roles and falsely denies
-7. **KIND node disk fills easily** — run `make doctor` or `crictl rmi --prune` inside the node to reclaim; Tempo has memory limits (384Mi) to prevent OOM
+1. Auth.js v5 `getToken()` needs `secureCookie: true` behind HTTPS.
+2. `ClusterSPIFFEID.spec.className` must be `spire-spire`; the SPIRE hardened chart
+   needs `spire`, `spire-server`, `spire-system` to pre-exist.
+3. `spiffe-helper` writes SVIDs mode 0600 → app containers run as UID 1000.
+4. `acr` is written procedurally (Curity rejects a custom claim *definition* named
+   `acr`); the standard claim flows end to end.
+5. `roles` and `acr` must be re-emitted on every exchange hop.
+6. `llm:invoke` must be granted at **eight** places (`docs/design.md` §3.6).
+7. `may_act` is enforced *behind* `allowedActors` — a naive negative test proves
+   nothing (fact #25).
+8. Don't restore `legacy: 'stateless'` / `mode: 'auto'` in MCP wiring (fact #26).
+9. A gateway 403 arrives as a transport error; `openMcpToolset` converts it to a
+   factual result and the specialist's system prompt relays it — keep instructions
+   out of tool results (fact #27).
+10. Since ai@5 a throw inside a tool's `execute` does not propagate — the
+    specialist's `StepUpSink` is what carries a mid-flight MFA challenge out (fact #30).
+11. Denials are logged from ONE exit per component (`exchangeToken`'s catch,
+    the `runRemediation` wrapper) — don't move `DENY` to individual throw sites (fact #31).
+12. KIND node disk fills with `:dev` images — `make doctor`; a `kind load` failing
+    inside a pipe is silent.
 
 ## Key docs
 
-- `docs/archive/implementation-plan.md` — phase-by-phase roadmap with exit criteria
-- `docs/architecture.md` — north-star + per-phase diagrams
-- `docs/curity-seed.md` — offline Curity setup checklist (clients, scopes, accounts, claims)
-- `docs/phases/*.md` — per-phase design docs and known limitations
+- `CLAUDE.md` — architecture + all hard-won facts (authoritative)
+- `docs/architecture.md` · `docs/design.md` · `docs/demo.md` — the canonical trio
+- `docs/curity-seed.md` — offline Curity checklist; `docs/llm-providers.md` — LLM vendor switch
+- `docs/archive/` — historical phase notes and the original implementation plan

@@ -36,6 +36,8 @@ re-implements issuer/audience/JWKS logic.
 | `cimd.ts` | `createCimdIdentity({privateKeyPkcs8Pem, clientId})` → `CimdIdentity` | For the ephemeral agents: derives the public JWK + `kid` (RFC 7638 thumbprint) from the PKCS8 key; produces the `metadataDocument()` + `jwks()` the agent self-hosts. |
 | `identity-span.ts` | `buildIdentityAttributes()`, `decorateSpanWithIdentity()` | Pure builder + active-span stamp for the `auth.*` span attributes, including the flattened `act[]` chain. |
 | `errors.ts` | `CurityAuthError`, `CurityAuthErrorCode` | Typed error with an OAuth-style `code`; maps Curity's wire errors (incl. its `access_denied`→`invalid_request` sanitization) back to clean codes. |
+| `exchange-span.ts` | `buildExchangeAttributes()` | Pure builder for the `auth.exchange.*` attributes on the `auth.token_exchange` span (requested vs issued scope, audience, client, token endpoint split into `server.address`/`url.path`). Never records the tokens themselves. |
+| `obo-log.ts` | `oboLog()`, `formatOboLog()`, `summarizeJwt()`, `activeTraceId()`, `flattenAct()` | The OBO log plane (`architecture.md` §7.1): renders the `RECEIVE`/`EXCHANGE`/`CALL`/`DENY` blocks every service prints, stamped with the time and the active span's trace/span id. `formatOboLog` is pure (time and trace are parameters); `activeTraceId` is what the copilot puts on `/chat` responses for the Grafana deep link. `OBO_LOG=off` silences it. |
 
 ### `@ai-agents-demo/spiffe`
 
@@ -63,8 +65,8 @@ one place.
 
 | File | Responsibility |
 |---|---|
-| `server.ts` | A2A task endpoint factory used by `agent-specialist`. |
-| `client.ts` | A2A client used by `agent-copilot` to call the specialist with a forwarded Bearer token. |
+| `server.ts` | `createBearerUserBuilder()` / `bearerFromContext()` — verifies the inbound Bearer at the Express boundary of the `@a2a-js/sdk` server and exposes it to the executor as the A2A user. |
+| `client.ts` | `createBearerAuthHandler()` — attaches the forwarded Bearer token to the `@a2a-js/sdk` client the copilot uses to call the specialist. |
 | `step-up-error.ts` | Structured carrier for an RFC 9470 challenge so a downstream 401 survives the A2A boundary (the SDK otherwise swallows executor throws) — the challenge is **message-encoded**. |
 
 ### `@ai-agents-demo/agent-runtime`
@@ -77,7 +79,7 @@ from this package); `agent-specialist` depends on it directly.
 | File | Exports | Responsibility |
 |---|---|---|
 | `llm.ts` | `buildLlm(cfg, opts?)` | Builds a single OpenAI-compatible Vercel AI SDK model pointed at agentgateway's `/llm` route; requires a per-request `opts.accessToken`. There is exactly ONE path — no per-agent provider choice and no direct-to-vendor mode. Which vendor answers `/llm` is a gateway-side config choice (§3.6, [`docs/llm-providers.md`](llm-providers.md)), not something the agent selects. |
-| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `mcpInputSchema` | Connects to an MCP server over Streamable HTTP with a Bearer token, passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
+| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `mcpInputSchema`, `requiredRolesOf`, `MCP_TOOL_META_REQUIRED_ROLES` | Connects to an MCP server over Streamable HTTP with a Bearer token (revision pinned to 2026-07-28, `cachePartition` = token `sub`), passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. Also exposes the raw `tools/list` entries as `listed` (name, description, `_meta`) — the AI SDK tool object has nowhere to carry `_meta`, which is where mcp-ops publishes a tool's required roles (`io.curity.demo/required-roles`, read by `requiredRolesOf`). A gateway HTTP 403 on `tools/call` is converted into a factual `{error:'forbidden', tool}` result rather than a thrown transport error (§3.7.1). `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
 
 ---
 
@@ -105,12 +107,12 @@ gateway-config choice made via `.demo.env`, not a property of either agent; see
 
 | App | Stack | Inbound | Outbound | Auth role |
 |---|---|---|---|---|
-| **web** | Next.js App Router, Auth.js | Browser (session cookie) | `agent-copilot` (Bearer user token) | BFF; OIDC client `web-app`. No SPIFFE ID (not a workload actor). |
+| **web** | Next.js App Router, Auth.js | Browser (session cookie) | `agent-copilot` (Bearer user token) | BFF; OIDC client `web-app`. Not a token-exchange actor (it forwards the user token unchanged), though it carries a SPIFFE sidecar so the identities panel can show its SVID. Also hosts the demo's visibility panels and the BFF routes that feed them (see *Visibility surfaces* below). |
 | **agent-copilot** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) | Bearer user token | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`), `agent-specialist` | Validates user token; **CIMD ephemeral exchange client** (`private_key_jwt`; self-hosts its metadata + JWKS). Reaches `mcp-observability` **through the agentgateway** (no longer directly). Routes any privileged write goal (restart/image-update/scale) to the specialist over A2A, forwarding the user's NL goal verbatim. Also exchanges a token to `aud=llm-gateway`/`scope=llm:invoke` (single exchange, no shim/act-chain) and drives its tool-calling loop against agentgateway's `/llm` route rather than any vendor directly — it has no model or provider to configure (§3.6). |
-| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires one `aud=mcp-gateway` token (scope `obs:read ops:write`) and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens both toolsets, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route (§3.6). |
+| **agent-specialist** | Express + Vercel AI SDK (via `@ai-agents-demo/agent-runtime`) + A2A server | A2A + Bearer | `agentgateway` (`aud=mcp-gateway`, `aud=llm-gateway`) | Privileged **LLM agent**. Validates the OBO token; **CIMD ephemeral exchange client** (`private_key_jwt`). Acquires **two** `aud=mcp-gateway` tokens — `ops:write` first (where the role gate and ACR TIA fire), then `obs:read` — and reaches both MCP servers **through the agentgateway** (paths `/ops/mcp` + `/observability/mcp`), opens one toolset per token, and runs a tool-using LLM loop. Core orchestration is a testable `runRemediation` (deps injected); the A2A adapter wraps it. All authz gates are **outside** the LLM loop — see §2 below. Like the copilot, its model calls are exchanged to `aud=llm-gateway`/`scope=llm:invoke` and routed through agentgateway's `/llm` route (§3.6). |
 | **agentgateway** | agentgateway v1.4.1 (OSS, pinned) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp`; Bearer (`aud=llm-gateway`) on `/llm` | `mcp-observability`, `mcp-ops`, the configured LLM provider | MCP front door **and** LLM egress gateway. For MCP: validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. For `/llm`: validates `aud=llm-gateway` + `llm:invoke`, then injects the configured provider's API key upstream — no shim, no `act`-chain (§3.6, [`docs/llm-providers.md`](llm-providers.md)). |
 | **exchange-shim** | Node/TypeScript (Express); `@ai-agents-demo/auth-curity` + `@ai-agents-demo/spiffe` | `extAuthz` from agentgateway (`:8090`, same pod) | Curity token endpoint | Performs the RFC 8693 exchange: reads the gateway's rotating SPIFFE JWT-SVID (`/run/spiffe/curity-actor.jwt`) as `actor_token`, subject = the caller's `aud=mcp-gateway` token, audience/scope derived **server-side** from an audience→scope allow-list (never caller-supplied). Returns a token-endpoint-shaped JSON body. Exists because agentgateway's CEL cannot read the rotating SVID file. |
-| **mcp-observability** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_logs`, `get_deployment` (read). |
+| **mcp-observability** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_pod_logs`, `get_deployment` (read). |
 | **mcp-ops** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't: denies `set_deployment_image` for callers whose `roles` lack `sre` (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`), returning a legible role-denial before the ops-api hop. |
 | **obs-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `GET /pods`, `GET /pods/:name/logs`, `GET /deployments/:name` (image/replicas/rollout status). RBAC `get,list` on pods and deployments. Accepts **two** actor chains (see §2 middleware). |
 | **ops-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `POST /restart`, `POST /set-image` (strategic-merge patch; container name == deployment name), `POST /scale` — each patches a deployment. |
@@ -192,6 +194,66 @@ bus. **Every authorization gate sits outside the LLM loop**, in this fixed order
    reporting `ok`, and in the `catch` before reporting `specialist_failure`), and
    passes `stopEarly` into `stopWhen` so the loop halts on the first challenge
    instead of retrying into the same 401.
+
+### Visibility surfaces (debug routes + web panels)
+
+The web UI's identity panels are fed by debug routes on the workloads, proxied by
+the BFF so the browser never holds a token. They mint real tokens for display
+only; gate them behind a flag before any production use.
+
+| Route | Auth | Returns |
+|---|---|---|
+| `GET /spiffe-id` — every workload (agentgateway's is served by its `exchange-shim` through a no-auth gateway route) | none | the pod's decoded JWT-SVID claims (`sub`, `aud`, `iss`, `iat`, `exp`, `ttl_seconds`) — never the raw JWT |
+| `GET /last-token` — copilot, specialist, both MCP servers | Bearer for that hop's audience | `{ chain: ChainHop[] }`: this hop's inbound token plus the tokens it minted, decoded; `?raw=1` adds the raw JWT (only the BFF's `/api/inspect` asks) |
+| `GET /tools` — copilot, specialist | Bearer | the per-tier `tools/list` verdict for the caller (`ok` + tools with `requiredRoles`/`callable`, `step-up`, `denied`, or `error`) |
+| BFF `GET /api/spiffe-identities?flow=read\|privileged` | session | the SVIDs of exactly the workloads in that flow, in chain order (`web → agent-copilot → [agent-specialist →] agentgateway → mcp-observability [→ mcp-ops]`) |
+| BFF `GET /api/obo-chain`, `GET /api/tools` | session | proxies of the copilot's `/last-token` and `/tools`; a 401 upstream is surfaced as `session_expired` |
+| BFF `GET /api/inspect` | session + `AUTH_DEBUG=true` | the copilot's `/last-token?raw=1`, for the `/inspect` page (404 when the flag is off) |
+
+**The OBO chain walk.** The copilot's `/last-token` returns hop 0 (the inbound
+user token), then walks downstream: it calls the next service's `/last-token`
+*with the token it minted for that service*, and each service contributes its own
+rows the same way, so the chain reaches `obs-api`/`ops-api`. Five rules keep it
+truthful, each learned from a bug:
+
+- **Slots are process-global; the `jti` gate scopes them to this session.** Each
+  exchange helper records its last minted token in a slot. `selectDownstreamBranch`
+  shows a branch only if that slot was minted from the *current* inbound token
+  (matched on `sub` + `jti`), and shows one branch — observe XOR privileged —
+  whichever is newer. Without the `jti` gate a previous login's exchange for the
+  same user leaked into a fresh session.
+- **Probes are not flows.** `/tools` reuses the same exchange helpers as a real
+  request, so they take `recordLastExchange: false`; otherwise pressing *Check
+  tools* made the chain show a specialist branch that never ran.
+- **MCP rows come from the tool call, not the walk.** The `/last-token` request
+  itself travels through agentgateway and the shim mints a fresh token for it. The
+  MCP servers therefore build their two rows (inbound token, downstream token) from
+  the slot captured during the last real tool call, and contribute nothing before
+  one has run.
+- **Expired tokens do not truncate the chain.** The walk authenticates with the
+  exchanged token; once it expires the next hop answers 401. The copilot's
+  `createDownstreamChainFetcher` keeps the last successful result per exact bearer
+  and serves it on a later refusal, so the "tokens are short-lived" beat does not
+  look like a bug. Auth on the routes is unchanged.
+- **The `aud=llm-gateway` exchange is a leaf, not a hop.** Each agent records its
+  LLM exchange and emits it (`agent-* → agentgateway (/llm)`) directly under the
+  token it was minted from, with a `note` the ledger renders as a leaf badge. It is
+  shown only for the flow it was minted in — the copilot's on the read path (after
+  that request's `mcp-gateway` exchange), the specialist's after its `ops:write`
+  exchange — so a run refused before it reached the model shows none.
+
+**The web panels** (`apps/web`) keep every rule in pure view models under
+`src/lib/` — `token-view.ts` builds the ledger (a row's parent is found by
+`act`-chain prefix, not list position, so the specialist's `ops:write` branch
+diffs against its real origin), plus `tool-view.ts`, `svid-view.ts`,
+`trace-view.ts`, `chat-rules.ts` and `session-view.ts` — with the React
+components in `src/components/`. Panels never open by themselves and only
+already-open panels refresh after an answer. The Ask card's *Asking as …* line
+and the header pill read `session.asking` (`sub`/`roles`/`acr`, decoded
+server-side in the Auth.js session callback) and `session.tokenExpiresAt`; the
+browser never sees the token. The copilot's `/chat` response carries `traceId`,
+which the Result card deep-links into Grafana Explore (`trace-link.ts`;
+`NEXT_PUBLIC_GRAFANA_URL` overrides the host).
 
 ---
 
@@ -706,6 +768,16 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   and the MCP authz path no longer needs the Kubernetes Gateway API CRDs /
   `istio-waypoint` GatewayClass. Fine-grained `act`-chain + step-up stay in the
   resource servers.
+- **apis-tier waypoint (still a waypoint).** The backend resource servers keep the
+  Istio-native pattern: `k8s/istio/apis-l7-authz.yaml` (applied by `make apply`)
+  deploys an `apis-waypoint` Gateway with a `RequestAuthentication` (Curity JWKS)
+  and per-Service `AuthorizationPolicy` rules that pin `obs-api`/`ops-api` to the
+  mTLS principal of the one MCP server that fronts each (`cluster.local/ns/mcp/sa/
+  mcp-observability` / `mcp-ops`) plus the token's audience and scope, with a
+  `/healthz` carve-out. `obs-api.yaml`/`ops-api.yaml` opt in via
+  `istio.io/use-waypoint: apis-waypoint`. This is the only remaining consumer of
+  the Gateway API CRDs (`make gateway-api-crds`), which is why `make platform`
+  still installs them. See `architecture.md` §6.
 - **Platform via Helm.** SPIRE (hardened chart, three namespaces), Istio Ambient
   (base/istiod/cni/ztunnel + gateway), Tempo, and Grafana — all driven
   by `make platform`.
@@ -788,7 +860,7 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   key rotation is handled automatically — the procedure refetches SPIRE's JWKS
   on an unknown kid.
 - **`kubectl rollout restart deploy/curity` wipes the in-memory HSQLDB** → users
-  (alice/bob + TOTP) must be re-seeded per [`curity-seed.md`](curity-seed.md).
+  (alice/carol/bob + TOTP) must be re-seeded per [`curity-seed.md`](curity-seed.md).
 - **Tempo retention is 30 minutes** (ephemeral demo storage) — query traces
   within ~25 minutes of driving the demo, or empty TraceQL results will look
   like a broken pipeline when it's just expiry.

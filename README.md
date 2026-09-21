@@ -118,6 +118,15 @@ open https://app.localtest.me
 
 The complete runbook and presenter script is in [`docs/demo.md`](docs/demo.md).
 
+Once signed in, the app makes the identity plumbing visible on screen: the
+header pill shows the current token's `acr` and counts down its 10-minute
+lifetime; the Result card links each answer to its OpenTelemetry trace in
+Grafana; and three on-demand panels show the live SPIFFE JWT-SVIDs of the
+workloads in the flow you just ran, the **on-behalf-of chain** as a ledger
+(every token diffed against the one it was exchanged from, `may_act` naming
+the next permitted actor), and the MCP tools agentgateway lists for *your*
+token per tier.
+
 ## Common workflows
 
 ```bash
@@ -147,8 +156,8 @@ apps/
   agent-specialist/     # privileged agent; A2A server; CIMD ephemeral client
   mcp-observability/    # read-tier MCP (thin client → obs-api)
   mcp-ops/              # privileged-tier MCP (thin client → ops-api; sre-only set_deployment_image)
-  obs-api/              # read resource server (pods/logs in prod, RBAC)
-  ops-api/              # privileged resource server (restart deployments, RBAC)
+  obs-api/              # read resource server (pods/logs/deployments in prod, RBAC)
+  ops-api/              # privileged resource server (restart/scale/set-image deployments, RBAC)
   exchange-shim/        # agentgateway extAuthz sidecar; runs the per-backend OBO exchange
 packages/
   auth-curity/          # JWT verify + RFC 8693 exchange + CIMD + identity spans
@@ -158,7 +167,7 @@ packages/
   a2a-helpers/          # A2A client/server + step-up error carrier
 k8s/
   curity/ spire/ istio/ observability/ workloads/ prod/ kind/
-docs/                   # architecture, design, demo, curity-seed
+docs/                   # architecture, design, demo, curity-seed, llm-providers
 scripts/                # bootstrap + smoke-test shell scripts
 Makefile
 ```
@@ -171,6 +180,7 @@ Makefile
 | [`docs/design.md`](docs/design.md) | Module breakdown, interfaces, workflows, configuration & deployment model, decisions. |
 | [`docs/demo.md`](docs/demo.md) | storyline, step-by-step execution, observability walkthrough, troubleshooting. |
 | [`docs/curity-seed.md`](docs/curity-seed.md) | Offline Curity setup checklist (clients, scopes, users, procedure). |
+| [`docs/llm-providers.md`](docs/llm-providers.md) | Switching the LLM vendor behind agentgateway's `/llm` route (OpenAI, Anthropic, Gemini, Azure OpenAI). |
 
 ## Troubleshooting
 

@@ -51,12 +51,14 @@ answers `/llm`, and always send a placeholder model name (see [§4 of
 provider is a `.demo.env` edit plus the one `make` target above; nothing in
 `apps/` or `packages/` is touched.
 
-`make demo`'s first-time interactive bootstrap (`scripts/demo-inputs.sh`)
-predates this feature and still only prompts for an Azure OpenAI endpoint and
-key up front. If you want to bring up a fresh cluster on a different provider,
-let `make demo` finish (it defaults to Azure via the back-compat shim below),
-then switch with the steps above — or edit `.demo.env` and run `make
-seed-llm-secret configure-llm` before ever pointing a browser at the app.
+`make demo`'s first-time interactive bootstrap (`scripts/demo-inputs.sh`) asks
+for the same four values up front — `LLM_PROVIDER` (default `azure`), the key
+(masked on echo, with a warning for a suspiciously short paste), `LLM_MODEL`
+(default per provider, matching `render-gateway-config.sh`), and
+`AZURE_OPENAI_ENDPOINT` only when the provider is `azure` — and writes them to
+`.demo.env` (mode 0600). An existing `.demo.env` that already carries a key is
+reused verbatim, so a file hand-written from `.demo.env.example` is never
+overwritten; delete it to be prompted again.
 
 **Back-compat.** A `.demo.env` written before this feature — one that carries
 only `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` and no `LLM_PROVIDER` —

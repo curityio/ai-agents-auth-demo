@@ -15,9 +15,11 @@ the bits you seed by hand (license + users).
 ## What the demo expects
 
 ### Image / version
-- Curity Identity Server
+- Curity Identity Server — the deployment pulls `curity.azurecr.io/curity/idsvr:latest`;
+  11.4.0 is the version the configmap (incl. the Token Issuance Authorizer) was
+  validated against.
 - Developer license file (`license.json`).
-- LLM API key
+- An LLM provider API key (seeded into the agentgateway only — see [`llm-providers.md`](llm-providers.md)).
 
 ### Endpoints
 - Issuer / base URL: `https://curity.localtest.me/oauth/v2/oauth-anonymous`
@@ -31,14 +33,22 @@ the bits you seed by hand (license + users).
 | `openid` | OIDC base |
 | `profile` | OIDC base |
 | `obs:read` | Read-only observability MCP |
-| `ops:write` | Restart / scale deployments (privileged) |
+| `ops:write` | Restart / scale / set image on deployments (privileged). Bound to the `require-mfa-for-privileged` ACR Token Issuance Authorizer, so Curity will not mint it below `acr=mfa` ([`design.md`](design.md) §3.2.1). |
+| `llm:invoke` | The user-delegated LLM-egress scope both agents narrow to (`aud=llm-gateway`) for every model call through agentgateway's `/llm` route. Must be granted at every narrowing hop — see [`design.md`](design.md) §3.6. |
 
 ### Clients
 | Client ID | Type | Auth method | Grants | Redirect URIs | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `web-app` | OIDC confidential | client_secret_basic | authorization_code, refresh_token | `https://app.localtest.me/api/auth/callback/curity` | PKCE S256 required. Scopes: `openid profile obs:read ops:write` |
+| `web-app` | OIDC confidential | client_secret_basic | authorization_code, refresh_token | `https://app.localtest.me/api/auth/callback/curity` | PKCE S256 required. Scopes: `openid obs:read ops:write llm:invoke`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
 | `https://copilot.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | `client_id` is the self-hosted metadata URL; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-copilot`. Not a config-backed client — see `<ephemeral-client>`. |
 | `https://specialist.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | as above; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-specialist` |
+| `mcp-gateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`. Audiences `mcp-observability` + `mcp-ops`, scopes `obs:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
+| `mcp-observability` | confidential | client_secret_basic | token-exchange | n/a | Audience `obs-api`, scope `obs:read`; actor `…/ns/mcp/sa/mcp-observability`. Secret `Password1`. |
+| `mcp-ops` | confidential | client_secret_basic | token-exchange | n/a | Audience `ops-api`, scope `ops:write`; actor `…/ns/mcp/sa/mcp-ops`. Secret `Password1`. |
+
+`llm-gateway` is an **audience only** — agentgateway validates `aud=llm-gateway` +
+`llm:invoke` on its `/llm` route but performs no exchange there, so it needs no
+client.
 
 ### Authenticators
 - HTML Form authenticator
@@ -66,16 +76,20 @@ Create accounts alice, carol, and bob via HTML form authenticator during login p
   token-exchange role gate admits `ops:write` for `sre` **or** `oncall`).
 - The `acr` claim is stamped procedurally at login (`authorization-code.js`,
   `acr-passthrough`) and re-emitted on every exchange — see [`design.md`](design.md) §7.
-- Token `aud` includes `web-app` for the user-issued token; each exchanged token
-  names exactly one downstream audience (`mcp-observability` / `agent-specialist`
+- The user access token is narrowed to `aud=agent-copilot` by `authorization-code.js`
+  (the configured `web-app` audience shapes only the id_token, which OIDC requires
+  to include the client_id); each exchanged token names exactly one downstream
+  audience (`mcp-gateway` / `agent-specialist` / `llm-gateway` / `mcp-observability`
   / `mcp-ops` / `obs-api` / `ops-api`).
 
 These are already encoded in `k8s/curity/configmap.yaml` and the procedures
 under `k8s/curity/procedures/`; this list is the conceptual checklist behind
 that config. The token-exchange procedure validates the `subject_token`,
 verifies the `actor_token` against SPIRE's JWKS (fetched at runtime), narrows scope +
-audience, nests the `act` chain, and enforces the write-role gate (`sre` **or**
-`oncall`) + `acr=mfa` step-up for `ops:write`.
+audience, nests the `act` chain, stamps `may_act`, and enforces the write-role gate
+(`sre` **or** `oncall`). The `acr=mfa` requirement on `ops:write` is configuration,
+not procedure code: the ACR Token Issuance Authorizer bound to the scope
+([`design.md`](design.md) §3.2.1).
 
 ---
 
@@ -118,9 +132,10 @@ kubectl -n mcp create secret generic agentgateway-llm \
   --from-literal=LLM_API_KEY=<key>
 ```
 
-The full set of token-exchange clients (`agent-copilot`, `agent-specialist`,
-`mcp-ops`, `mcp-observability`) and backend audiences (`obs-api`, `ops-api`) is
-defined in `k8s/curity/configmap.yaml`.
+The full set of token-exchange clients (the two CIMD agents via the
+`<ephemeral-client>` block, plus `mcp-gateway`, `mcp-ops`, `mcp-observability`)
+and the terminal audiences (`obs-api`, `ops-api`, `llm-gateway`) is defined in
+`k8s/curity/configmap.yaml`.
 
 ---
 

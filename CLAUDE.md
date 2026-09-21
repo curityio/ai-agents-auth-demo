@@ -32,7 +32,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
                                                                   (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
         agent-copilot / agent-specialist ─ LLM ─▶ agentgateway (/llm; aud=llm-gateway, require llm:invoke; backendAuth.key=Azure key) ─▶ Azure OpenAI
         agentgateway = MCP front door (aud=mcp-gateway; coarse per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
-        (the set_deployment_image=sre role split is enforced downstream at mcp-ops, NOT the gateway)
+        (the set_deployment_image=sre role split is authoritative at mcp-ops; the gateway's HTTP-layer `authorization` rule is a first line only — see #27)
                           every agent/MCP/LLM hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
 
@@ -40,6 +40,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   from Curity. Validate JWTs against Curity's JWKS; never mint tokens elsewhere.
 - **Web app is a BFF.** Browser holds an httpOnly cookie; the access token never
   leaves the server.
+- **The web UI's identity panels are fed by debug routes** — `/spiffe-id`,
+  `/last-token` and `/tools` on the workloads; `/api/obo-chain`,
+  `/api/spiffe-identities?flow=`, `/api/tools` and the `AUTH_DEBUG`-gated
+  `/api/inspect` on the BFF. They mint real tokens for display, and the chain view
+  has rules that break silently — see fact #34 and `docs/design.md` §2
+  *Visibility surfaces* before touching them.
 - **Each agent/MCP hop performs an RFC 8693 token exchange**, presenting its
   SPIFFE JWT-SVID as the `actor_token`. Curity narrows scope+audience and nests
   the workload into the token's `act` claim. `packages/auth-curity` owns the
@@ -318,7 +324,13 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       step-up 401 still originates at mcp-ops/ops-api and passes back through the
       gateway. Source identity at the gateway is the JWT audience (`aud=mcp-gateway`),
       NOT mTLS SPIFFE identity. The Kubernetes Gateway API CRDs / `istio-waypoint`
-      GatewayClass are no longer needed for MCP authz.
+      GatewayClass are no longer needed for MCP authz — but they ARE still installed and
+      used by the **apis-tier waypoint** (`k8s/istio/apis-l7-authz.yaml`, applied by
+      `make apply`): `obs-api`/`ops-api` carry `istio.io/use-waypoint: apis-waypoint`,
+      and its `AuthorizationPolicy` pins each API to the mesh identity of the one MCP
+      server that fronts it (`cluster.local/ns/mcp/sa/mcp-observability`/`mcp-ops`) plus
+      the token's audience + scope. Don't remove `gateway-api-crds` from `make platform`
+      on the strength of "MCP no longer needs it".
 
 22. **The LLM egress is a governed hop through agentgateway, and the upstream
     vendor is pluggable — see `docs/llm-providers.md`.** Both agents exchange the
@@ -496,7 +508,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       evaluate true if the `roles` claim is missing, so it fails open. The downstream
       `imageRoleDenial` check is what makes the split unconditional.
     - **"Listed ≠ callable" is made visible from the server's own rule, not a UI copy.**
-      Because the tool stays in `tools/list` for carol, the *What this identity can see*
+      Because the tool stays in `tools/list` for carol, the *Tools this token can reach*
       card would otherwise read "allowed". mcp-ops publishes the required roles in the
       tool's `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
       `setImageRequiredRoles` the gate enforces); agentgateway relays `_meta` untouched
@@ -645,7 +657,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       is what made this file part of the upgrade at all, and the named alias also
       resolves the TS2742 the copilot's `llm.ts` re-export otherwise hits.
     - **`{name, args}` / `{name, result}` in the `/chat` response is OUR wire contract**
-      with the web UI's Trace tab (`apps/web/src/app/chat.tsx`), not the SDK's shape.
+      with the web UI's Trace tab (`apps/web/src/lib/trace-view.ts` +
+      `components/agent-trace.tsx`), not the SDK's shape.
       It is deliberately held stable while the SDK's field names moved underneath, so
       `apps/web` needed no edit. The mappings use `as` casts, so a wrong field name
       yields `undefined` in the UI rather than a type error — check the Trace tab, not
@@ -791,6 +804,43 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `scope=openid obs:read llm:invoke ops:write` at `acr=html-form` — the hole the
       TIA closes, and the reason this assertion is a real regression test.
 
+34. **The identity panels are debug surfaces that mint REAL tokens, and five rules
+    keep the OBO-chain view truthful — each one was a bug first.** Every workload
+    serves `GET /spiffe-id`; the agents and MCP servers serve `GET /last-token` (their
+    hop's tokens, decoded; `?raw=1` adds raw JWTs and is asked for only by the BFF's
+    `AUTH_DEBUG`-gated `/api/inspect`); the agents serve `GET /tools`. The BFF proxies
+    them (`/api/obo-chain`, `/api/spiffe-identities?flow=`, `/api/tools`) so the
+    browser never holds a token. Full table in `docs/design.md` §2 *Visibility surfaces*.
+    - **Exchange slots are process-global; `selectDownstreamBranch` gates them on the
+      `sub` + `jti` of the CURRENT inbound token** and shows one branch (observe XOR
+      privileged), whichever is newer. Without the `jti` gate a previous login's
+      exchange for the same user leaked into a fresh session before any flow ran.
+    - **Probes are not flows.** `/tools` reuses `obtainMcpToken` / `obtainSpecialistToken`
+      / `obtainOpsToken`, which stamp those slots on cache hits too, so the probes pass
+      `recordLastExchange: false`. Forgetting it makes *Check tools* conjure a
+      specialist branch that never ran. Pinned by contract tests on both tools routes.
+    - **The MCP servers build their rows from the last tool call's slot, not from the
+      `/last-token` request** — that request also travels through agentgateway, so the
+      shim mints a fresh token just for the walk (a different `jti` and a full 5-minute
+      TTL next to neighbours with seconds left). Before any tool has run they
+      contribute no rows.
+    - **The downstream walk authenticates with the exchanged token, so expiry used to
+      truncate the chain to the copilot's own hops.** `createDownstreamChainFetcher`
+      remembers the last successful result per exact bearer (bounded to 8) and serves it
+      when that same bearer is later refused or the service is unreachable. Keyed on the
+      token string, a snapshot can only describe the delegation it was fetched with; no
+      route's auth changes.
+    - **The `aud=llm-gateway` exchange is emitted as a LEAF** (`note` on the hop; the
+      ledger takes it off the spine), placed directly under the token it was minted from
+      and BEFORE the MCP branch — the ledger parents rows by `act`-chain prefix, so the
+      mcp-gateway row still diffs against hop 0. Shown only for the flow it was minted
+      in (copilot: read path, stamped after that request's mcp-gateway exchange;
+      specialist: after its `ops:write` exchange). Only the emitting agent knows a hop
+      is a leaf; the UI must not infer it from the audience.
+    - The ledger and the identities panel **never poll** — `useNow` ticks a 1 s clock
+      for the countdowns, because re-fetching `/api/obo-chain` would add spans and
+      OBO-log lines to the very telemetry the demo is showing.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -805,7 +855,7 @@ make images          # build all 8 app images and `kind load` them
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace
-make smoke           # OBO + A2A + step-up/role-denial + LLM + MCP-revision smoke tests
+make smoke           # routing-check + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit
@@ -860,7 +910,9 @@ exists when tsc reads it; don't remove that dependency.
 - [`docs/architecture.md`](docs/architecture.md), [`docs/design.md`](docs/design.md),
   [`docs/demo.md`](docs/demo.md) — the canonical trio.
 - [`docs/curity-seed.md`](docs/curity-seed.md) — offline Curity setup checklist.
-- [`docs/spiffe.md`](docs/spiffe.md) — SPIFFE identity scheme.
+- SPIFFE identity scheme: [`docs/design.md`](docs/design.md) §3.3 (SVID delivery)
+  and [`docs/architecture.md`](docs/architecture.md) §3 (trust domain + ID shape).
+  There is no `docs/spiffe.md`.
 - [`docs/llm-providers.md`](docs/llm-providers.md) — switching the LLM vendor
   behind agentgateway's `/llm` route.
 - [`docs/archive/`](docs/archive/) — historical build log: phase notes,

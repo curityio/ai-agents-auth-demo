@@ -59,6 +59,7 @@ deployments named like real microservices: **`order-service`** and
 ### Act 1 — Read (unprivileged)
 
 > Alice logs in and asks the copilot: *"What's running in the prod namespace?"*
+> (or clicks the *List all pods in the prod namespace* chip under **Observe**).
 
 The copilot exchanges Alice's token for an `obs:read` token scoped to
 `mcp-observability`, calls the MCP `list_pods` tool, which re-exchanges to
@@ -264,17 +265,54 @@ Log in as **alice** and walk Acts 1–2 (read, then step-up remediation). Then l
 in as **bob** for the role denial (Act 3), and **carol** for the per-tool split
 (Act 4).
 
-Below the chat, three cards turn the identity plumbing into something the room
-can see; all three are on-demand buttons so nothing is minted until you press:
+The page is built to be narrated top to bottom:
+
+- **Header pill.** The signed-in user's pill carries the `acr` of the current
+  access token (green `mfa` after step-up, muted otherwise) — the header is the
+  only sticky element, so the proof of step-up stays visible while you scroll.
+  The menu counts down the **10-minute** Curity access token, turns amber in the
+  last minute, and reads *expired · sign in again* afterwards. An expired token
+  is the failure that silently breaks demos: every panel then says *session
+  expired*.
+- **Hero.** An animated stage of the delegation chain: one packet walks a read
+  request and then a privileged one, dropping to Curity for every RFC 8693
+  exchange and turning amber from the specialist's `acr=mfa` exchange on. It has
+  a play/pause button; signed in, each node (and each capability chip) jumps to
+  the panel below that proves it.
+- **Ask the copilot.** Example prompts sit under **Observe** (read tier, one
+  chip per `mcp-observability` tool) and **Act** (privileged, one per `mcp-ops`
+  tool). The line *Asking as alice · roles sre, oncall · acr html-form* states
+  the claims the request will carry **before** Send — decoded server-side in the
+  session; the token itself never reaches the browser. A non-2xx is typed: an
+  RFC 9470 challenge becomes the **Authenticate with MFA** button, an
+  `access-denied` verdict is rendered as prose (a denial is not an error), and a
+  real failure shows a friendly message plus the raw status for diagnosis.
+- **Step-up and return.** The MFA button stashes the prompt, redirects to Curity
+  with `acr_values=mfa`, and on return a banner says *Re-authenticated with MFA*
+  while the prompt is retried automatically with the new token.
+- **Result card.** Names the flow (*Read* / *Privileged*) and repeats the
+  question. Three tabs: **Answer** (Markdown, plus the parsed action for a
+  privileged run), **Identity** (the user token *as the copilot received it*,
+  before any exchange — the narrowed tokens live in the chain panel), and
+  **Trace** — the request's OpenTelemetry trace id with a copy button and an
+  **Open in Grafana** deep link, then one row per tool call with its arguments
+  and a one-line result; ops-tier rows carry an amber lock and an
+  `ops:write · mfa` tag so the call that needed MFA stands out.
+
+Below that, three panels turn the identity plumbing into something the room
+can see. All three are on-demand buttons, so nothing is minted until you press;
+they never open by themselves, only panels you have already opened refresh after
+a new answer, and each has a **Hide** control for when you are narrating:
 
 | Card | Button | What it shows |
 |---|---|---|
-| **Workload identities** | *Show identities* | Each pod's live SPIFFE JWT-SVID — the `actor_token` of every exchange. |
+| **Workload identities** | *Show identities* | The live SPIFFE JWT-SVIDs of exactly the workloads in the flow you last ran, in chain order — the `actor_token` of every exchange — each with a lifetime bar counting down its 5-minute TTL. Press *Refresh* twice a minute apart and a **rotated** badge marks the SVIDs `spiffe-helper` re-issued in between. |
 | **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. The `aud=llm-gateway` token appears as a *leaf* row (no `may_act`) under the agent that called the model. |
 | **Tools this token can reach** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
 
 The same ledger, with copyable raw JWTs, is at `https://app.localtest.me/inspect`
-(debug-only, `AUTH_DEBUG=true`) — useful on a projector when the chat is busy.
+(debug-only, `AUTH_DEBUG=true`; linked from the user menu and the footer) — useful
+on a projector when the chat is busy.
 
 > **Spoken aside for the `may_act` row.** `act` is the audit trail (who *did*
 > act); `may_act` is authorization (who *may* act next). The copilot mints the
@@ -286,7 +324,8 @@ The same ledger, with copyable raw JWTs, is at `https://app.localtest.me/inspect
 ### 5.4 (Optional) Verify auth behavior headlessly
 
 ```bash
-make smoke             # OBO + A2A + step-up/role-denial + LLM-gateway smoke tests
+make smoke             # routing-check + OBO + A2A + step-up/role-denial + LLM-gateway
+                       # + MCP-revision + gateway-authz smoke tests
 make smoke-llm         # LLM egress only: positive chat completion via /llm, a
                         # negative aud=mcp-gateway denial at the gateway, and a
                         # check that no agent pod holds the provider key
@@ -305,8 +344,11 @@ make smoke-llm         # LLM egress only: positive chat completion via /llm, a
 
 ## 6. Observability walkthrough
 
-Open Grafana at **https://grafana.localtest.me** (anonymous Viewer). Use the
-**Identity Flow** dashboard or Explore → Tempo → search the most recent trace.
+Open Grafana at **https://grafana.localtest.me** (anonymous Viewer). The fastest
+way in is the Result card's **Trace** tab → **Open in Grafana**, which opens
+Explore on the Tempo datasource with that request's trace id pre-filled.
+Otherwise use the **Identity Flow** dashboard or Explore → Tempo → search the
+most recent trace.
 
 What to point at in a single remediation trace:
 
@@ -529,7 +571,7 @@ k -n agents exec deploy/agent-copilot -c agent -- node -e \
 Three things to point at. `sub` is the SPIFFE ID that `token-exchange.js` matches
 against `allowedActors` and that lands in the next token's `act`. `aud` is
 Curity's token endpoint — the SVID is audience-bound **at fetch time** by the
-`spiffe-helper` config, not by the `ClusterSPIFFEID` (§`docs/spiffe.md`). `iss`
+`spiffe-helper` config, not by the `ClusterSPIFFEID` (`design.md` §3.3). `iss`
 is SPIRE's OIDC discovery provider, whose JWKS the exchange procedure fetches at
 runtime, which is why a cluster rebuild or key rotation needs no snapshot step.
 
@@ -609,6 +651,7 @@ make reset             # delete cluster + reclaim docker build cache
 | Curity won't start | License missing/invalid. `kubectl -n curity logs deploy/curity`. |
 | Pods can't reach Curity (`ECONNREFUSED`, or an MCP/API returns `invalid_token` with an empty reason) | A pod is missing the `curity.localtest.me` hostAlias — `make routing` not run (or only partially applied) after cluster recreation. Diagnose with `make routing-check`; fix with `make routing` (idempotent). |
 | Empty Grafana traces | Tempo 30-min retention expiry — re-drive and query promptly. |
+| Every panel says *session expired*; the chain shows only hop 0 | The 10-minute Curity access token expired — the header pill counts it down and turns amber in the last minute. Sign in again (or step up) and re-run the flow. |
 | TLS warnings in the browser | Expected — `make certs` no longer installs the root CA into the keychain by default. Run `make trust-ca` and restart the browser to trust it (undo with `mkcert -uninstall`). |
 | Users gone after a Curity restart | `kubectl rollout restart deploy/curity` wipes the in-memory HSQLDB — re-seed per [`curity-seed.md`](curity-seed.md). |
 
