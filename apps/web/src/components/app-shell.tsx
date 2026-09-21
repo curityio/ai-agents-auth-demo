@@ -1,24 +1,57 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  ShieldCheck,
-  Fingerprint,
-  KeyRound,
-  ShieldAlert,
-  Radar,
-  ArrowUpRight,
-} from 'lucide-react';
+import { ShieldCheck, Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { HeroStage } from '@/components/hero-stage';
 import { SignInButton } from '@/components/sign-in-button';
 import { UserMenu } from '@/components/user-menu';
 
+// Each claim links to the panel that proves it (ids live on the cards in
+// chat.tsx). Signed out, the panels do not exist, so the chips stay inert.
+// Icon colours reuse meanings the page already has: lilac = identity (the
+// workload boxes), amber = exchange (the dashed legend line), the headline's
+// pink = MFA, green = live/verified (the demo dot).
 const CAPABILITIES = [
-  { icon: Fingerprint, label: 'SPIFFE workload identity' },
-  { icon: KeyRound, label: 'RFC 8693 token exchange' },
-  { icon: ShieldAlert, label: 'RFC 9470 step-up MFA' },
-  { icon: Radar, label: 'OpenTelemetry tracing' },
+  {
+    icon: Fingerprint,
+    label: 'SPIFFE workload identity',
+    target: '#identities',
+    tint: 'text-accent-violet',
+  },
+  { icon: KeyRound, label: 'RFC 8693 token exchange', target: '#chain', tint: 'text-warn' },
+  { icon: ShieldAlert, label: 'RFC 9470 step-up MFA', target: '#ask', tint: 'text-[#F7B9DE]' },
+  { icon: Radar, label: 'OpenTelemetry tracing', target: '#result', tint: 'text-success' },
 ];
+
+const CHIP_CLASS =
+  'inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur transition-colors hover:bg-white/20';
+
+function CapabilityChips({ signedIn }: { signedIn: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-2.5 lg:gap-2">
+      {CAPABILITIES.map(({ icon: Icon, label, target, tint }) =>
+        signedIn ? (
+          <a
+            key={label}
+            href={target}
+            title="Jump to the panel that proves this"
+            className={`group ${CHIP_CLASS}`}
+          >
+            <Icon className={`h-4 w-4 ${tint}`} />
+            {label}
+            <ArrowUpRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-80" />
+          </a>
+        ) : (
+          <span key={label} className={CHIP_CLASS}>
+            <Icon className={`h-4 w-4 ${tint}`} />
+            {label}
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
 
 interface AppShellProps {
   signedIn: boolean;
@@ -34,11 +67,7 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-4 sm:gap-6">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/curity-logo-landscape-white.svg"
-              alt="Curity"
-              className="h-7 w-auto"
-            />
+            <img src="/curity-logo-landscape-white.svg" alt="Curity" className="h-7 w-auto" />
             <span aria-hidden className="h-7 w-px bg-border" />
             <div className="flex items-center gap-3">
               <div className="mesh-hero flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
@@ -65,46 +94,45 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
         {/* Hero */}
         <section className="relative animate-fade-in-up overflow-hidden rounded-3xl">
-          <div className="mesh-hero-enterprise animate-gradient-pan bg-[length:200%_200%] px-7 py-12 sm:px-10 sm:py-14">
+          <div className="mesh-hero-enterprise animate-gradient-pan bg-[length:200%_200%] px-7 py-9 sm:px-10 sm:py-11 lg:py-8">
             {/* dotted texture + sheen */}
             <div className="bg-grid pointer-events-none absolute inset-0 opacity-30 [mask-image:radial-gradient(80%_80%_at_50%_0%,black,transparent)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/15 to-transparent" />
 
             <div className="relative">
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white backdrop-blur">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success shadow-[0_0_8px_2px_hsl(var(--success)/0.7)]" />
-                </span>
-                Live demo
-              </span>
-
-              <h1 className="mt-5 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl">
-                Secure AI agent
-                <br />
-                authorization,{' '}
-                <span className="bg-gradient-to-r from-[#F7B9DE] to-[#FFEAF5] bg-clip-text text-transparent">
-                  demonstrated.
-                </span>
-              </h1>
-
-              <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/85 sm:text-lg">
-                A DevOps copilot that reads observability data and manages workloads on a
-                user&rsquo;s behalf. Every hop authenticated, scoped to least privilege,
-                MFA-gated for privileged actions, and fully traceable. No standing credentials,
-                no over-broad access.
-              </p>
-
-              <div className="mt-7 flex flex-wrap gap-2.5">
-                {CAPABILITIES.map(({ icon: Icon, label }) => (
-                  <span
-                    key={label}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur transition-colors hover:bg-white/20"
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {label}
+              {/* On wide screens the copy sits in the stage's empty top-left quadrant. */}
+              <div className="lg:absolute lg:left-0 lg:top-0 lg:z-10 lg:max-w-[580px]">
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white backdrop-blur">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-success shadow-[0_0_8px_2px_hsl(var(--success)/0.7)]" />
                   </span>
-                ))}
+                  Live demo
+                </span>
+
+                <h1 className="mt-5 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl lg:mt-3 lg:text-[2rem]">
+                  Secure AI agent
+                  <br />
+                  authorization,{' '}
+                  <span className="bg-gradient-to-r from-[#F7B9DE] to-[#FFEAF5] bg-clip-text text-transparent">
+                    demonstrated.
+                  </span>
+                </h1>
+
+                <p className="mt-4 max-w-2xl text-base leading-relaxed text-white/85 sm:text-lg lg:mt-2 lg:max-w-[520px] lg:text-sm">
+                  A DevOps copilot that reads observability data and manages workloads on a
+                  user&rsquo;s behalf. No standing credentials, no over-broad access.
+                </p>
+
+                {/* Below lg the chips stay in the copy; on the stage they move under it. */}
+                <div className="mt-7 lg:hidden">
+                  <CapabilityChips signedIn={signedIn} />
+                </div>
+              </div>
+
+              {/* The stage the panels below prove, on wide screens only. */}
+              <div className="hidden lg:block">
+                <HeroStage signedIn={signedIn} footer={<CapabilityChips signedIn={signedIn} />} />
               </div>
             </div>
           </div>

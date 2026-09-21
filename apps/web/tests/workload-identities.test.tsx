@@ -40,15 +40,24 @@ describe('WorkloadIdentities', () => {
     expect(html).toMatch(/ns\s*<\/span>[^<]*<[^>]*>mcp</);
   });
 
-  it('summarises the chain order in a numbered strip above the cards', () => {
-    const strip = html.match(/<ol[^>]*data-chain-strip[\s\S]*?<\/ol>/)?.[0];
-    expect(strip, 'chain strip present').toBeTruthy();
-    const names = [...strip!.matchAll(/>(web|agent-copilot|agentgateway)</g)].map((m) => m[1]);
-    expect(names).toEqual(['web', 'agent-copilot', 'agentgateway']);
-    expect(strip!.match(/data-connector/g)?.length).toBe(2);
+  it('mutes the namespace pill so the workload name leads', () => {
+    expect(html).toMatch(
+      /ns\s*<\/span>[^<]*<span[^>]*class="[^"]*text-muted-foreground[^"]*"[^>]*>mcp</,
+    );
   });
 
-  it('numbers each card to match the strip', () => {
+  it('states issuer and audience as one sentence, single-spaced', () => {
+    expect(html).toMatch(
+      /issued by <span[^>]*>https:\/\/oidc-discovery[^<]*<\/span> for audience <span/,
+    );
+  });
+
+  it('has no chain strip above the cards — the cards carry the order', () => {
+    expect(html).not.toContain('data-chain-strip');
+    expect(html).not.toContain('data-connector');
+  });
+
+  it('numbers each card in chain order', () => {
     const cards = html.match(/<ol[^>]*data-chain-cards[\s\S]*?<\/ol>/)?.[0];
     expect(cards, 'card grid present').toBeTruthy();
     expect(cards).not.toContain('data-connector');

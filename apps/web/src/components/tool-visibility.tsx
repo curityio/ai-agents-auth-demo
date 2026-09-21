@@ -161,7 +161,7 @@ function Verdict({ tier }: { tier: TierResult }) {
         <div className="flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/10 p-3 text-sm text-warn">
           <Lock className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            Not listed — the specialist refused to even ask. This user has not authenticated with{' '}
+            Not listed — This user has not authenticated with{' '}
             <span className="font-mono">acr={tier.acrValues}</span>, so no{' '}
             <span className="font-mono">{tier.scope}</span> token was minted.
           </span>

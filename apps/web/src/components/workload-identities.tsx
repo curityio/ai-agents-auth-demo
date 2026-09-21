@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import { ArrowRight, Clock, RefreshCw } from 'lucide-react';
+import { Clock, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { FlowBadge } from '@/components/flow-badge';
@@ -108,9 +108,12 @@ function Card({
           </span>
           <span className="font-mono text-sm font-semibold">{s.workload}</span>
           {ns && (
-            <Badge variant="outline" className="gap-1 font-mono text-[11px]">
-              <span className="font-sans font-normal text-muted-foreground">ns</span>
-              <span>{ns}</span>
+            <Badge
+              variant="outline"
+              className="gap-1 border-border/70 font-mono text-[11px] font-normal text-muted-foreground"
+            >
+              <span className="font-sans">ns</span>
+              <span className="text-muted-foreground">{ns}</span>
             </Badge>
           )}
           {rotated && (
@@ -197,38 +200,13 @@ export function WorkloadIdentities({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
         <FlowBadge flow={flow} />
         {shared && (
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>
-              Every SVID here is issued by{' '}
-              <span className="font-mono text-foreground/80">{shared.iss}</span>
-            </span>
-            <span>
-              for audience{' '}
-              <span className="font-mono text-foreground/80">{shared.aud.join(' ')}</span>
-            </span>
+          <span>
+            Every SVID here is issued by{' '}
+            <span className="font-mono text-foreground/80">{shared.iss}</span> for audience{' '}
+            <span className="font-mono text-foreground/80">{shared.aud.join(' ')}</span>
           </span>
         )}
       </div>
-
-      {/* The chain order, compact: this is the order these IDs will appear in
-          the ledger's act chain. The cards below carry the same numbers. */}
-      <ol data-chain-strip aria-label="Chain order" className="flex flex-wrap items-center gap-1.5">
-        {svids.map((s, i) => (
-          <li key={s.workload} className="contents">
-            {i > 0 && (
-              <span data-connector aria-hidden className="text-muted-foreground">
-                <ArrowRight className="h-3.5 w-3.5" />
-              </span>
-            )}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 py-0.5 pl-0.5 pr-2.5 font-mono text-xs">
-              <span className="mesh-hero flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white">
-                {i + 1}
-              </span>
-              <span>{s.workload}</span>
-            </span>
-          </li>
-        ))}
-      </ol>
 
       <ol data-chain-cards className="grid gap-3 sm:grid-cols-2">
         {svids.map((s, i) => (

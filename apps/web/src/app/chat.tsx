@@ -262,7 +262,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
 
   return (
     <div className="space-y-6">
-      <Card>
+      <Card id="ask" className="scroll-mt-24">
         <CardHeader>
           <CardTitle className="flex items-center gap-2.5 text-lg">
             <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
@@ -408,7 +408,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       {loading && !response && <ResultSkeleton />}
 
       {response && (
-        <Card className="animate-fade-in-up">
+        <Card id="result" className="scroll-mt-24 animate-fade-in-up">
           <CardHeader>
             <CardTitle className="text-lg">Result</CardTitle>
             <CardDescription>
@@ -506,7 +506,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
         </Card>
       )}
 
-      <Card>
+      <Card id="identities" className="scroll-mt-24">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
@@ -514,7 +514,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 <span className="mesh-hero flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ring-1 ring-white/30 [&_svg]:h-4 [&_svg]:w-4">
                   <Fingerprint />
                 </span>
-                Workload identities
+                Workload Identities
               </CardTitle>
               <CardDescription className="max-w-xl">
                 Each pod carries its own SPIFFE JWT-SVID, distinct from the user token.
@@ -552,7 +552,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
         )}
       </Card>
 
-      <Card>
+      <Card id="chain" className="scroll-mt-24">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
@@ -619,7 +619,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
         )}
       </Card>
 
-      <Card>
+      <Card id="tools" className="scroll-mt-24">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1.5">
