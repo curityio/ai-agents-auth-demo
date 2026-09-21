@@ -46,3 +46,47 @@ describe('SUGGESTIONS', () => {
     expect(SUGGESTIONS.slice(0, firstWrite).every((s) => s.tier === 'read')).toBe(true);
   });
 });
+
+describe('SUGGESTION_GROUPS', () => {
+  it('splits the prompts into an Observe group and an Act group, in that order', async () => {
+    const { SUGGESTION_GROUPS } = await import('../src/lib/chat-rules');
+    expect(SUGGESTION_GROUPS.map((g) => g.label)).toEqual(['Observe', 'Act']);
+    expect(SUGGESTION_GROUPS[0]!.prompts.every((s) => s.tier === 'read')).toBe(true);
+    expect(SUGGESTION_GROUPS[1]!.prompts.every((s) => s.tier === 'write')).toBe(true);
+    expect(SUGGESTION_GROUPS.flatMap((g) => g.prompts)).toEqual([...SUGGESTIONS]);
+  });
+});
+
+describe('DEFAULT_PROMPT', () => {
+  it('is the first example prompt, verbatim, so the prefilled box and the chip agree', async () => {
+    const { DEFAULT_PROMPT } = await import('../src/lib/chat-rules');
+    expect(DEFAULT_PROMPT).toBe(SUGGESTIONS[0]!.text);
+  });
+});
+
+describe('classifyAgentFailure', () => {
+  it('recognises the RFC 9470 step-up challenge', async () => {
+    const { classifyAgentFailure } = await import('../src/lib/chat-rules');
+    expect(
+      classifyAgentFailure(401, { kind: 'step-up', acrValues: 'mfa', scope: 'ops:write' }),
+    ).toEqual({ kind: 'step-up', acrValues: 'mfa', scope: 'ops:write' });
+  });
+  it('treats a typed 403 as a verdict with a reason, not a failure', async () => {
+    const { classifyAgentFailure } = await import('../src/lib/chat-rules');
+    expect(
+      classifyAgentFailure(403, { kind: 'access-denied', reason: 'role sre required' }),
+    ).toEqual({ kind: 'denied', reason: 'role sre required' });
+  });
+  it('maps anything else to a friendly message and keeps the raw detail', async () => {
+    const { classifyAgentFailure } = await import('../src/lib/chat-rules');
+    const f = classifyAgentFailure(502, { error: 'upstream_error' });
+    expect(f.kind).toBe('failed');
+    if (f.kind !== 'failed') throw new Error('unreachable');
+    expect(f.message).toMatch(/reach the agent/);
+    expect(f.detail).toBe('HTTP 502 · {"error":"upstream_error"}');
+    const expired = classifyAgentFailure(401, { error: 'session_expired' });
+    expect(expired.kind === 'failed' && expired.message).toMatch(/session has expired/);
+    const bare = classifyAgentFailure(500, undefined);
+    expect(bare.kind === 'failed' && bare.detail).toBe('HTTP 500');
+  });
+});

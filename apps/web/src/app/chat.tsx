@@ -31,7 +31,17 @@ import { flowOfChain } from '@/lib/token-view';
 import { rotatedWorkloads, type SvidView } from '@/lib/svid-view';
 import { ResultSkeleton } from '@/components/result-skeleton';
 import { friendlyFetchError } from '@/lib/fetch-error';
-import { flowOf, panelsToRefresh, SUGGESTIONS, type Flow } from '@/lib/chat-rules';
+import {
+  classifyAgentFailure,
+  DEFAULT_PROMPT,
+  flowOf,
+  panelsToRefresh,
+  SUGGESTION_GROUPS,
+  type AgentFailure,
+  type Flow,
+} from '@/lib/chat-rules';
+import type { Asking } from '@/lib/asking';
+import { RequestFailure } from '@/components/request-failure';
 import { stashStepUp, takeStepUpReturn, type StepUpReturn } from '@/lib/step-up-return';
 import type { TraceStep as AgentStep } from '@/lib/trace-view';
 import {
@@ -86,11 +96,18 @@ export interface ChatPreview {
   tools?: ToolTiersResponse | null;
 }
 
-export function Chat({ preview }: { preview?: ChatPreview } = {}) {
-  const [message, setMessage] = useState('List all pods in prod namespace');
+export function Chat({
+  preview,
+  asking,
+}: {
+  preview?: ChatPreview;
+  /** Claims the request will carry, decoded server-side from the access token. */
+  asking?: Asking;
+} = {}) {
+  const [message, setMessage] = useState(DEFAULT_PROMPT);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<AgentResponse | null>(preview?.response ?? null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Exclude<AgentFailure, { kind: 'step-up' }> | null>(null);
   const [stepUp, setStepUp] = useState<StepUpState | null>(null);
   // Set when the page remounted after an MFA step-up redirect: the prompt the
   // user typed is being retried on their behalf, and the banner says so.
@@ -151,24 +168,12 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       }
 
       if (!r.ok) {
-        const kind =
-          body && typeof body === 'object' ? (body as { kind?: string }).kind : undefined;
-
-        if (r.status === 401 && kind === 'step-up') {
-          const su = body as { acrValues: string; scope: string };
-          setStepUp({ acrValues: su.acrValues, scope: su.scope });
-          return;
+        const failure = classifyAgentFailure(r.status, body);
+        if (failure.kind === 'step-up') {
+          setStepUp({ acrValues: failure.acrValues, scope: failure.scope });
+        } else {
+          setError(failure);
         }
-
-        if (r.status === 403 && kind === 'access-denied') {
-          const ad = body as { reason: string };
-          setError(`Access denied: ${ad.reason}`);
-          return;
-        }
-
-        setError(
-          `${r.status}: ${body && typeof body === 'object' ? JSON.stringify(body) : String(body ?? '')}`,
-        );
         return;
       }
 
@@ -185,7 +190,11 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
       if (plan.svids) void loadSvids(flowOf(resp));
       if (plan.tools) void loadTools();
     } catch (e) {
-      setError(String(e));
+      setError({
+        kind: 'failed',
+        message: "Couldn't reach the copilot. Check your connection and try again.",
+        detail: String(e),
+      });
     } finally {
       setLoading(false);
     }
@@ -265,8 +274,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
             Ask the copilot
           </CardTitle>
           <CardDescription>
-            Phrase a request in plain language. Read-only questions resolve instantly; privileged
-            actions trigger a step-up MFA prompt.
+            Read-only questions are answered by the copilot directly; privileged actions route to
+            the specialist and trigger a step-up MFA prompt.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -283,78 +292,111 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
             }}
           />
 
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s.text}
-                type="button"
-                onClick={() => setMessage(s.text)}
-                title={
-                  s.tier === 'write'
-                    ? 'Privileged: routes to the specialist and requires MFA step-up'
-                    : 'Read-only: answered inline via mcp-observability'
-                }
-                className={
-                  s.tier === 'write'
-                    ? 'inline-flex items-center gap-1.5 rounded-full border border-dashed border-warn/40 bg-warn/5 px-3 py-1 text-xs text-warn/90 transition-colors hover:border-warn/70 hover:bg-warn/15 hover:text-warn'
-                    : 'inline-flex items-center gap-1.5 rounded-full border border-dashed border-border bg-secondary/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground'
-                }
-              >
-                {s.tier === 'write' ? <Lock className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {s.text}
-              </button>
+          {/* Example prompts, grouped by what they do. The group label and the
+              chip colour say "read" vs "privileged" in place, so no legend. */}
+          <div className="space-y-2">
+            {SUGGESTION_GROUPS.map((g) => (
+              <div key={g.label} data-prompt-group={g.label} className="flex items-start gap-2">
+                <span
+                  className={`inline-flex w-20 shrink-0 items-center gap-1.5 pt-1.5 text-[11px] font-medium uppercase tracking-wide ${
+                    g.tier === 'write' ? 'text-warn/90' : 'text-muted-foreground'
+                  }`}
+                >
+                  {g.tier === 'write' ? (
+                    <Lock className="h-3 w-3" />
+                  ) : (
+                    <Eye className="h-3 w-3 text-accent-violet" />
+                  )}
+                  {g.label}
+                </span>
+                <div className="flex flex-1 flex-wrap gap-2">
+                  {g.prompts.map((s) => (
+                    <button
+                      key={s.text}
+                      type="button"
+                      onClick={() => setMessage(s.text)}
+                      title={
+                        s.tier === 'write'
+                          ? 'Privileged: routes to the specialist and requires MFA step-up'
+                          : 'Read-only: answered by the copilot via mcp-observability'
+                      }
+                      className={
+                        s.tier === 'write'
+                          ? 'inline-flex items-center rounded-full border border-dashed border-warn/40 bg-warn/5 px-3 py-1 text-xs text-warn/90 transition-colors hover:border-warn/70 hover:bg-warn/15 hover:text-warn'
+                          : 'inline-flex items-center rounded-full border border-dashed border-border bg-secondary/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground'
+                      }
+                    >
+                      {s.text}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-            {/* Legend for the example prompts above, kept on its own row and
-                behind a divider so it reads as a key rather than as more options. */}
-            <ul
-              className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs"
-              aria-label="Prompt legend"
-            >
-              <li className="inline-flex items-center gap-1.5 text-muted-foreground">
-                <Eye className="h-3.5 w-3.5" />
-                <span aria-hidden className="text-muted-foreground/60">
-                  →
-                </span>
-                read-only, answered inline
-              </li>
-              <li className="inline-flex items-center gap-1.5 text-warn/90">
-                <Lock className="h-3.5 w-3.5" />
-                <span aria-hidden className="text-warn/60">
-                  →
-                </span>
-                privileged, triggers MFA step-up
-              </li>
-            </ul>
-            <Button
-              type="button"
-              onClick={() => void submit()}
-              disabled={loading || !message.trim()}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="animate-spin" />
-                  Asking…
-                </>
-              ) : (
-                <>
-                  <SendHorizontal />
-                  Send
-                </>
-              )}
-            </Button>
+            {/* Who the request goes out as — stated before Send, so the acr can
+                be pointed at before a privileged prompt triggers step-up. */}
+            {asking?.sub ? (
+              <p data-asking-as className="text-xs text-muted-foreground">
+                Asking as <span className="font-medium text-foreground/90">{asking.sub}</span>
+                {asking.roles.length > 0 && (
+                  <>
+                    {' '}
+                    · roles{' '}
+                    <span className="font-mono text-foreground/80">{asking.roles.join(', ')}</span>
+                  </>
+                )}
+                {asking.acr && (
+                  <>
+                    {' '}
+                    · acr <span className="font-mono text-foreground/80">{asking.acr}</span>
+                  </>
+                )}
+                {asking.acr !== 'mfa' && (
+                  <span className="text-muted-foreground/70">
+                    {' '}
+                    · privileged prompts will step up to MFA
+                  </span>
+                )}
+              </p>
+            ) : (
+              <span />
+            )}
+            <span className="flex items-center gap-3">
+              <span
+                className="hidden items-center gap-1 text-[11px] text-muted-foreground/70 sm:inline-flex"
+                title="Cmd or Ctrl + Enter sends"
+              >
+                <kbd className="rounded border border-border/70 bg-secondary/60 px-1.5 py-0.5 font-sans">
+                  ⌘
+                </kbd>
+                <kbd className="rounded border border-border/70 bg-secondary/60 px-1.5 py-0.5 font-sans">
+                  ↵
+                </kbd>
+              </span>
+              <Button
+                type="button"
+                onClick={() => void submit()}
+                disabled={loading || !message.trim()}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    Asking…
+                  </>
+                ) : (
+                  <>
+                    <SendHorizontal />
+                    Send
+                  </>
+                )}
+              </Button>
+            </span>
           </div>
         </CardContent>
       </Card>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Request failed</AlertTitle>
-          <AlertDescription className="break-words font-mono text-xs">{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <RequestFailure failure={error} />}
 
       {mfaReturn && (
         <Alert variant="info" className="animate-fade-in-up">

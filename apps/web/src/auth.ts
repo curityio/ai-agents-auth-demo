@@ -1,6 +1,8 @@
 import NextAuth from 'next-auth';
 import type { NextAuthConfig } from 'next-auth';
 
+import { identityFromAccessToken, type Asking } from '@/lib/asking';
+
 const issuer = process.env.CURITY_ISSUER;
 const clientId = process.env.CURITY_CLIENT_ID ?? 'web-app';
 const clientSecret = process.env.CURITY_CLIENT_SECRET;
@@ -72,6 +74,9 @@ export const authConfig: NextAuthConfig = {
     async session({ session, token }) {
       // Expose only what the browser needs (NOT the access token).
       if (token.sub) session.user = { ...session.user, id: token.sub };
+      // The claims the next request will carry (sub/roles/acr) — decoded here
+      // so the Ask card can state them before Send. Not the token itself.
+      session.asking = identityFromAccessToken(token.accessToken);
       return session;
     },
   },
@@ -90,5 +95,8 @@ declare module 'next-auth/jwt' {
 declare module 'next-auth' {
   interface User {
     id?: string;
+  }
+  interface Session {
+    asking?: Asking;
   }
 }

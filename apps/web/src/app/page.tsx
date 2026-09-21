@@ -12,7 +12,7 @@ export default async function Home() {
   return (
     <AppShell signedIn={!!session} displayName={displayName} email={session?.user?.email}>
       {session ? (
-        <Chat />
+        <Chat asking={session.asking} />
       ) : (
         <div className="glass animate-fade-in-up mx-auto max-w-md rounded-2xl p-8 text-center">
           <div className="mesh-hero mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-primary/30 ring-1 ring-white/30">
