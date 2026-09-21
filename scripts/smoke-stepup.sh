@@ -133,7 +133,8 @@ build_gateway_ops_token() {
 # parse_post_form: read an HTML page on stdin, echo "<action>\t<urlencoded body>"
 # for its first method=post form (every named non-submit input included), exit 1 if
 # there is none. Curity's login chain renders TWO such forms and both must be
-# submitted properly: the `debug-attribute` action page (no inputs) and the
+# submitted properly: any action page with no inputs (a `debug-attribute` action
+# used to sit in the html-auth chain; the loop copes if one is re-added) and the
 # "Redirecting..." auto-POST that resumes /oauth/v2/oauth-authorize, which carries
 # hidden `token` and `state`. Posting that one with an empty body silently returns no
 # redirect and the walk just stops — indistinguishable from a failed login.

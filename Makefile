@@ -88,8 +88,13 @@ build: ## Build all TypeScript workspaces (turbo)
 	pnpm turbo run build
 
 .PHONY: test
-test: ## Run all unit tests (vitest, via turbo)
+test: test-scripts ## Run all unit tests (vitest, via turbo) + the shell-script contract tests
 	pnpm turbo run test
+
+.PHONY: test-scripts
+test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed)
+	bash scripts/test-render-gateway-config.sh
+	bash scripts/test-embed-curity-theme.sh
 
 .PHONY: typecheck
 typecheck: ## Type-check all workspaces
@@ -272,6 +277,10 @@ curity-procedures: ## Embed k8s/curity/procedures/*.js as Base64 into the Curity
 curity-truststore: ## Embed the local mkcert root CA into the Curity configmap's server-truststore (CIMD metadata fetch)
 	bash scripts/embed-mkcert-ca.sh
 
+.PHONY: curity-theme
+curity-theme: ## Embed k8s/curity/theme/*.css as Base64 into the Curity configmap's <default-theme> (login pages match the web app)
+	bash scripts/embed-curity-theme.sh
+
 # ============================================================================
 # Application images + deploy
 # ============================================================================
@@ -287,7 +296,7 @@ images: ## Build all app images and load them into KIND
 	done
 
 .PHONY: apply
-apply: curity-procedures curity-truststore render-gateway-config ## Apply all manifests (assumes images built/loaded) and run routing
+apply: curity-procedures curity-truststore curity-theme render-gateway-config ## Apply all manifests (assumes images built/loaded) and run routing
 	kubectl apply -f k8s/namespaces.yaml
 	# Curity (sole token issuer). Config BEFORE the deployment so the pod finds it
 	# on first start. The `curity-license` secret is created separately by

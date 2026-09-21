@@ -50,6 +50,17 @@ the bits you seed by hand (license + users).
 `llm:invoke` on its `/llm` route but performs no exchange there, so it needs no
 client.
 
+### Look and feel
+The login, create-account, TOTP and consent pages carry the web app's dark palette.
+That theme is **configuration**, not template overrides: the configmap's
+`<themes><default-theme>` block holds two Base64 leaves embedded from
+`k8s/curity/theme/theme.css` (CSS custom-property overrides) and `custom.css`
+(free CSS) by `make curity-theme` (run by `make apply`), plus the template
+variables that switch on Curity's built-in dark body variant. Edit the CSS files,
+never the Base64. Anything changed in the Admin UI's **System → Look and Feel**
+lives only in CDB and is overwritten by the next `make apply` — use its *Download
+CSS* and paste into the tracked files instead.
+
 ### Authenticators
 - HTML Form authenticator
 - In-memory account manager — fine for the demo; swap for a real DB in production

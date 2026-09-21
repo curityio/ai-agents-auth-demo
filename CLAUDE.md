@@ -792,9 +792,11 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `apps/mcp-ops/tests/auth-middleware.test.ts`. **Driving that login from a script
       means interleaving 302s with rendered forms** — this profile's chain is
       `/authorize` → authenticator chooser → `html-auth` (POST `userName`/`password`,
-      no CSRF field) → the `debug-attribute` action page (submit form, no inputs) →
-      a *"Redirecting…"* auto-POST back to `/oauth/v2/oauth-authorize` carrying hidden
-      `token` + `state` → the code. Following only redirects stalls at the action page,
+      no CSRF field) → a *"Redirecting…"* auto-POST back to `/oauth/v2/oauth-authorize`
+      carrying hidden `token` + `state` → the code. (A `debug-attribute` action page —
+      a submit form with no inputs — used to sit between the two; it was removed from
+      the html-auth chain on 2026-09-21, and the script's form-following loop copes
+      either way.) Following only redirects stalls at an action page,
       and POSTing the resume form with an empty body drops the hidden fields — both
       failures look exactly like a wrong password, which is why `parse_post_form`
       submits forms properly rather than curling `-L`. And do NOT use `curl -L` to the
@@ -821,7 +823,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       specialist branch that never ran. Pinned by contract tests on both tools routes.
     - **The MCP servers build their rows from the last tool call's slot, not from the
       `/last-token` request** — that request also travels through agentgateway, so the
-      shim mints a fresh token just for the walk (a different `jti` and a full 5-minute
+      shim mints a fresh token just for the walk (a different `jti` and a full 10-minute
       TTL next to neighbours with seconds left). Before any tool has run they
       contribute no rows.
     - **The downstream walk authenticates with the exchanged token, so expiry used to
@@ -841,6 +843,40 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       for the countdowns, because re-fetching `/api/obo-chain` would add spans and
       OBO-log lines to the very telemetry the demo is showing.
 
+35. **Curity's login/consent pages are themed from CONFIG (`<themes><default-theme>` in
+    the configmap), not template overrides or volume mounts.** Curity 11 renders every
+    page from `main.css` + `curity-theme.css` (~140 CSS custom properties); the block
+    carries `theme-css-properties` (a `:root{}` override) and `theme-custom-css` as Base64
+    plus `template-variables` (`_configured_body_background=body-dark` flips the built-in
+    dark variant: white logo + white text on every template;
+    `_configured_single_color_authenticator_chooser=true`). Sources are
+    `k8s/curity/theme/{theme,custom}.css`, embedded by `make curity-theme` (run by
+    `make apply`) — edit the CSS, never the Base64, same rule as the procedures; pinned by
+    `scripts/test-embed-curity-theme.sh` (`make test-scripts`). Gotchas:
+    - `main.css` sets `body{background-image}` from `--page-background-image-url` AFTER
+      `--page-background-gradient`, so the gradient variable is dead — the app's aurora
+      rides on the `-url` one.
+    - Keep the well on `form-light` (its background/border/radius/shadow come from the
+      `--well-*` variables). `form-transparent` hard-codes a grey-blue `--button-color`.
+    - **Not every surface is variable-driven.** `main.css` hard-codes `background-color:#fff`
+      on the OTP boxes (`input[type=text].field-enter-usercode`, TOTP/SMS/device-code) with
+      no `color`, so a dark theme's white input text became invisible there — the first
+      report after shipping the theme. `custom.css` re-routes those (and `dialog`,
+      `.well-white`, `.well-border`) through the field/well variables. Sweep for more with
+      `grep -oE '[^}]*\{[^}]*background(-color)?:#fff[^}]*\}' main.css` before adding a
+      template to the demo. A TOTP page needs a live login, so verify OTP styling with a
+      local fixture: the `otp-input.vm` markup + the three stylesheets Curity serves, in
+      order, screenshotted with headless Chrome.
+    - The CSP pins `font-src 'self'` and no template variable widens it, so matching the
+      app's Figtree font would need woff2 files mounted into the pod's webroot — Roboto
+      stays on purpose.
+    - Apply to a running Curity with the fact #33 `idsh load merge` path (no HSQLDB wipe).
+      The theme is served at `/theme/curity-custom-theme.css?v=<content hash>`, so a change
+      needs no cache busting.
+    - Edits made in the Admin UI's System → Look and Feel live in CDB only and are
+      overwritten by the next `make apply` — *Download CSS* there and paste into the tracked
+      files instead.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -857,6 +893,8 @@ make routing         # re-patch hostAliases + mkcert CA into app pods + Curity�
 make status          # pod health across every demo namespace
 make smoke           # routing-check + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
+make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
+make test-scripts    # shell-script contract tests (gateway-config render, theme embed)
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit
 make clean           # full teardown
@@ -892,7 +930,9 @@ exists when tsc reads it; don't remove that dependency.
   per user at login) — are embedded as Base64 from `k8s/curity/procedures/` via
   `make curity-procedures` (run by `make apply`) — edit the `.js`, not the Base64.
   `embed-curity-procedures.sh` keys each by its `<id>` and element type
-  (`token-procedure` vs `transformation-procedure`).
+  (`token-procedure` vs `transformation-procedure`). The UI theme follows the same
+  rule: `k8s/curity/theme/*.css` is the source, `make curity-theme` writes the Base64
+  (fact #35).
 - **Mermaid diagrams in `/docs`** must use quoted subgraph names and quoted node
   labels containing parens/special chars (GitHub's renderer is stricter than
   mermaid-cli). A bare `;` in sequence-diagram message/Note text is a statement

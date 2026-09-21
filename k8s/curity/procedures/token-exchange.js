@@ -507,7 +507,10 @@ function result(context) {
     scope: narrowed.join(' '),
     access_token: issuedAccessToken,
     token_type: 'bearer',
-    expires_in: 300, // 5 min — matches spiffe-helper JWT-SVID TTL ceiling
+    // Reported from the issued token's exp, so it follows each client's configured
+    // access-token-ttl (600 s for every client in the demo configmap) — the agents'
+    // exchange caches key their TTL on this value.
+    expires_in: secondsUntil(tokenData.exp),
     issued_token_type: 'urn:ietf:params:oauth:token-type:access_token'
   };
 }

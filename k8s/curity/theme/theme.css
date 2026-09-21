@@ -1,0 +1,90 @@
+/*
+ * Curity UI theme for the demo — the web app's palette (apps/web/src/app/globals.css)
+ * expressed as the CSS custom properties Curity's templates consume
+ * (/assets/css/curity-theme.css lists every one). Embedded as Base64 into the
+ * configmap's <themes><default-theme><theme-css-properties> by
+ * scripts/embed-curity-theme.sh (`make curity-theme`, run by `make apply`).
+ * Edit this file, never the Base64.
+ *
+ * Font stays Curity's self-hosted Roboto on purpose: the templates' CSP pins
+ * font-src to 'self', so matching the app's Figtree would mean shipping woff2
+ * files into the pod. Colours, surfaces and radii carry the continuity.
+ */
+:root {
+  /* Page: deep navy with the app's purple aurora. main.css sets body
+     background-image from --page-background-image-url (its gradient variable is
+     overridden by that declaration), so the aurora rides on this one. */
+  --page-background-color: #0d0b1a;
+  --page-background-color-dark: #0d0b1a;
+  --page-background-image-url:
+    radial-gradient(60rem 60rem at 100% -10%, rgb(139 92 246 / 22%), transparent 60%),
+    radial-gradient(52rem 52rem at 0% 0%, rgb(60 44 110 / 20%), transparent 55%),
+    radial-gradient(45rem 45rem at 50% 120%, rgb(192 132 252 / 8%), transparent 60%);
+  --page-background-position: center top;
+  --page-background-repeat: no-repeat;
+  --page-background-size: cover;
+
+  /* Well: the app's frosted dark-purple card (.glass). */
+  --well-background-color: #130e2b;
+  --well-border-color: rgb(68 52 122 / 55%);
+  --well-border-radius: 20px;
+  --well-box-shadow:
+    0 1px 2px rgb(3 2 12 / 40%),
+    0 10px 30px -16px rgb(3 2 12 / 70%),
+    inset 0 1px 0 rgb(201 168 255 / 6%);
+
+  --login-symbol-size: 120px;
+  --login-symbol-margin-top: 1.5rem;
+  --login-symbol-margin-bottom: 1.5rem;
+
+  /* Colours: white headings, lavender-grey body, one purple accent + lilac. */
+  --color-text: #c9c6dd;
+  --color-heading: #ffffff;
+  --color-light: #ffffff;
+  --color-primary: #a863ee;
+  --color-primary-dark: #6d28d9;
+  --color-primary-medium: #1c1440;
+  --color-primary-light: #c9a8ff;
+  --color-spot: #c084fc;
+  --color-link: #c9a8ff;
+  --color-link-hover: #ffffff;
+  --color-success: #54d483;
+  --color-info: #c9c6dd;
+  --color-danger: #e45858;
+  --color-warning: #f59e3a;
+  --color-grey-light: #2b1f51;
+  --color-grey-subtle: #1c1440;
+
+  /* Form fields: the app's near-black input surface with a lilac caret. */
+  --form-label-color: #c9c6dd;
+  --form-field-color: #ffffff;
+  --form-field-color-dark: #ffffff;
+  --form-field-background-color: #0a041f;
+  --form-field-background-color-dark: #0a041f;
+  --form-field-placeholder-color: rgb(201 198 221 / 55%);
+  --form-field-border-color: #2b1f51;
+  --form-field-border-color-hover: #44347a;
+  --form-field-border-color-focus: #a863ee;
+  --form-field-border-color-dark: #2b1f51;
+  --form-field-box-shadow-focus: rgb(168 99 238 / 30%) 0 0 0 3px;
+  --form-field-caret-color: #c9a8ff;
+  --form-field-border-radius: 8px;
+  --form-field-disabled-background-color: rgb(255 255 255 / 8%);
+  --form-field-readonly-background-color: rgb(255 255 255 / 8%);
+
+  /* Buttons: the app's primary (strong purple, white text clears AA). */
+  --button-border-radius: 8px;
+  --button-color: #6d28d9;
+  --button-border-color: #6d28d9;
+  --button-background-color: #6d28d9;
+  --button-background-color-hover: #5b21b6;
+
+  --alert-border-color: #2b1f51;
+
+  /* The authenticator chooser is single-colour (template variable), so these
+     only matter if that is ever switched off. */
+  --authenticator-html-form-color: #6d28d9;
+  --authenticator-totp-color: #6d28d9;
+  --authenticator-username-color: #6d28d9;
+  --authenticator-passkeys-color: #6d28d9;
+}

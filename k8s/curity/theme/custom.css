@@ -1,0 +1,73 @@
+/*
+ * Rules the theme variables cannot express. Appended after theme.css via
+ * <theme-custom-css> (scripts/embed-curity-theme.sh). Keep it to the few
+ * selectors main.css hard-codes for the dark body; everything colour-shaped
+ * belongs in theme.css.
+ */
+
+/* The app's .bg-app keeps its aurora fixed while the page scrolls. */
+body {
+  background-attachment: fixed;
+}
+
+/* Frost the well like the app's cards. */
+.login-well.form-light {
+  backdrop-filter: blur(12px);
+}
+
+/* "Powered by Curity" on a dark page: white wordmark, muted rather than faded. */
+.body-dark .login-powered-by {
+  opacity: 0.45;
+}
+.body-dark .login-powered-by-logo {
+  background-image: url(/assets/images/curity-logo-white.svg);
+  filter: none;
+}
+.body-dark .login-powered-by small {
+  color: #c9c6dd;
+}
+
+/* Secondary links under the form (forgot password, create account). */
+.body-dark .login-actions a {
+  color: #c9a8ff;
+}
+.body-dark .login-actions a:hover {
+  color: #ffffff;
+}
+
+/* Consent page: scope tables and collapsible details on the dark card. */
+.body-dark details {
+  border-color: #2b1f51;
+}
+.body-dark tr:hover td {
+  background-color: #1c1440;
+}
+
+/* OTP / user-code boxes (TOTP, SMS, device flow). main.css hard-codes a white
+   background and a grey border on these — no theme variable — so the theme's
+   white input text vanished into them. Route them through the same field
+   variables the username/password inputs use. */
+input[type=text].field-enter-usercode {
+  background-color: var(--form-field-background-color);
+  border-color: var(--form-field-border-color);
+  color: var(--form-field-color);
+}
+input[type=text].field-enter-usercode:focus,
+input[type=text].field-enter-usercode-success:focus {
+  background-color: var(--form-field-background-color);
+  border-color: var(--form-field-border-color-focus);
+  box-shadow: var(--form-field-box-shadow-focus);
+}
+.field-enter-usercode-separator:after {
+  background-color: var(--form-field-border-color-hover);
+}
+
+/* Other hard-coded white surfaces in main.css that would hide white text the
+   same way (recovery dialogs, boxed wells). */
+dialog,
+.well-white,
+.well-border {
+  background-color: var(--well-background-color);
+  border-color: var(--well-border-color);
+  color: var(--color-text);
+}

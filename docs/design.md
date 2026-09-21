@@ -803,6 +803,7 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
 | **SPIRE → Curity** (actor trust) | Procedure fetches SPIRE's JWKS at runtime from the OIDC Discovery Provider | No manual step — keys are fetched per `kid` and refetched on a cache miss, so SPIRE key rotation self-heals. |
 | **Procedure → Curity config** | `embed-curity-procedures.sh` Base64-injects the JS into the configmap | `make curity-procedures` (run automatically by `make apply`) |
 | **mkcert CA → Curity truststore** | `embed-mkcert-ca.sh` embeds the mkcert root CA (with its real key `<size>`) into the configmap's `<server-truststore>` | `make curity-truststore` (run by `make apply`); machine-specific, re-run after `make certs` |
+| **Theme CSS → Curity config** | `embed-curity-theme.sh` Base64-embeds `k8s/curity/theme/{theme,custom}.css` into the configmap's `<themes><default-theme>` (Curity 11's config-native Look & Feel), so the login/consent pages carry the web app's palette | `make curity-theme` (run by `make apply`); pinned by `scripts/test-embed-curity-theme.sh` (`make test-scripts`). Apply to a running Curity via the `idsh load merge` path (§8) — no restart, no HSQLDB wipe |
 | **Curity → agent CIMD docs** | Curity dereferences each agent's `client_id` URL (metadata + JWKS) via the `cimd-fetch` http-client over the gateway | per token exchange (no manual refresh) |
 | **Edge gateway → Curity** | re-encrypt upstream with `insecureSkipVerify` (Curity's pod cert is self-signed) | static |
 
@@ -840,6 +841,17 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   throws; the structured 401 challenge rides in the task message instead.
 - **No external policy engine (OPA/Cedar).** Authorization is expressed in
   Curity claims/procedure + JWT claim checks at each resource server.
+- **Curity's pages are themed from config, not template overrides.** Curity 11
+  renders every login/consent/redirect page from `main.css` plus
+  `curity-theme.css`, a sheet of CSS custom properties, and the configmap's
+  `<themes><default-theme>` block can override them (`theme-css-properties`),
+  append free CSS (`theme-custom-css`) and set template variables
+  (`_configured_body_background=body-dark` switches on the built-in dark variant
+  with the white logo). The demo ships the web app's palette that way — no
+  Velocity overrides, no volume mounts, one more Base64-embedded source next to
+  the procedures. The font deliberately stays Curity's Roboto: the templates'
+  CSP pins `font-src 'self'` with no variable to widen it, so matching the app's
+  Figtree would mean shipping woff2 files into the pod.
 
 ### Descoped / deferred
 
