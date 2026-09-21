@@ -80,7 +80,7 @@ async function main(): Promise<void> {
 
   // Debug visibility: what agentgateway's tools/list returns for THIS caller on
   // the write tier — after the same acr pre-check + ops:write exchange a real
-  // remediation performs. Feeds the web UI's "MCP Tools Visibility" card.
+  // remediation performs. Feeds the web UI's "Tools this token can reach" card.
   app.get('/tools', buildToolsHandler(cfg));
 
   app.listen(cfg.port, () => {

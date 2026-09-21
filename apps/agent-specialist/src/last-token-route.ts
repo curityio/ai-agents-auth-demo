@@ -32,8 +32,8 @@ function decode(hop: string, token: string, includeRaw: boolean, note?: string):
 
 /**
  * Whether the aud=llm-gateway slot belongs to the run the ops:write slot came
- * from. One remediation exchanges in a fixed order — obs:read → ops:write →
- * llm:invoke — so a leaf stamped BEFORE the current ops slot was minted by an
+ * from. One remediation exchanges in a fixed order — ops:write → obs:read →
+ * llm:invoke (executor.ts) — so a leaf stamped BEFORE the current ops slot was minted by an
  * earlier run, and this one was refused before it reached the model (step-up,
  * wrong role). Without an ops slot the model was never reached at all.
  */

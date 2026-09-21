@@ -87,9 +87,9 @@ var CLIENT_POLICY = {
         scopes: ['obs:read', 'ops:write', 'llm:invoke'],
         mayAct: SPIFFE_SPECIALIST
       },
-      // Terminal: the gateway swaps in an upstream credential for Azure rather
-      // than exchanging again, so this token is never a subject_token. No next
-      // actor to name.
+      // Terminal: the gateway swaps in the configured LLM provider's upstream
+      // credential rather than exchanging again, so this token is never a
+      // subject_token. No next actor to name.
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/]

@@ -152,7 +152,7 @@ spec:
               mountPath: /etc/spiffe-helper
               readOnly: true
           # Run as UID 1000 to match the `node` user in the main container's
-          # node:20-bookworm-slim base image. spiffe-helper's older releases
+          # node:22-bookworm-slim base image. spiffe-helper's older releases
           # write SVID files with mode 0600 (owner-only) and lack a file-mode
           # config knob, so matching UIDs is the simplest path to letting the
           # main container read its own SVID.

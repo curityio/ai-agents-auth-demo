@@ -322,8 +322,9 @@ apply: curity-procedures curity-truststore render-gateway-config ## Apply all ma
 	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
 	# was removed in favour of it.
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
-	# mTLS identity. Plain apply — no JWKS snapshot needed (principal pinning is L4,
-	# no RequestAuthentication).
+	# mTLS identity + the token's audience/scope. Plain apply — its
+	# RequestAuthentication points istiod at Curity's in-cluster JWKS URL, so no
+	# JWKS snapshot step is needed.
 	kubectl apply -f k8s/istio/apis-l7-authz.yaml
 	# Re-apply observability config so Collector/dashboard edits propagate without
 	# a full Helm reinstall (tolerate a fresh cluster where the ns doesn't exist).
