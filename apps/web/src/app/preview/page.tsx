@@ -33,6 +33,8 @@ const PREVIEW: ChatPreview = {
       sub: 'spiffe://demo.curity.local/ns/web/sa/web',
       aud: ['https://curity.localtest.me/oauth/v2/oauth-token'],
       iss: 'https://oidc-discovery.demo.curity.local',
+      iat: nowSec - 105,
+      exp: nowSec + 195,
       ttl_seconds: 195,
     },
     {
@@ -40,6 +42,8 @@ const PREVIEW: ChatPreview = {
       sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot',
       aud: ['https://curity.localtest.me/oauth/v2/oauth-token'],
       iss: 'https://oidc-discovery.demo.curity.local',
+      iat: nowSec - 20,
+      exp: nowSec + 280,
       ttl_seconds: 280,
     },
     {
@@ -47,6 +51,8 @@ const PREVIEW: ChatPreview = {
       sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability',
       aud: ['https://curity.localtest.me/oauth/v2/oauth-token'],
       iss: 'https://oidc-discovery.demo.curity.local',
+      iat: nowSec - 172,
+      exp: nowSec + 128,
       ttl_seconds: 128,
     },
   ],
@@ -159,7 +165,12 @@ const PREVIEW: ChatPreview = {
         tools: [
           { name: 'restart_deployment', description: 'Rollout-restart a deployment' },
           { name: 'scale_deployment', description: 'Set replica count' },
-          { name: 'set_deployment_image', description: 'Set the container image', requiredRoles: ['sre'], callable: true },
+          {
+            name: 'set_deployment_image',
+            description: 'Set the container image',
+            requiredRoles: ['sre'],
+            callable: true,
+          },
         ],
       },
     ],

@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildLedger,
+  flowOfChain,
   flattenActChain,
   listClaim,
   mayActSub,
@@ -317,5 +318,32 @@ describe('buildLedger', () => {
     expect(rows[2]!.diff.scopesDropped).toEqual(['obs:read', 'ops:write']);
     expect(rows[2]!.diff.mayActHonoured).toBe(true);
     expect(rows[3]!.parentIndex).toBe(1);
+  });
+});
+
+describe('flowOfChain', () => {
+  const hop = (hop: string, aud: string) => ({ hop, header: {}, payload: { aud } });
+
+  it('is privileged when the chain passes through the specialist', () => {
+    const chain = [
+      hop('user → agent-copilot (inbound)', 'agent-copilot'),
+      hop('agent-copilot → agent-specialist', 'agent-specialist'),
+      hop('agent-specialist → agentgateway (/ops/mcp)', 'mcp-gateway'),
+    ];
+    expect(flowOfChain(chain)).toBe('privileged');
+  });
+
+  it('is read for the observability branch', () => {
+    const chain = [
+      hop('user → agent-copilot (inbound)', 'agent-copilot'),
+      hop('agent-copilot → agentgateway (/observability/mcp)', 'mcp-gateway'),
+      hop('mcp-observability → obs-api', 'obs-api'),
+    ];
+    expect(flowOfChain(chain)).toBe('read');
+  });
+
+  it('is undefined for an empty chain or the inbound token alone', () => {
+    expect(flowOfChain([])).toBeUndefined();
+    expect(flowOfChain([hop('user → agent-copilot (inbound)', 'agent-copilot')])).toBeUndefined();
   });
 });

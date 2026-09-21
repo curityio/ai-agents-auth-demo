@@ -185,3 +185,21 @@ export function buildLedger(chain: Array<{ hop: string; payload: JwtPayload }>):
     };
   });
 }
+
+/**
+ * Which flow a chain belongs to. The copilot's /last-token renders exactly one
+ * branch (observe XOR privileged), and only the privileged branch delegates
+ * to the specialist — so a hop naming agent-specialist decides it. Undefined
+ * when nothing beyond the inbound token has run yet.
+ */
+export function flowOfChain(
+  chain: Array<{ hop: string; payload: Record<string, unknown> | null }>,
+): 'read' | 'privileged' | undefined {
+  if (chain.length < 2) return undefined;
+  const privileged = chain.some(
+    (h) =>
+      /agent-specialist|mcp-ops|ops-api/.test(h.hop) ||
+      listClaim(h.payload?.aud).some((a) => /agent-specialist|mcp-ops|ops-api/.test(a)),
+  );
+  return privileged ? 'privileged' : 'read';
+}

@@ -5,7 +5,6 @@ import { signIn } from 'next-auth/react';
 import {
   AlertTriangle,
   ChevronUp,
-  Clock,
   Eye,
   Fingerprint,
   Layers,
@@ -32,9 +31,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { JsonBlock } from '@/components/json-block';
 import { Markdown } from '@/components/markdown';
+import { WorkloadIdentities } from '@/components/workload-identities';
+import { FlowBadge } from '@/components/flow-badge';
+import { flowOfChain } from '@/lib/token-view';
+import { rotatedWorkloads, type SvidView } from '@/lib/svid-view';
 import { ResultSkeleton } from '@/components/result-skeleton';
 import { friendlyFetchError } from '@/lib/fetch-error';
-import { flowOf, panelsToRefresh, SUGGESTIONS } from '@/lib/chat-rules';
+import { flowOf, panelsToRefresh, SUGGESTIONS, type Flow } from '@/lib/chat-rules';
 import { stashStepUp, takeStepUpReturn, type StepUpReturn } from '@/lib/step-up-return';
 import type { TraceStep as AgentStep } from '@/lib/trace-view';
 import {
@@ -61,17 +64,6 @@ interface AgentResponse {
 interface StepUpState {
   acrValues: string;
   scope: string;
-}
-
-interface SvidView {
-  workload: string;
-  sub?: string;
-  aud?: string | string[];
-  iss?: string;
-  iat?: number;
-  exp?: number;
-  ttl_seconds?: number;
-  error?: string;
 }
 
 interface SpiffeIdentitiesResponse {
@@ -111,6 +103,10 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
   const [mfaReturn, setMfaReturn] = useState<StepUpReturn | null>(null);
 
   const [svids, setSvids] = useState<SvidView[] | null>(preview?.svids ?? null);
+  const [svidFlow, setSvidFlow] = useState<Flow>('read');
+  // Workloads whose SVID was re-issued between the previous view and this one:
+  // shows spiffe-helper rotation happening, rather than asserting it.
+  const [svidRotated, setSvidRotated] = useState<Set<string>>(new Set());
   const [svidLoading, setSvidLoading] = useState(false);
   const [svidError, setSvidError] = useState<string | null>(null);
 
@@ -201,7 +197,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
     }
   }
 
-  async function loadSvids(flowOverride?: 'read' | 'privileged') {
+  async function loadSvids(flowOverride?: Flow) {
+    const before = svids;
     setSvidLoading(true);
     setSvidError(null);
     setSvids(null);
@@ -216,6 +213,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
         return;
       }
       const body = (await r.json()) as SpiffeIdentitiesResponse;
+      setSvidFlow(flow);
+      setSvidRotated(rotatedWorkloads(before, body.workloads));
       setSvids(body.workloads);
     } catch (e) {
       setSvidError(String(e));
@@ -520,7 +519,8 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
               <CardDescription className="max-w-xl">
                 Each pod carries its own SPIFFE JWT-SVID, distinct from the user token.
                 These serve as the <code className="font-mono">actor_token</code> in the RFC 8693
-                token exchange that delegates the user’s authority down the chain.
+                token exchange that delegates the user’s authority down the chain. Shown in
+                chain order for the flow you last ran.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -547,30 +547,7 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 </AlertDescription>
               </Alert>
             )}
-            {svids && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {svids.map((s) => (
-                  <div key={s.workload} className="rounded-xl border border-border bg-secondary/60 p-4 transition-shadow hover:shadow-md">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="font-mono text-sm font-semibold">{s.workload}</span>
-                      {!s.error && typeof s.ttl_seconds === 'number' && (
-                        <Badge variant="muted" className="gap-1 font-mono">
-                          <Clock className="h-3 w-3" />
-                          ttl {s.ttl_seconds}s
-                        </Badge>
-                      )}
-                    </div>
-                    {s.error ? (
-                      <p className="text-sm text-destructive">{s.error}</p>
-                    ) : (
-                      <JsonBlock
-                        data={{ sub: s.sub, aud: s.aud, iss: s.iss, ttl_seconds: s.ttl_seconds }}
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            {svids && <WorkloadIdentities svids={svids} flow={svidFlow} rotated={svidRotated} />}
           </CardContent>
         )}
       </Card>
@@ -620,7 +597,24 @@ export function Chat({ preview }: { preview?: ChatPreview } = {}) {
                 No hops yet — ask the copilot a question first, then refresh.
               </p>
             )}
-            {obo && obo.chain.length > 0 && <DelegationLedger chain={obo.chain} />}
+            {obo && obo.chain.length > 0 && (
+              <div className="space-y-4">
+                {(() => {
+                  const flow = flowOfChain(obo.chain);
+                  return flow ? (
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <FlowBadge flow={flow} />
+                      <span>
+                        {flow === 'privileged'
+                          ? 'The copilot delegated to the specialist, which acted through mcp-ops.'
+                          : 'The copilot read through mcp-observability on its own.'}
+                      </span>
+                    </div>
+                  ) : null;
+                })()}
+                <DelegationLedger chain={obo.chain} />
+              </div>
+            )}
           </CardContent>
         )}
       </Card>
