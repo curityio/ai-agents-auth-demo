@@ -77,6 +77,8 @@ export const authConfig: NextAuthConfig = {
       // The claims the next request will carry (sub/roles/acr) — decoded here
       // so the Ask card can state them before Send. Not the token itself.
       session.asking = identityFromAccessToken(token.accessToken);
+      // Access-token expiry (seconds since epoch) — the header counts it down.
+      session.tokenExpiresAt = token.expiresAt;
       return session;
     },
   },
@@ -98,5 +100,6 @@ declare module 'next-auth' {
   }
   interface Session {
     asking?: Asking;
+    tokenExpiresAt?: number;
   }
 }

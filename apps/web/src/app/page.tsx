@@ -10,7 +10,13 @@ export default async function Home() {
   const displayName = session?.user?.name ?? session?.user?.email ?? session?.user?.id ?? '';
 
   return (
-    <AppShell signedIn={!!session} displayName={displayName} email={session?.user?.email}>
+    <AppShell
+      signedIn={!!session}
+      displayName={displayName}
+      email={session?.user?.email}
+      acr={session?.asking?.acr}
+      tokenExpiresAt={session?.tokenExpiresAt}
+    >
       {session ? (
         <Chat asking={session.asking} />
       ) : (

@@ -57,10 +57,21 @@ interface AppShellProps {
   signedIn: boolean;
   displayName?: string | null;
   email?: string | null;
+  /** acr of the current access token, shown on the user pill. */
+  acr?: string;
+  /** Access-token expiry (seconds since epoch), counted down in the user menu. */
+  tokenExpiresAt?: number;
   children: ReactNode;
 }
 
-export function AppShell({ signedIn, displayName, email, children }: AppShellProps) {
+export function AppShell({
+  signedIn,
+  displayName,
+  email,
+  acr,
+  tokenExpiresAt,
+  children,
+}: AppShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
@@ -84,6 +95,8 @@ export function AppShell({ signedIn, displayName, email, children }: AppShellPro
               name={displayName ?? ''}
               email={email ?? undefined}
               debug={process.env.AUTH_DEBUG === 'true'}
+              acr={acr}
+              expiresAt={tokenExpiresAt}
             />
           ) : (
             <SignInButton size="sm" />

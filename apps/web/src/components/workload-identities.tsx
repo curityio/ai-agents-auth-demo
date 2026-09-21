@@ -1,12 +1,13 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment } from 'react';
 import { Clock, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { FlowBadge } from '@/components/flow-badge';
 import { JsonBlock } from '@/components/json-block';
 import { cn } from '@/lib/utils';
+import { useNow } from '@/lib/use-now';
 import type { Flow } from '@/lib/chat-rules';
 import { lifetime, sharedFacts, svidNamespace, type SvidView } from '@/lib/svid-view';
 
@@ -34,16 +35,6 @@ function fmtSeconds(s: number): string {
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return rem ? `${m}m ${rem}s` : `${m}m`;
-}
-
-/** Same 1s clock as the ledger: SVIDs rotate, so the lifetime should be seen moving. */
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
 }
 
 function LifetimeBadge({ s, now }: { s: SvidView; now: number }) {
