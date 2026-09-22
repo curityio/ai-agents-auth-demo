@@ -10,8 +10,10 @@ import { UserMenu } from '@/components/user-menu';
 // Each claim links to the panel that proves it (ids live on the cards in
 // chat.tsx). Signed out, the panels do not exist, so the chips stay inert.
 // Icon colours reuse meanings the page already has: lilac = identity (the
-// workload boxes), amber = exchange (the dashed legend line), the headline's
-// pink = MFA, green = live/verified (the demo dot).
+// workload boxes), fuchsia = exchange (a tint nothing else on the page uses —
+// amber is taken: it means PRIVILEGED on the stage and step-up everywhere
+// below, so the exchange chip must not wear it), the headline's pink = MFA,
+// green = live/verified (the demo dot).
 const CAPABILITIES = [
   {
     icon: Fingerprint,
@@ -19,7 +21,12 @@ const CAPABILITIES = [
     target: '#identities',
     tint: 'text-accent-violet',
   },
-  { icon: KeyRound, label: 'RFC 8693 token exchange', target: '#chain', tint: 'text-warn' },
+  {
+    icon: KeyRound,
+    label: 'RFC 8693 token exchange',
+    target: '#chain',
+    tint: 'text-accent-fuchsia',
+  },
   { icon: ShieldAlert, label: 'RFC 9470 step-up MFA', target: '#ask', tint: 'text-[#F7B9DE]' },
   { icon: Radar, label: 'OpenTelemetry tracing', target: '#result', tint: 'text-success' },
 ];
@@ -165,14 +172,26 @@ export function AppShell({
             />
             <span>· SPIFFE · Istio Ambient — AI agent authentication &amp; authorization demo</span>
           </span>
-          {signedIn && process.env.AUTH_DEBUG === 'true' && (
+          <span className="flex items-center gap-4">
+            {signedIn && process.env.AUTH_DEBUG === 'true' && (
+              <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                <Link href="/inspect">
+                  Inspect session
+                  <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              </Button>
+            )}
             <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-              <Link href="/inspect">
-                Inspect session
+              <a
+                href="https://github.com/curityio/ai-agents-auth-demo"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Source on GitHub
                 <ArrowUpRight className="h-3 w-3" />
-              </Link>
+              </a>
             </Button>
-          )}
+          </span>
         </div>
       </footer>
     </div>

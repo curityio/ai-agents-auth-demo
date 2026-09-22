@@ -34,6 +34,23 @@ describe('HeroStage', () => {
     expect(html).toMatch(/token exchange · RFC 8693/);
     expect(html).toMatch(/carrying the token it was issued/);
   });
+  it('names the tier each right-hand row is, in that tier\'s colour', () => {
+    expect(html).toMatch(/data-tier-label="read"[^>]*>read tier · obs:read</);
+    expect(html).toMatch(/data-tier-label="privileged"[^>]*>write tier · ops:write · acr=mfa</);
+    // Above the top row and below the bottom one — never on the request path.
+    expect(html).toMatch(/data-tier-label="read"[^>]*y="5\d(\.\d+)?"/);
+    expect(html).toMatch(/data-tier-label="privileged"[^>]*y="26\d(\.\d+)?"/);
+  });
+  it('explains the packet colours: lilac is a read, amber is privileged', () => {
+    expect(html).toMatch(/read · obs:read/);
+    expect(html).toMatch(/privileged · ops:write, acr=mfa/);
+  });
+  it('keeps the exchange legend swatch neutral — an exchange takes its request\'s tier colour', () => {
+    const swatch = html.match(/<i[^>]*data-legend-exchange[^>]*>/)?.[0] ?? '';
+    expect(swatch).toMatch(/border-dashed/);
+    expect(swatch).toMatch(/border-white/);
+    expect(swatch).not.toMatch(/hsl\(32/); // no amber
+  });
   it('renders its footer slot beside the legend', () => {
     const withFooter = renderToStaticMarkup(
       <HeroStage signedIn footer={<span data-footer-probe />} />,
@@ -89,7 +106,9 @@ describe('AppShell hero', () => {
       return m?.[1] ?? '';
     };
     expect(icon('SPIFFE workload identity')).toMatch(/text-accent-violet/);
-    expect(icon('RFC 8693 token exchange')).toMatch(/text-warn/);
+    // Not amber: amber means privileged on the stage and step-up below it.
+    expect(icon('RFC 8693 token exchange')).toMatch(/text-accent-fuchsia/);
+    expect(icon('RFC 8693 token exchange')).not.toMatch(/text-warn/);
     expect(icon('RFC 9470 step-up MFA')).toMatch(/text-\[#F7B9DE\]/);
     expect(icon('OpenTelemetry tracing')).toMatch(/text-success/);
     expect(icon('OpenTelemetry tracing')).toMatch(/h-4 w-4/);
@@ -102,6 +121,18 @@ describe('AppShell hero', () => {
     );
     expect(out).not.toMatch(/href="#identities"/);
     expect(out).toContain('SPIFFE workload identity');
+  });
+  it('links to the public source from the footer, signed in or out', () => {
+    for (const signedIn of [true, false]) {
+      const out = renderToStaticMarkup(
+        <AppShell signedIn={signedIn}>
+          <div />
+        </AppShell>,
+      );
+      expect(out).toMatch(
+        /<a[^>]*href="https:\/\/github\.com\/curityio\/ai-agents-auth-demo"[^>]*rel="noreferrer"[^>]*>[\s\S]*?Source on GitHub/,
+      );
+    }
   });
 });
 

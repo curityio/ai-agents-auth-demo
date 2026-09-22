@@ -84,6 +84,21 @@ export const EDGES: [NodeId, NodeId][] = [
   ['mcp-ops', 'ops-api'],
 ];
 
+/**
+ * The two right-hand rows ARE the two tiers, but nothing in the picture said so.
+ * One faint label per row, centred over the mcp/api pair, stating the scope that
+ * row requires. Derived from the row geometry so a layout change moves them.
+ */
+export const TIER_LABELS: readonly { tone: Tone; text: string; x: number; y: number }[] = [
+  { tone: 'read', text: 'read tier · obs:read', x: (504 + 622) / 2, y: ROW.top - NH / 2 - 8 },
+  {
+    tone: 'privileged',
+    text: 'write tier · ops:write · acr=mfa',
+    x: (504 + 622) / 2,
+    y: ROW.bottom + NH / 2 + 14,
+  },
+];
+
 export const edgeId = (a: NodeId, b: NodeId) => `${a}|${b}`;
 
 export function nodeById(id: string): TopoNode {
@@ -132,7 +147,13 @@ export type Step = {
   lit: NodeId[];
   edges: string[];
   links: NodeId[];
-  /** Node and edge ids lit while carrying the privileged token → drawn amber. */
+  /**
+   * Node, edge and link ids drawn amber. On the privileged journey this is
+   * everything lit so far: alice's token carries ops:write + acr=mfa from the
+   * step-up on, so the whole run is the write tier — the legend's rule, "amber =
+   * privileged", has to hold on every leg, including the copilot's exchange and
+   * the drop TO Curity, not just the return. On the read journey it is empty.
+   */
   amber: string[];
   glow: boolean;
   tone: Tone;
@@ -148,8 +169,6 @@ type Hop = {
   /** Exchange captions, when `from` re-mints before it moves on. */
   ask?: string;
   issued?: string;
-  /** From this exchange on, the packet carries the privileged token. */
-  privileged?: boolean;
   carry: string;
 };
 
@@ -159,17 +178,21 @@ class Script {
   private lit = new Set<NodeId>();
   private edges = new Set<string>();
   private links = new Set<NodeId>();
-  private amber = new Set<string>();
-  private tone: Tone = 'read';
 
-  private push(p: Omit<Step, 'lit' | 'edges' | 'links' | 'amber' | 'tone'> & { tone?: Tone }) {
-    if (p.tone) this.tone = p.tone;
+  constructor(private readonly tone: Tone) {}
+
+  private push(p: Omit<Step, 'lit' | 'edges' | 'links' | 'amber' | 'tone'>) {
+    const lit = [...this.lit];
+    const edges = [...this.edges];
+    const links = [...this.links];
     this.steps.push({
       ...p,
-      lit: [...this.lit],
-      edges: [...this.edges],
-      links: [...this.links],
-      amber: [...this.amber],
+      lit,
+      edges,
+      links,
+      // The tone is a property of the journey, not of a hop: colour everything
+      // lit so far, so no leg of a privileged run is ever drawn lilac.
+      amber: this.tone === 'privileged' ? [...lit, ...edges, ...links] : [],
       tone: this.tone,
     });
   }
@@ -192,7 +215,7 @@ class Script {
   }
 
   /** Down to Curity and back, lighting the dashed link. */
-  exchange(from: NodeId, ask: string, issued: string, privileged?: boolean) {
+  exchange(from: NodeId, ask: string, issued: string) {
     const pts = linkPathOf(from);
     const down = pts.slice(1);
     const up = [...pts].reverse().slice(1);
@@ -214,7 +237,6 @@ class Script {
       packet: true,
     });
     const back = up[up.length - 1];
-    if (privileged) this.amber.add(from);
     this.push({
       at: from,
       x: back.x,
@@ -226,7 +248,6 @@ class Script {
       caption: `Curity → ${from} · ${issued}`,
       glow: false,
       packet: true,
-      tone: privileged ? 'privileged' : undefined,
     });
   }
 
@@ -237,10 +258,6 @@ class Script {
     const ms = Math.round(Math.max(380, Math.hypot(b.x - a.x, b.y - a.y) * 2.4));
     this.edges.add(edgeId(from, to));
     this.lit.add(to);
-    if (this.tone === 'privileged') {
-      this.amber.add(edgeId(from, to));
-      this.amber.add(to);
-    }
     this.push({
       at: to,
       x: b.x,
@@ -274,7 +291,7 @@ class Script {
 
   run(hops: Hop[]) {
     for (const h of hops) {
-      if (h.ask && h.issued) this.exchange(h.from, h.ask, h.issued, h.privileged);
+      if (h.ask && h.issued) this.exchange(h.from, h.ask, h.issued);
       this.travel(h.from, h.to, h.carry);
     }
     return this;
@@ -328,7 +345,6 @@ const PRIVILEGED_HOPS: Hop[] = [
     to: 'agentgateway',
     ask: 'asks for aud=mcp-gateway scope=ops:write · role sre + acr=mfa required (RFC 9470)',
     issued: 'issued aud=mcp-gateway scope=ops:write acr=mfa · act: agent-specialist, agent-copilot',
-    privileged: true,
     carry: 'agent-specialist → agentgateway · carrying the privileged token',
   },
   {
@@ -348,7 +364,7 @@ const PRIVILEGED_HOPS: Hop[] = [
 ];
 
 export function buildJourney(kind: Tone): Step[] {
-  const s = new Script();
+  const s = new Script(kind);
   if (kind === 'read') {
     s.start(
       'web',

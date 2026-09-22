@@ -48,22 +48,27 @@ Three users are seeded in Curity. Each one is built so that exactly **one**
 gate says no, and each of those gates lives in a different component — that is
 the whole point of having three:
 
-| User | Who they are | Role | MFA | The one gate that decides | Enforced by |
-|---|---|---|---|---|---|
-| **alice** | Alice Andersson, SRE lead · `alice@demo.curity.local` | `sre` | on-demand step-up | authentication strength (`acr=mfa`) | specialist pre-check, Curity's TIA behind it |
-| **bob** | Bob Bergström, backend developer, **owns `order-service`** · `bob@demo.curity.local` | `developer` | forced login MFA | write-tier role | Curity's token-exchange procedure |
-| **carol** | Carol Carlsson, on-call engineer **this week** · `carol@demo.curity.local` | `oncall` | forced login MFA | per-tool role (`sre` for set image) | `mcp-ops` (gateway 403 in front) |
+| User | Who they are | Role | The one gate that decides | Enforced by |
+|---|---|---|---|---|
+| **alice** | Alice Andersson, SRE lead · `alice@demo.curity.local` | `sre` | authentication strength (`acr=mfa`) | specialist pre-check, Curity's TIA behind it |
+| **bob** | Bob Bergström, backend developer, **owns `order-service`** · `bob@demo.curity.local` | `developer` | write-tier role | Curity's token-exchange procedure |
+| **carol** | Carol Carlsson, on-call engineer **this week** · `carol@demo.curity.local` | `oncall` | per-tool role (`sre` for set image) | `mcp-ops` (gateway 403 in front) |
+
+**Everyone signs in with a password and steps up exactly once**, at the first
+privileged action (RFC 9470, `acr_values=mfa`). Nobody is forced through a
+second factor at login — that used to be the case for bob and carol, but a
+second factor run as an authentication *action* leaves the token at
+`acr=html-form`, so the step-up fired anyway and they typed a TOTP twice. The
+three stories stay distinct because the **verdict after the step-up** differs.
 
 Outcomes: alice can read and, after step-up, restart *and* set image (the happy
-path). bob can read — including his own service's logs — but is **denied
-`ops:write` entirely**, even though he has the strongest login of the three.
-carol can read, restart and scale, but `set_deployment_image` is **denied** at
-`mcp-ops`: authz is per-tool, not just per-tier. Names and emails are what you
-type when you register the accounts ([`curity-seed.md`](curity-seed.md)
-§Accounts) — the header pill shows them, so keep them consistent across
-re-seeds. bob and carol have *forced* login MFA on purpose: it removes the
-step-up beat from their stories, so nobody in the room can confuse "you didn't
-MFA" with "you aren't allowed".
+path). bob can read — including his own service's logs — and after the same
+step-up is **denied `ops:write` entirely**: he proved MFA seconds earlier and
+is still refused. carol can read, restart and scale after her step-up, but
+`set_deployment_image` is **denied** at `mcp-ops`: authz is per-tool, not just
+per-tier. Names and emails are what you type when you register the accounts
+([`curity-seed.md`](curity-seed.md) §Accounts) — the header pill shows them, so
+keep them consistent across re-seeds.
 
 The target is the `prod` namespace, which holds two remediable sample
 deployments named like real microservices: **`order-service`** and
@@ -176,32 +181,32 @@ the specialist fanning out to **both** `mcp-observability` (read) and `mcp-ops`
 
 ### Act 3 — Denial (authn ≠ authz)
 
-> Bob logs in (forced MFA — he cannot even get past login without his TOTP),
-> and first clicks *Show recent logs for the checkout-service deployment in
-> prod* — or asks for `order-service`'s logs, the service he owns. Then he asks
-> to *restart the order-service deployment in prod*.
+> Bob logs in with his password and first clicks *Show recent logs for the
+> checkout-service deployment in prod* — or asks for `order-service`'s logs, the
+> service he owns. Then he asks to *restart the order-service deployment in
+> prod*.
 
 Run the **read first**. It succeeds: bob holds `obs:read` like everyone else,
 and the developer who owns `order-service` can of course see its logs. Then the
-restart: Bob's MFA *succeeded*, his `acr` is already `mfa` — but the very first
-token exchange fails with **`access_denied`** because Bob holds no write role
-(`sre`/`oncall`). **Expected:** logs, then a clear "you authenticated, but you're
-not authorized" message.
+restart: the step-up fires exactly as it did for alice, bob enters his TOTP and
+comes back with `acr=mfa` — and the very first token exchange fails with
+**`access_denied`** because Bob holds no write role (`sre`/`oncall`).
+**Expected:** logs, then an MFA prompt, then a clear "you authenticated, but
+you're not authorized" message.
 
 Two teaching points, in this order. First, **authorization is per scope, not per
 user**: the same bob, the same session, the same token, is granted `obs:read` and
 refused `ops:write` — owning the service does not buy a prod write. Second, and
-this is the line the whole story is built on: **bob has the strongest login of
-the three** (forced MFA, no step-up needed) **and is still refused**.
-Authentication strength and authorization grant are different things, decided
-in different places — here, by Curity's exchange procedure, before any agent
-gets a privileged token to misuse.
+this is the line the whole story is built on: **bob proved MFA seconds ago and is
+still refused**. Authentication strength and authorization grant are different
+things, decided in different places — here, by Curity's exchange procedure,
+before any agent gets a privileged token to misuse.
 
 ### Act 4 — Per-tool authorization (carol) — authz is finer than the tier
 
-> Carol logs in (forced login MFA), restarts `order-service` successfully, then
-> asks: *"Change the image of order-service to busybox:1.36"* (or clicks the
-> *Update order-service to image busybox:1.36 …* chip).
+> Carol logs in with her password, restarts `order-service` (one step-up, then
+> success), then asks: *"Change the image of order-service to busybox:1.36"* (or
+> clicks the *Update order-service to image busybox:1.36 …* chip).
 
 Carol holds `oncall`, so Curity grants her `ops:write` and the restart succeeds.
 But when the specialist calls `set_deployment_image`, the call is refused with a
@@ -343,6 +348,19 @@ and **carol** for the per-tool split (Act 4).
 
 The page is built to be narrated top to bottom:
 
+- **Signed out: the three seeded users.** Below the hero, one card per persona
+  (name, job, `roles`, a verdict badge and one sentence of what will happen) with a *Sign in as …* button each — so the room learns the three-act
+  structure before the first login. The button sends `login_hint` (Curity
+  pre-fills the username) and `prompt=login`: signing out of the app clears only
+  its own cookie, so without that Curity's SSO session would silently sign the
+  *previous* person back in. The sheet is `apps/web/src/lib/personas.ts`; a test
+  pins its roles to `add-roles.js` so the cards can never promise a role Curity
+  does not assign.
+- **Hero legend.** Two swatches name what the packet's colour means (lilac =
+  read, amber = privileged) and the right-hand rows are labelled *read tier ·
+  obs:read* / *write tier · ops:write · acr=mfa*. The animation starts paused
+  for visitors who prefer reduced motion; the button plays it.
+
 - **Header pill.** The signed-in user's pill carries the `acr` of the current
   access token (green `mfa` after step-up, muted otherwise) — the header is the
   only sticky element, so the proof of step-up stays visible while you scroll.
@@ -352,7 +370,10 @@ The page is built to be narrated top to bottom:
   expired*.
 - **Hero.** An animated stage of the delegation chain: one packet walks a read
   request and then a privileged one, dropping to Curity for every RFC 8693
-  exchange and turning amber from the specialist's `acr=mfa` exchange on. It has
+  exchange. The read run is lilac throughout and the privileged run amber
+  throughout, exchange drops included — alice's token carries `ops:write` +
+  `acr=mfa` from the step-up on, so amber is the journey's tier, never a hop's
+  state. It has
   a play/pause button; signed in, each node (and each capability chip) jumps to
   the panel below that proves it.
 - **Ask the copilot.** Example prompts sit under **Observe** (read tier, one

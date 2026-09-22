@@ -24,6 +24,28 @@ const box = (id: string) => {
   };
 };
 
+describe('exchange colouring', () => {
+  it('lights exchange links on the read journey with nothing marked amber', () => {
+    // The stage colours a lit link by whether its workload is in `amber`, so the
+    // read loop must light links (exchanges happen) while `amber` stays empty.
+    const read = buildJourney('read');
+    expect(read.some((s) => s.links.length > 0)).toBe(true);
+    for (const s of read) expect(s.amber).toEqual([]);
+  });
+  it('colours EVERY lit node, edge and link amber on the privileged journey, from the first step', () => {
+    // alice's token carries ops:write + acr=mfa from the step-up on, so no leg of
+    // the privileged run — not the copilot's exchange, not the drop TO Curity —
+    // may be drawn lilac. Amber is the journey's tone, not a hop's.
+    const priv = buildJourney('privileged');
+    for (const s of priv) {
+      for (const id of [...s.lit, ...s.edges, ...s.links]) expect(s.amber, s.caption).toContain(id);
+    }
+    expect(priv[0]!.amber).toContain('web');
+    const copilotAsk = priv.find((s) => s.caption.startsWith('agent-copilot → Curity'));
+    expect(copilotAsk?.amber).toContain('agent-copilot');
+  });
+});
+
 describe('topology', () => {
   it('routes the mcp-observability exchange around mcp-ops, not through it', () => {
     const ops = box('mcp-ops');
@@ -88,11 +110,10 @@ describe('buildJourney', () => {
     expect(read[read.length - 1].at).toBe('obs-api');
     expect(priv[priv.length - 1].at).toBe('ops-api');
   });
-  it('the privileged journey carries the MFA gate and amber tone from the specialist on', () => {
+  it('the privileged journey names the MFA gate at Curity and is privileged-toned throughout', () => {
     const gate = priv.find((s) => s.caption.includes('acr=mfa'));
     expect(gate?.at).toBe('curity');
-    const after = priv.slice(priv.indexOf(gate!) + 1);
-    expect(after.every((s) => s.tone === 'privileged')).toBe(true);
+    expect(priv.every((s) => s.tone === 'privileged')).toBe(true);
     expect(read.every((s) => s.tone === 'read')).toBe(true);
   });
   it('lights nodes cumulatively and glows Curity only while the packet is there', () => {

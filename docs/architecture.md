@@ -303,7 +303,7 @@ role gate accepts `sre` **or** `oncall`; that gate makes
 `restart_deployment`/`scale_deployment` available to any `ops:write` caller
 (`oncall` or `sre`). The finer `set_deployment_image` = `sre`-only split is
 enforced **downstream at `mcp-ops`**, not at the gateway — the gateway lists all
-ops tools for any `ops:write` caller. So **Carol** (`[oncall]`, forced login-MFA)
+ops tools for any `ops:write` caller. So **Carol** (`[oncall]`, after the same step-up)
 can restart or scale, and *sees* `set_deployment_image` in `tools/list`, but the
 call is refused at `mcp-ops` (a legible role-denial the specialist relays).
 

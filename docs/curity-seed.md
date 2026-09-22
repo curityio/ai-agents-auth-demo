@@ -73,14 +73,23 @@ name and email fields: the web app's header pill shows them, and Curity's
 in-memory store is wiped on every Curity restart (fact #15), so a fixed sheet
 keeps the demo looking the same across re-seeds.
 
-| Username | Display name | Email | Who they are | Password | Roles | MFA | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `alice` | Alice Andersson | `alice@demo.curity.local` | SRE lead | (your choice) | `sre` | TOTP enrolled, **not** forced | Happy-path SRE and the step-up user. Logs in with a password; `ops:write` triggers the on-demand RFC 9470 `acr=mfa` challenge. May use **all** ops tools incl. `set_deployment_image`. `sre` alone passes both gates — she deliberately has no second role. |
-| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | (your choice) | `developer` | TOTP enrolled, **forced** at login | Counter-example. Can read his own service's logs (`obs:read`), but the role gate denies `ops:write` entirely — even though forced MFA gives him the strongest login of the three. Nothing reads `developer`; it exists to be *not* a write role. |
-| `carol` | Carol Carlsson | `carol@demo.curity.local` | On-call engineer this week | (your choice) | `oncall` | TOTP enrolled, **forced** at login | Holds a write role, so gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is denied downstream at **mcp-ops** (`sre`-only). She *sees* the tool in `tools/list` — the gateway lists all ops tools — the **call** is what's refused. "This week" is the talking point: `oncall` is a role attached to a rotation, not a person. |
+| Username | Display name | Email | Who they are | Password | Roles | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `alice` | Alice Andersson | `alice@demo.curity.local` | SRE lead | (your choice) | `sre` | Happy-path SRE. `ops:write` triggers the on-demand RFC 9470 `acr=mfa` challenge; after it she may use **all** ops tools incl. `set_deployment_image`. `sre` alone passes both gates — she deliberately has no second role. |
+| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | (your choice) | `developer` | Counter-example. Can read his own service's logs (`obs:read`); a restart steps him up like everyone else and is THEN refused by the role gate — he proved MFA and still gets no `ops:write`. Nothing reads `developer`; it exists to be *not* a write role. |
+| `carol` | Carol Carlsson | `carol@demo.curity.local` | On-call engineer this week | (your choice) | `oncall` | Holds a write role, so after the step-up gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is denied downstream at **mcp-ops** (`sre`-only). She *sees* the tool in `tools/list` — the gateway lists all ops tools — the **call** is what's refused. "This week" is the talking point: `oncall` is a role attached to a rotation, not a person. |
 
-Forced login MFA for bob and carol is deliberate: it removes the step-up beat from
-their stories so an audience cannot confuse "didn't MFA" with "not allowed".
+All three enrol TOTP (the step-up needs it) and **none is forced through it at
+login**. bob and carol used to be (`requireSecondFactor` in `add-roles.js`), but a
+second factor run as an authentication *action* leaves the token's `acr` at the
+primary authenticator's `html-form`, so the `ops:write` TIA stripped the scope and
+the step-up fired anyway — a TOTP typed twice for nothing. Everyone now steps up
+exactly once, at the first privileged action, via the `totp-authn` authenticator
+whose ACR is `mfa`.
+
+The signed-out landing page shows this same sheet as three *Sign in as …* cards
+(`apps/web/src/lib/personas.ts`, roles pinned to `add-roles.js` by a test). Each
+button passes the username as `login_hint`, so Curity's form opens pre-filled.
 
 > Roles are assigned by `k8s/curity/procedures/add-roles.js` keyed on username, so the
 > account **usernames must be exactly** `alice`, `carol`, `bob`. The write-tier gate

@@ -441,7 +441,7 @@ MCP servers, replacing the former Istio ambient waypoint.
   §2 mcp-ops), which checks the caller's `roles` claim before the ops-api hop and
   returns a legible role-denial the specialist relays. Demo users:
   alice=`[sre]` (password-only → step-up demo), bob=`[developer]` (denied
-  `ops:write` at the Curity exchange), carol=`[oncall]` (forced login-MFA; can
+  `ops:write` at the Curity exchange), carol=`[oncall]` (steps up like everyone; can
   restart/scale, and *sees* `set_deployment_image` in `tools/list` but the call is
   refused at mcp-ops).
 - **extAuthz → exchange-shim = the OBO hop.** For each tool-call the gateway makes

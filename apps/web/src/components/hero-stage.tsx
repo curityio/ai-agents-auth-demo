@@ -18,6 +18,7 @@ import {
   EDGES,
   IDLE_LOOP,
   NODES,
+  TIER_LABELS,
   VIEW,
   edgeId,
   edgePoint,
@@ -102,6 +103,14 @@ export function HeroStage({
   initiallyPaused?: boolean;
 }) {
   const [stopped, setStopped] = useState(initiallyPaused);
+  // Honour prefers-reduced-motion by starting stopped. Decided after mount, not
+  // in the initialiser: the server cannot know the preference, and a mismatch
+  // would flip the button between server and client markup. The button still
+  // plays it on request.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('matchMedia' in window)) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) setStopped(true);
+  }, []);
   const { step, pos } = usePlayer(IDLE_LOOP, stopped);
   const lit = new Set<string>(step.lit);
   const edges = new Set(step.edges);
@@ -138,9 +147,13 @@ export function HeroStage({
           </filter>
         </defs>
 
-        {/* control plane: the exchange side trips */}
+        {/* control plane: the exchange side trips. An exchange belongs to the
+            request that triggered it, so a lit link takes that request's tier
+            colour (lilac read, amber privileged) — the dash pattern alone says
+            "exchange". Amber must not mean two things on one stage. */}
         {NODES.filter((n) => n.exchanges).map((n) => {
           const on = links.has(n.id);
+          const color = amber.has(n.id) ? AMBER : LILAC;
           return (
             <polyline
               key={n.id}
@@ -149,7 +162,7 @@ export function HeroStage({
               points={linkPathOf(n.id)
                 .map((p) => `${p.x},${p.y}`)
                 .join(' ')}
-              stroke={on ? AMBER : 'hsl(0 0% 100% / 0.22)'}
+              stroke={on ? color : 'hsl(0 0% 100% / 0.22)'}
               strokeWidth={on ? 1.4 : 1}
               strokeDasharray="3 4"
               style={{ transition: 'stroke .3s' }}
@@ -179,6 +192,23 @@ export function HeroStage({
             />
           );
         })}
+
+        {/* the two tiers, named: the rows carry the scope split */}
+        {TIER_LABELS.map((l) => (
+          <text
+            key={l.tone}
+            data-tier-label={l.tone}
+            x={l.x}
+            y={l.y}
+            textAnchor="middle"
+            fontSize={7.5}
+            letterSpacing="0.04em"
+            fontFamily="var(--font-mono), ui-monospace, monospace"
+            fill={l.tone === 'privileged' ? 'hsl(32 90% 59% / 0.75)' : 'hsl(263 100% 83% / 0.7)'}
+          >
+            {l.text}
+          </text>
+        ))}
 
         {/* the authorization server: off the request path, at the bottom */}
         <Jump href="#chain" enabled={signedIn}>
@@ -270,14 +300,24 @@ export function HeroStage({
       <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         {footer}
         <p className="ml-auto flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-white/60">
+          {/* The packet's colour is the tier — the legend has to say so. */}
+          <span className="inline-flex items-center gap-2">
+            <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: LILAC }} />
+            read · obs:read
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: AMBER }} />
+            privileged · ops:write, acr=mfa
+          </span>
           <span className="inline-flex items-center gap-2">
             <i className="inline-block h-0 w-6 border-t-[1.5px]" style={{ borderColor: LILAC }} />
             request, carrying the token it was issued
           </span>
           <span className="inline-flex items-center gap-2">
+            {/* Neutral on purpose: the exchange takes the tier colour of its request. */}
             <i
-              className="inline-block h-0 w-6 border-t border-dashed"
-              style={{ borderColor: AMBER }}
+              data-legend-exchange
+              className="inline-block h-0 w-6 border-t border-dashed border-white/60"
             />
             token exchange · RFC 8693
           </span>
