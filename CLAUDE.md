@@ -290,8 +290,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       it from an `oncall` caller and the specialist LLM (never seeing the tool) would loop
       silently instead of surfacing a denial. So the fine-grained
       `set_deployment_image`=`sre` split is enforced DOWNSTREAM at **mcp-ops**
-      (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`;
-      logic in `apps/mcp-ops/src/mcp.ts` `imageRoleDenial`), which checks the caller's
+      (`Config.toolRequiredRoles`, env `TOOL_REQUIRED_ROLES` — a per-tool matrix,
+      default `restart_deployment`/`scale_deployment` → `sre` or `oncall`,
+      `set_deployment_image` → `sre`; logic in `apps/mcp-ops/src/mcp.ts`
+      `toolRoleDenial`), which checks the caller's
       `roles` claim before the ops-api hop and returns a legible error the specialist
       LLM relays. The `ops:write` Curity role gate (widened `sre` → `sre OR oncall`) is
       what effectively gates `restart_deployment`/`scale_deployment` — that is the Curity
@@ -506,12 +508,14 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       whichever way a missing header evaluates in CEL.
     - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
       evaluate true if the `roles` claim is missing, so it fails open. The downstream
-      `imageRoleDenial` check is what makes the split unconditional.
+      `toolRoleDenial` check is what makes the split unconditional.
     - **"Listed ≠ callable" is made visible from the server's own rule, not a UI copy.**
       Because the tool stays in `tools/list` for carol, the *Tools this token can reach*
       card would otherwise read "allowed". mcp-ops publishes the required roles in the
       tool's `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
-      `setImageRequiredRoles` the gate enforces); agentgateway relays `_meta` untouched
+      `toolRequiredRoles` matrix the gate enforces — on EVERY ops tool, so the card shows
+      `role sre or oncall` on restart/scale and `role sre`/`needs sre` on set image, the
+      whole matrix rather than one exception); agentgateway relays `_meta` untouched
       (v1.4.1 `merge_tools` rewrites only `name`, and rmcp serialises the field as
       `_meta`); `openMcpToolset` exposes the raw entries as `listed`; the specialist's
       `toolInfos` stamps `requiredRoles` + `callable` per caller. Don't hard-code `sre`

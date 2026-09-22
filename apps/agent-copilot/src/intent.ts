@@ -21,16 +21,19 @@ export type Intent =
   | { kind: 'restart'; deployment: string; namespace?: string; reasonHint?: string };
 
 // "restart"/"reboot"/"kick"/"bounce" (restart), "scale" (replicas),
-// "deploy"/"roll out"/"rollout"/"update image"/"set image"/"upgrade" (image).
-// The captured deployment name must be a DNS-1123 label. The `(update|set) …
-// image` alternative tolerates a filler word ("update the image of …").
+// "deploy"/"roll out"/"rollout"/"upgrade" and "update/set/change/switch/bump …
+// image" (image). The captured deployment name must be a DNS-1123 label. The
+// `… image` alternative tolerates one filler token, which may itself be the
+// deployment name ("update the image of …", "bump order-service image …").
+// `change`/`switch`/`bump` are deliberately bound to "image" rather than listed
+// as bare verbs: "what changed in prod?" must stay on the read path.
 // Accepted limitation: a status phrasing that contains a privileged verb + a
 // deployment name (e.g. "what is the rollout status of api-gateway?") routes to
 // the privileged path and incurs a benign extra A2A hop. The specialist re-
 // enforces acr/scope/act-chain downstream, so this is a UX wart, not a security
 // issue — keeping the gate deterministic and grep-auditable is the priority.
 const RESTART_VERBS =
-  /\b(restart|reboot|kick|bounce|scale|deploy|roll\s?out|upgrade)\b|\b(update|set)\s+(?:\w+\s+)?image\b/i;
+  /\b(restart|reboot|kick|bounce|scale|deploy|roll\s?out|upgrade)\b|\b(update|set|change|switch|bump)\s+(?:[\w-]+\s+)?image\b/i;
 const NAMESPACE_HINT = /\bin\s+([a-z][a-z0-9-]{0,61}[a-z0-9])(?:\s+(?:namespace|ns))?/i;
 
 const STOP_WORDS = new Set([

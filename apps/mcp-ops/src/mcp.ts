@@ -17,12 +17,15 @@ const X_MCP_HEADER_NAMESPACE = { 'x-mcp-header': 'Namespace' } as const;
 /**
  * `_meta` key under which a tool publishes the roles a caller needs to CALL it.
  * agentgateway couples `tools/list` visibility to its own MCP-layer authz, so the
- * `set_deployment_image` = sre split is enforced downstream (here, `imageRoleDenial`)
- * and the tool stays visible to every ops:write caller. Publishing the rule next to
- * the tool lets the UI say "listed, but not callable for you" from the SAME config
+ * per-tool role split is enforced downstream (here, `toolRoleDenial`) and every
+ * tool stays visible to every ops:write caller. Publishing the rule next to the
+ * tool lets the UI say "listed, but not callable for you" from the SAME config
  * value the call-time gate enforces — not from a second copy that could drift.
- * Read by `requiredRolesOf` in packages/agent-runtime (same literal, pinned by
- * tests on both sides). Reverse-DNS prefixed per the MCP `_meta` convention.
+ * EVERY ops tool carries it (`Config.toolRequiredRoles`), so the card shows the
+ * whole matrix — restart/scale: any write role; set image: sre — instead of one
+ * badge that reads as an exception. Read by `requiredRolesOf` in
+ * packages/agent-runtime (same literal, pinned by tests on both sides).
+ * Reverse-DNS prefixed per the MCP `_meta` convention.
  */
 export const REQUIRED_ROLES_META = 'io.curity.demo/required-roles';
 
@@ -35,22 +38,48 @@ export interface ToolContext {
 }
 
 /**
- * Per-tool role gate for `set_deployment_image`. Returns null when the caller may
- * update images, or a human-readable denial reason otherwise.
+ * Per-tool role gate. Returns null when the caller may call `tool` (they hold at
+ * least one of `requiredRoles`, or the tool has no requirement), or a
+ * human-readable denial reason otherwise.
  *
- * agentgateway now enforces the same split at the front door (an `authorization`
- * deny rule keyed on `Mcp-Name` — see agentgateway-config.yaml), so in practice a
- * non-sre caller is usually refused before reaching here. This check remains the
- * AUTHORITATIVE one: the gateway rule cannot evaluate true when the `roles` claim
- * is absent, so it fails open, and only this one makes the split unconditional.
- * The two must agree — change the required role in both places together.
+ * For `set_deployment_image` agentgateway enforces the same split at the front
+ * door (an `authorization` deny rule keyed on `Mcp-Name` — see
+ * agentgateway-config.yaml), so in practice a non-sre caller is usually refused
+ * before reaching here. This check remains the AUTHORITATIVE one: the gateway
+ * rule cannot evaluate true when the `roles` claim is absent, so it fails open,
+ * and only this one makes the split unconditional. The two must agree — change
+ * the required role in both places together. For restart/scale the requirement
+ * mirrors Curity's write-tier gate and is normally unreachable (Curity refuses
+ * `ops:write` to such a caller at the exchange); it exists so the published
+ * `_meta` describes a rule this server really enforces.
  */
-export function imageRoleDenial(callerRoles: string[], requiredRoles: string[]): string | null {
+export function toolRoleDenial(tool: string, callerRoles: string[], requiredRoles: string[]): string | null {
+  if (requiredRoles.length === 0) return null;
   if (requiredRoles.some((r) => callerRoles.includes(r))) return null;
   return (
-    `updating a deployment image requires one of these roles: ` +
+    `calling ${tool} requires one of these roles: ` +
     `${requiredRoles.join(', ')}; you have: ${callerRoles.length ? callerRoles.join(', ') : '(none)'}`
   );
+}
+
+/** The `_meta` block a tool registration publishes, or none when the tool is ungated. */
+function requiredRolesMeta(cfg: Config, tool: string): { _meta?: Record<string, unknown> } {
+  const roles = cfg.toolRequiredRoles[tool];
+  return roles && roles.length > 0 ? { _meta: { [REQUIRED_ROLES_META]: roles } } : {};
+}
+
+/**
+ * Apply the role gate for `tool` BEFORE the ops-api hop. Returns the isError tool
+ * result the agent relays (legible, names the tool — not a silent no-op), or null
+ * when the call may proceed.
+ */
+function roleGate(cfg: Config, ctx: ToolContext, tool: string) {
+  const denial = toolRoleDenial(tool, ctx.subjectRoles, cfg.toolRequiredRoles[tool] ?? []);
+  if (!denial) return null;
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify({ error: 'forbidden', message: denial }, null, 2) }],
+    isError: true,
+  };
 }
 
 export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
@@ -82,6 +111,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           .optional()
           .describe('Human-readable reason recorded on the Deployment annotation.'),
       }),
+      ...requiredRolesMeta(cfg, 'restart_deployment'),
     },
     async ({ name, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -93,11 +123,14 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           user: ctx.subjectSub,
           act: summarizeJwt(ctx.subjectToken).act,
           acr: summarizeJwt(ctx.subjectToken).acr,
+          roles: ctx.subjectRoles.join(',') || '(none)',
           deployment: name,
           namespace: ns,
           reason,
         },
       });
+      const denied = roleGate(cfg, ctx, 'restart_deployment');
+      if (denied) return denied;
       try {
         // 3rd OBO hop: exchange inbound token → ops-api-bound token, then call ops-api.
         const bearer = await obtainOpsApiToken({ cfg, subjectToken: ctx.subjectToken });
@@ -141,7 +174,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           .meta(X_MCP_HEADER_NAMESPACE),
         reason: z.string().max(512).optional().describe('Human-readable reason.'),
       }),
-      _meta: { [REQUIRED_ROLES_META]: cfg.setImageRequiredRoles },
+      ...requiredRolesMeta(cfg, 'set_deployment_image'),
     },
     async ({ name, image, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
@@ -149,15 +182,9 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         service: 'mcp-ops', kind: 'RECEIVE', headline: 'MCP tool set_deployment_image',
         fields: { user: ctx.subjectSub, act: summarizeJwt(ctx.subjectToken).act, acr: summarizeJwt(ctx.subjectToken).acr, roles: ctx.subjectRoles.join(',') || '(none)', deployment: name, image, namespace: ns },
       });
-      // Per-tool role gate: image updates are sre-only. Deny BEFORE the ops-api
-      // hop and return a legible message the agent relays (not a silent no-op).
-      const denial = imageRoleDenial(ctx.subjectRoles, cfg.setImageRequiredRoles);
-      if (denial) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ error: 'forbidden', message: denial }, null, 2) }],
-          isError: true,
-        };
-      }
+      // Per-tool role gate: image updates are sre-only (default matrix).
+      const denied = roleGate(cfg, ctx, 'set_deployment_image');
+      if (denied) return denied;
       try {
         const bearer = await obtainOpsApiToken({ cfg, subjectToken: ctx.subjectToken });
         const result = await callOpsApiSetImage({ cfg, bearer, args: { name, image, namespace: ns, reason } });
@@ -183,13 +210,16 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           .meta(X_MCP_HEADER_NAMESPACE),
         reason: z.string().max(512).optional().describe('Human-readable reason.'),
       }),
+      ...requiredRolesMeta(cfg, 'scale_deployment'),
     },
     async ({ name, replicas, namespace, reason }) => {
       const ns = namespace ?? cfg.targetNamespace;
       oboLog({
         service: 'mcp-ops', kind: 'RECEIVE', headline: 'MCP tool scale_deployment',
-        fields: { user: ctx.subjectSub, act: summarizeJwt(ctx.subjectToken).act, acr: summarizeJwt(ctx.subjectToken).acr, deployment: name, replicas, namespace: ns },
+        fields: { user: ctx.subjectSub, act: summarizeJwt(ctx.subjectToken).act, acr: summarizeJwt(ctx.subjectToken).acr, roles: ctx.subjectRoles.join(',') || '(none)', deployment: name, replicas, namespace: ns },
       });
+      const denied = roleGate(cfg, ctx, 'scale_deployment');
+      if (denied) return denied;
       try {
         const bearer = await obtainOpsApiToken({ cfg, subjectToken: ctx.subjectToken });
         const result = await callOpsApiScale({ cfg, bearer, args: { name, replicas, namespace: ns, reason } });

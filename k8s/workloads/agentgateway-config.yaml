@@ -210,9 +210,12 @@ binds:
         # mcp-ops REMAINS AUTHORITATIVE — this is a first line, not the only one. If
         # the `roles` claim were ever absent the expression cannot evaluate true and
         # the deny fails open, so the downstream check in mcp-ops
-        # (`Config.setImageRequiredRoles`, apps/mcp-ops/src/mcp.ts `imageRoleDenial`)
-        # is what makes the split unconditional. Those two MUST agree: change the role
-        # here and in SET_IMAGE_REQUIRED_ROLES together.
+        # (`Config.toolRequiredRoles['set_deployment_image']`, apps/mcp-ops/src/mcp.ts
+        # `toolRoleDenial`) is what makes the split unconditional. Those two MUST
+        # agree: change the role here and in TOOL_REQUIRED_ROLES together. mcp-ops's
+        # matrix also lists restart/scale (= any write role, mirroring Curity's
+        # ops:write gate) so every ops tool publishes its rule in tools/list _meta;
+        # there is deliberately NO gateway rule for those — Curity already decided.
         #
         # The second rule is namespace confinement (SEP-2243). The ops tools declare
         # `x-mcp-header: Namespace` on their `namespace` input, so a conforming client

@@ -27,7 +27,11 @@ vi.mock('../src/ops-api-client.js', () => ({
 const { buildMcpRequestHandler } = await import('../src/mcp-http.js');
 const cfg = {
   targetNamespace: 'prod',
-  setImageRequiredRoles: ['sre'],
+  toolRequiredRoles: {
+    restart_deployment: ['sre', 'oncall'],
+    scale_deployment: ['sre', 'oncall'],
+    set_deployment_image: ['sre'],
+  },
   resourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
 } as unknown as Parameters<typeof buildMcpRequestHandler>[0];
 
@@ -143,10 +147,13 @@ describe('mcp-ops MCP HTTP route', () => {
   // The role gate is the reason `roles` rides in AuthInfo.extra: the per-request
   // factory has no access to the express request, so a regression here would
   // silently hand every caller sre powers.
-  it('publishes set_deployment_image\'s required roles in tools/list _meta, from config, and on no other tool', async () => {
+  it('publishes EVERY tool\'s required roles in tools/list _meta, from the same config the call-time gate enforces', async () => {
     // The card in the web UI marks a tool as "listed but not callable for you"
     // from THIS field, so the source of truth stays the same config value the
-    // call-time gate (imageRoleDenial) enforces — never a second copy in the UI.
+    // call-time gate (toolRoleDenial) enforces — never a second copy in the UI.
+    // All three ops tools carry it so the card shows the whole role matrix
+    // (restart/scale: any write role; set image: sre) rather than one badge
+    // that looks like an exception.
     const { client } = await connect();
     const listed = await client.listTools();
     const byName = Object.fromEntries(listed.tools.map((t) => [t.name, t]));
@@ -154,8 +161,41 @@ describe('mcp-ops MCP HTTP route', () => {
       'io.curity.demo/required-roles': ['sre'],
     });
     for (const name of ['restart_deployment', 'scale_deployment']) {
-      expect(byName[name]!._meta?.['io.curity.demo/required-roles']).toBeUndefined();
+      expect(byName[name]!._meta).toMatchObject({
+        'io.curity.demo/required-roles': ['sre', 'oncall'],
+      });
     }
+  });
+
+  it('denies restart_deployment for a caller with no write role, before the ops-api hop', async () => {
+    // Unreachable in production (Curity refuses ops:write to such a caller at
+    // the exchange), but it is the same gate as set_deployment_image and the
+    // badge it feeds must describe a rule that is actually enforced here.
+    callerRoles = ['developer'];
+    opsApiCalls.length = 0;
+    const { client } = await connect();
+    const result = await client.callTool({
+      name: 'restart_deployment',
+      arguments: { name: 'order-service' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toMatch(/forbidden/);
+    expect(text).toMatch(/restart_deployment/);
+    expect(text).toMatch(/developer/);
+    expect(opsApiCalls).toHaveLength(0);
+  });
+
+  it('allows restart_deployment for an oncall caller', async () => {
+    callerRoles = ['oncall'];
+    opsApiCalls.length = 0;
+    const { client } = await connect();
+    const result = await client.callTool({
+      name: 'restart_deployment',
+      arguments: { name: 'order-service' },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(opsApiCalls.map((c) => c.kind)).toEqual(['restart']);
   });
 
   it('allows set_deployment_image for an sre caller', async () => {

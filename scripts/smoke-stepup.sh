@@ -9,7 +9,7 @@
 # RFC 9470 401 still originates at mcp-ops and is relayed back through the gateway.
 #
 # Assertions:
-#   [1/4] alice-mfa (acr=mfa, roles sre+oncall) → full chain to aud=mcp-gateway,
+#   [1/4] alice-mfa (acr=mfa, role sre) → full chain to aud=mcp-gateway,
 #         acr=mfa propagated; restart_deployment through the gateway → 200.
 #   [2/4] ISSUANCE INVARIANT — a password-only login that ASKS for ops:write does
 #         not get it. Hand-drives /authorize as the web-app client with NO
@@ -30,7 +30,7 @@
 #
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
-#   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; roles sre+oncall). REQUIRED.
+#   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; role sre). REQUIRED.
 #   SMOKE_ALICE_PASSWORD   — alice's html-form password (whatever you chose when you
 #         registered her; see docs/curity-seed.md). Optional → skips [2/4]. NOT a
 #         token: [2/4] drives the login itself, because the thing under test is what
@@ -495,10 +495,10 @@ else
   #   - The gateway's `authorization` deny rule (keyed on Mcp-Name + jwt.roles) is
   #     the first line and refuses with a plain HTTP 403 "authorization failed".
   #     This is what fires today.
-  #   - mcp-ops's `imageRoleDenial` is the authoritative backstop; it denies BEFORE
+  #   - mcp-ops's `toolRoleDenial` is the authoritative backstop; it denies BEFORE
   #     the ops-api hop and returns an isError tool result, which the gateway relays
-  #     as HTTP 200 with {"error":"forbidden","message":"...requires one of these
-  #     roles: sre; you have: oncall"}. It answers if the gateway rule is ever
+  #     as HTTP 200 with {"error":"forbidden","message":"calling set_deployment_image
+  #     requires one of these roles: sre; you have: oncall"}. It answers if the gateway rule is ever
   #     removed or fails open (it cannot evaluate true when `roles` is absent).
   # Accepting both keeps this test honest about WHERE the split is enforced without
   # pinning it to one layer. What must never happen is the image actually changing.

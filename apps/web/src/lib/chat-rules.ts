@@ -63,10 +63,16 @@ export interface Suggestion {
 // Read tier (observe path → mcp-observability): list_pods, get_pod_logs,
 // get_deployment. Write tier (privileged path → agent-specialist → mcp-ops):
 // restart_deployment, scale_deployment, set_deployment_image.
+// The kube-system prompt is the one deliberate refusal on the read tier: the
+// gateway's namespace-confinement rule (SEP-2243 `Mcp-Param-Namespace`) denies
+// any namespace but `prod` before the call reaches mcp-observability. It is the
+// only denial in the demo that agentgateway itself decides, and it works for
+// every persona — no role or MFA involved.
 export const SUGGESTIONS: readonly Suggestion[] = [
   { text: 'List all pods in the prod namespace', tier: 'read' },
   { text: 'Show recent logs for the checkout-service deployment in prod', tier: 'read' },
   { text: 'What image and replica count is order-service running in prod?', tier: 'read' },
+  { text: 'List the pods in the kube-system namespace', tier: 'read' },
   { text: 'Restart the order-service deployment in prod', tier: 'write' },
   { text: 'Scale checkout-service to 3 replicas in prod', tier: 'write' },
   { text: 'Update order-service to image busybox:1.36 and verify the rollout', tier: 'write' },

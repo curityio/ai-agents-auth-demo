@@ -44,17 +44,41 @@ trace**.
 
 ## 2. The storyline
 
-Three users are seeded in Curity:
+Three users are seeded in Curity. Each one is built so that exactly **one**
+gate says no, and each of those gates lives in a different component — that is
+the whole point of having three:
 
-| User | Role | MFA | Outcome |
-|---|---|---|---|
-| **alice** | `sre`, `oncall` | on-demand step-up | Can read, and (after step-up MFA) restart *and* set image. The happy path. |
-| **carol** | `oncall` | forced login MFA | Can read, restart, and scale — but `set_deployment_image` is **denied** at `mcp-ops` (`sre`-only). Authz is per-tool, not just per-tier. |
-| **bob** | `developer` | forced login MFA | Can read; **denied** `ops:write` entirely even after a successful MFA. |
+| User | Who they are | Role | MFA | The one gate that decides | Enforced by |
+|---|---|---|---|---|---|
+| **alice** | Alice Andersson, SRE lead · `alice@demo.curity.local` | `sre` | on-demand step-up | authentication strength (`acr=mfa`) | specialist pre-check, Curity's TIA behind it |
+| **bob** | Bob Bergström, backend developer, **owns `order-service`** · `bob@demo.curity.local` | `developer` | forced login MFA | write-tier role | Curity's token-exchange procedure |
+| **carol** | Carol Carlsson, on-call engineer **this week** · `carol@demo.curity.local` | `oncall` | forced login MFA | per-tool role (`sre` for set image) | `mcp-ops` (gateway 403 in front) |
+
+Outcomes: alice can read and, after step-up, restart *and* set image (the happy
+path). bob can read — including his own service's logs — but is **denied
+`ops:write` entirely**, even though he has the strongest login of the three.
+carol can read, restart and scale, but `set_deployment_image` is **denied** at
+`mcp-ops`: authz is per-tool, not just per-tier. Names and emails are what you
+type when you register the accounts ([`curity-seed.md`](curity-seed.md)
+§Accounts) — the header pill shows them, so keep them consistent across
+re-seeds. bob and carol have *forced* login MFA on purpose: it removes the
+step-up beat from their stories, so nobody in the room can confuse "you didn't
+MFA" with "you aren't allowed".
 
 The target is the `prod` namespace, which holds two remediable sample
 deployments named like real microservices: **`order-service`** and
-**`checkout-service`**.
+**`checkout-service`**. Both run `busybox:1.37`, so the image-change prompts
+name `busybox:1.36` explicitly — there is no rollout history for the model to
+"roll back" to.
+
+> **Phrase the asks the way the chips do.** The copilot's privileged path is
+> gated by a deterministic regex (`apps/agent-copilot/src/intent.ts`), not by
+> the model. It recognises restart/reboot/kick/bounce/scale/deploy/roll out/
+> upgrade and "update/set/change/switch/bump … image", and needs the deployment
+> *named*. A phrasing it does not recognise silently takes the read path and the
+> copilot just says it cannot — which looks exactly like a broken demo. The
+> chips under **Act** are known-good; when improvising, keep the verb and the
+> deployment name.
 
 ### Act 1 — Read (unprivileged)
 
@@ -88,9 +112,31 @@ raw JWT is one click away under each row for anyone who wants the claims.
 > `aud=agent-specialist` delegation token. If a flow is refused before it
 > reaches the model (step-up, wrong role), no leaf is shown for it.
 
+**Act 1b — Namespace confinement (the gateway's own denial).**
+
+> Still alice, still unprivileged: click *List the pods in the kube-system
+> namespace* (the last **Observe** chip).
+
+The model calls `list_pods` with `namespace=kube-system`. The tool declares
+that argument as an `x-mcp-header`, so the MCP client mirrors it into
+`Mcp-Param-Namespace` (SEP-2243), and agentgateway's `authorization` rule
+refuses any namespace other than `prod` with a bare **403** — before
+`mcp-observability` is ever called. The toolset turns the transport error into a
+factual `forbidden` tool result and the copilot reports the refusal. **Expected:**
+a clear "not authorized for kube-system" answer, no pod list. The teaching
+point: this is the **only** denial in the demo that the gateway itself decides —
+no role, no MFA, and every persona hits it — so the room has now seen all four
+places a "no" can come from: Curity (bob), the gateway (this), `mcp-ops`
+(carol), and the agent's own `acr` pre-check (alice, next). Note that
+`obs-api`'s RBAC is confined to `prod` too; the gateway rule means the request
+never gets that far. The same rule guards the write tier — *"Restart
+order-service in staging"* is refused the same way.
+
 ### Act 2 — Cross-tier remediation (privileged, with step-up)
 
-> Alice asks: *"Roll order-service back to the previous image and restart it."*
+> Alice asks: *"Update order-service to image busybox:1.36 and restart it."*
+> (or clicks the *Update order-service to image busybox:1.36 and verify the
+> rollout* chip under **Act**).
 
 The copilot recognizes a privileged write goal and delegates to
 `agent-specialist` over **A2A**, forwarding Alice's natural-language goal
@@ -104,7 +150,7 @@ verbatim. The specialist is an **LLM agent** that plans across both tiers:
 2. On retry the token carries `acr=mfa`. The specialist now also exchanges for an
    `obs:read` token to `mcp-observability`, opens both MCP toolsets, and lets the
    LLM work the goal: it **reads** the current state (`get_deployment`), **acts**
-   (`set_deployment_image` to the prior tag, then `restart_deployment`), and
+   (`set_deployment_image` to `busybox:1.36`, then `restart_deployment`), and
    **re-reads** to verify the rollout — re-exchanging at each hop to `obs-api` /
    `ops-api`.
 
@@ -115,27 +161,54 @@ the specialist fanning out to **both** `mcp-observability` (read) and `mcp-ops`
 `act=[obs-mcp, agentgateway, specialist, copilot]` on the read hops
 (`scope=obs:read`).
 
+> **Say this out loud: the agent's pre-check is courtesy, Curity's TIA is the
+> guarantee.** The 401 you just saw was raised by the specialist's deterministic
+> `acr` check *before* it asked Curity for `ops:write`, so Curity's own refusal
+> never shows in the UI. It exists all the same: the `ops:write` scope is bound
+> to the `require-mfa-for-privileged` ACR Token Issuance Authorizer
+> ([`design.md`](design.md) §3.2.1), so a password-only token cannot obtain the
+> scope **at issuance** even from a hand-crafted request that skips the agent.
+> Two ways to prove it live: `make smoke-stepup` step `[2/4]` drives a real
+> password-only login and shows Curity answering `access_denied` for
+> `ops:write`; or run the Act 2 ask with a token that dodges the pre-check and
+> read the `DENY` block in `kubectl logs -n agents deploy/agent-specialist`.
+> The smoke line is the cheaper proof and does not depend on Tempo.
+
 ### Act 3 — Denial (authn ≠ authz)
 
-> Bob logs in, MFAs successfully, and asks to restart `order-service`.
+> Bob logs in (forced MFA — he cannot even get past login without his TOTP),
+> and first clicks *Show recent logs for the checkout-service deployment in
+> prod* — or asks for `order-service`'s logs, the service he owns. Then he asks
+> to *restart the order-service deployment in prod*.
 
-Bob's MFA *succeeds* — but the very first token exchange fails with
-**`access_denied`** because Bob holds no write role (`sre`/`oncall`).
-**Expected:** a clear "you authenticated, but you're not authorized" message. The
-teaching point: authentication strength and authorization grant are different
-things, decided in different places.
+Run the **read first**. It succeeds: bob holds `obs:read` like everyone else,
+and the developer who owns `order-service` can of course see its logs. Then the
+restart: Bob's MFA *succeeded*, his `acr` is already `mfa` — but the very first
+token exchange fails with **`access_denied`** because Bob holds no write role
+(`sre`/`oncall`). **Expected:** logs, then a clear "you authenticated, but you're
+not authorized" message.
+
+Two teaching points, in this order. First, **authorization is per scope, not per
+user**: the same bob, the same session, the same token, is granted `obs:read` and
+refused `ops:write` — owning the service does not buy a prod write. Second, and
+this is the line the whole story is built on: **bob has the strongest login of
+the three** (forced MFA, no step-up needed) **and is still refused**.
+Authentication strength and authorization grant are different things, decided
+in different places — here, by Curity's exchange procedure, before any agent
+gets a privileged token to misuse.
 
 ### Act 4 — Per-tool authorization (carol) — authz is finer than the tier
 
 > Carol logs in (forced login MFA), restarts `order-service` successfully, then
-> asks to *change its image*.
+> asks: *"Change the image of order-service to busybox:1.36"* (or clicks the
+> *Update order-service to image busybox:1.36 …* chip).
 
 Carol holds `oncall`, so Curity grants her `ops:write` and the restart succeeds.
 But when the specialist calls `set_deployment_image`, the call is refused with a
 legible role-denial — that tool is `sre`-only. Two layers enforce it: agentgateway's
 HTTP-layer `authorization` rule (keyed on `Mcp-Name`, answers a bare 403 that the
 toolset turns into a factual tool result) and, authoritatively, **`mcp-ops`**
-(`Config.setImageRequiredRoles`). **Expected:** restart works; the image change
+(`Config.toolRequiredRoles`). **Expected:** restart works; the image change
 comes back as a clear "not authorized" message the specialist relays. The
 teaching point: the gateway grants the *tier* (`ops:write`), but the per-tool
 split is finer than the tier — carol even *sees* `set_deployment_image` in
@@ -143,12 +216,15 @@ split is finer than the tier — carol even *sees* `set_deployment_image` in
 
 Make the "she can see it" half visible with the **Tools this token can reach**
 card (**Check tools**): the write-tier column lists all three ops tools for carol,
-exactly as agentgateway's `tools/list` returned them for her token — with
-`set_deployment_image` marked **needs sre** and a *Listed ≠ callable* note. That
-marker is not hard-coded in the UI: `mcp-ops` publishes the tool's required roles
-in its `tools/list` `_meta` (`io.curity.demo/required-roles`, from the same
-`SET_IMAGE_REQUIRED_ROLES` config its call-time gate enforces), the gateway relays
-it, and the specialist compares it with the caller's `roles`. Contrast with
+exactly as agentgateway's `tools/list` returned them for her token — each with
+its role badge: `restart_deployment` and `scale_deployment` read **role sre or
+oncall** (green — she holds `oncall`), `set_deployment_image` reads **needs sre**
+(amber) with a *Listed ≠ callable* note. The whole matrix is on the card, so the
+`sre`-only rule reads as a policy, not an exception. None of it is hard-coded in
+the UI: `mcp-ops` publishes every tool's required roles in its `tools/list`
+`_meta` (`io.curity.demo/required-roles`, from the same `TOOL_REQUIRED_ROLES`
+matrix its call-time gate enforces), the gateway relays it, and the specialist
+compares it with the caller's `roles`. For alice all three badges are green. Contrast with
 the other two personas on the same card — bob's write column shows Curity's
 `access_denied` from the exchange, and alice *before* MFA shows a step-up notice
 because the specialist refused to even ask for an `ops:write` token without
@@ -261,9 +337,9 @@ make status            # (optional) confirm pods are Ready across all namespaces
 open https://app.localtest.me
 ```
 
-Log in as **alice** and walk Acts 1–2 (read, then step-up remediation). Then log
-in as **bob** for the role denial (Act 3), and **carol** for the per-tool split
-(Act 4).
+Log in as **alice** and walk Acts 1–2 (read, the gateway's namespace denial,
+then step-up remediation). Then log in as **bob** for the role denial (Act 3),
+and **carol** for the per-tool split (Act 4).
 
 The page is built to be narrated top to bottom:
 
@@ -280,8 +356,8 @@ The page is built to be narrated top to bottom:
   a play/pause button; signed in, each node (and each capability chip) jumps to
   the panel below that proves it.
 - **Ask the copilot.** Example prompts sit under **Observe** (read tier, one
-  chip per `mcp-observability` tool) and **Act** (privileged, one per `mcp-ops`
-  tool). The line *Asking as alice · roles sre, oncall · acr html-form* states
+  chip per `mcp-observability` tool plus the `kube-system` chip the gateway
+  refuses — Act 1b) and **Act** (privileged, one per `mcp-ops` tool). The line *Asking as alice · roles sre · acr html-form* states
   the claims the request will carry **before** Send — decoded server-side in the
   session; the token itself never reaches the browser. A non-2xx is typed: an
   RFC 9470 challenge becomes the **Authenticate with MFA** button, an

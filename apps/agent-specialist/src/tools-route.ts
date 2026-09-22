@@ -96,7 +96,7 @@ export async function listOpsTools(args: {
 
 /**
  * Per-tool view for the card. `callable` applies the SAME rule as mcp-ops's
- * `imageRoleDenial` — the caller holds ANY of the required roles — over the roles
+ * `toolRoleDenial` — the caller holds ANY of the required roles — over the roles
  * the server published; the set of roles itself is never decided here.
  */
 export function toolInfos(listed: ListedTool[], callerRoles: string[]): ToolInfo[] {

@@ -292,7 +292,7 @@ sequenceDiagram
     A2-->>A1: summary of what changed
 ```
 
-If Alice (`[sre, oncall]`) authenticated with password only, the specialist's
+If Alice (`[sre]`) authenticated with password only, the specialist's
 deterministic pre-check (or `mcp-ops`) returns **401
 `insufficient_user_authentication`** with `acr_values=mfa`; the web app drives
 an MFA step-up at Curity, and the retried request carries `acr=mfa`. If

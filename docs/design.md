@@ -113,7 +113,7 @@ gateway-config choice made via `.demo.env`, not a property of either agent; see
 | **agentgateway** | agentgateway v1.4.1 (OSS, pinned) + co-located `exchange-shim` sidecar | Bearer (`aud=mcp-gateway`) on `/observability/mcp` \| `/ops/mcp`; Bearer (`aud=llm-gateway`) on `/llm` | `mcp-observability`, `mcp-ops`, the configured LLM provider | MCP front door **and** LLM egress gateway. For MCP: validates the caller's JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) + `tools/list` filtering, and for each tool-call calls the shim (`extAuthz`) for the per-backend OBO exchange, then swaps the narrowed token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced at mcp-ops), nor enforce the `act` chain or step-up. For `/llm`: validates `aud=llm-gateway` + `llm:invoke`, then injects the configured provider's API key upstream — no shim, no `act`-chain (§3.6, [`docs/llm-providers.md`](llm-providers.md)). |
 | **exchange-shim** | Node/TypeScript (Express); `@ai-agents-demo/auth-curity` + `@ai-agents-demo/spiffe` | `extAuthz` from agentgateway (`:8090`, same pod) | Curity token endpoint | Performs the RFC 8693 exchange: reads the gateway's rotating SPIFFE JWT-SVID (`/run/spiffe/curity-actor.jwt`) as `actor_token`, subject = the caller's `aud=mcp-gateway` token, audience/scope derived **server-side** from an audience→scope allow-list (never caller-supplied). Returns a token-endpoint-shaped JSON body. Exists because agentgateway's CEL cannot read the rotating SVID file. |
 | **mcp-observability** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `obs-api` | Validate → re-exchange → forward. Thin client. Tools: `list_pods`, `get_pod_logs`, `get_deployment` (read). |
-| **mcp-ops** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't: denies `set_deployment_image` for callers whose `roles` lack `sre` (`Config.setImageRequiredRoles`, default `['sre']`, env `SET_IMAGE_REQUIRED_ROLES`), returning a legible role-denial before the ops-api hop. |
+| **mcp-ops** | Express + MCP Streamable HTTP (SDK v2, revision 2026-07-28 only — §3.7) | Bearer OBO token (from the gateway) | `ops-api` | Validate (+step-up) → re-exchange → forward. Thin client. Tools: `restart_deployment`, `set_deployment_image`, `scale_deployment` (write). Enforces the fine-grained role split the gateway can't, from a per-tool role matrix (`Config.toolRequiredRoles`, env `TOOL_REQUIRED_ROLES`; default `restart_deployment`/`scale_deployment` → `sre` or `oncall`, `set_deployment_image` → `sre`): denies a call whose `roles` hold none of the tool's required roles, returning a legible role-denial before the ops-api hop, and publishes the same matrix in every tool's `tools/list` `_meta`. |
 | **obs-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `GET /pods`, `GET /pods/:name/logs`, `GET /deployments/:name` (image/replicas/rollout status). RBAC `get,list` on pods and deployments. Accepts **two** actor chains (see §2 middleware). |
 | **ops-api** | Express + `@kubernetes/client-node` | Bearer | K8s API (`prod`) | Resource server; `POST /restart`, `POST /set-image` (strategic-merge patch; container name == deployment name), `POST /scale` — each patches a deployment. |
 
@@ -437,10 +437,10 @@ MCP servers, replacing the former Istio ambient waypoint.
   `set_deployment_image` here would hide it from an `oncall` caller and the
   specialist LLM (never seeing the tool) would loop silently instead of surfacing a
   denial. The `set_deployment_image` = `sre`-only split is therefore enforced
-  downstream at **mcp-ops** (`Config.setImageRequiredRoles`, default `['sre']`; see
+  downstream at **mcp-ops** (`Config.toolRequiredRoles['set_deployment_image']`, default `['sre']`; see
   §2 mcp-ops), which checks the caller's `roles` claim before the ops-api hop and
   returns a legible role-denial the specialist relays. Demo users:
-  alice=`[sre, oncall]` (password-only → step-up demo), bob=`[developer]` (denied
+  alice=`[sre]` (password-only → step-up demo), bob=`[developer]` (denied
   `ops:write` at the Curity exchange), carol=`[oncall]` (forced login-MFA; can
   restart/scale, and *sees* `set_deployment_image` in `tools/list` but the call is
   refused at mcp-ops).
@@ -675,7 +675,7 @@ declaration breaks no call — it silently removes the gateway's authorization
 input, so the MCP servers' tests assert it explicitly.
 
 **Two honest limits.** The role rule cannot evaluate true when the `roles` claim
-is absent, so it *fails open* — mcp-ops's `imageRoleDenial` remains the
+is absent, so it *fails open* — mcp-ops's `toolRoleDenial` remains the
 authoritative check, and the gateway rule is a first line rather than the only
 one. And for route-level policies `extAuthz` runs *before* `authorization`
 (measured on v1.4.1), so a denied tool-call still performs the OBO exchange: the

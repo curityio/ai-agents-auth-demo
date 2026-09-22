@@ -28,7 +28,7 @@
 #   [3/4] `namespace: kube-system` is refused at the gateway, on BOTH tiers.
 #   [4/4] `set_deployment_image` is allowed for alice (sre). If SMOKE_TOKEN_CAROL
 #         is set (carol = oncall, no sre) the denial is asserted too; otherwise
-#         skipped, since alice holds both roles and cannot demonstrate it.
+#         skipped, since alice (sre) passes the rule and cannot demonstrate it.
 #
 # Required env: SMOKE_SUBJECT_TOKEN — a fresh MFA'd Curity access token for Alice.
 # Optional env: SMOKE_TOKEN_CAROL   — enables the [4/4] negative half.
@@ -133,7 +133,7 @@ case "$OUT" in
 esac
 
 if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
-  yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set. Alice holds BOTH sre and oncall,"
+  yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set. Alice holds sre,"
   yellow "    so she cannot demonstrate the denial — sign in as carol (oncall, per"
   yellow "    docs/curity-seed.md) to exercise it."
 else

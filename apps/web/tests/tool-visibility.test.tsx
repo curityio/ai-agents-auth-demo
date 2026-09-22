@@ -22,12 +22,20 @@ const WRITE_ALICE: TierResult = {
       requiredRoles: ['sre'],
       callable: true,
     },
-    { name: 'restart_deployment', description: 'Rollout-restart a deployment' },
+    {
+      name: 'restart_deployment',
+      description: 'Rollout-restart a deployment',
+      requiredRoles: ['sre', 'oncall'],
+      callable: true,
+    },
   ],
 };
+// carol (oncall): passes the write-role gate on restart, fails the sre gate on set image.
 const WRITE_CAROL: TierResult = {
   ...WRITE_ALICE,
-  tools: WRITE_ALICE.tools.map((t) => (t.requiredRoles ? { ...t, callable: false } : t)),
+  tools: WRITE_ALICE.tools.map((t) =>
+    t.requiredRoles && !t.requiredRoles.includes('oncall') ? { ...t, callable: false } : t,
+  ),
 };
 const WRITE_STEPUP: TierResult = {
   tier: 'ops',
@@ -74,6 +82,16 @@ describe('ToolVisibility', () => {
     expect(row).toContain('needs sre');
     expect(row).toContain('lucide-lock');
     expect(html).toContain('Listed ≠ callable');
+  });
+
+  it('renders the whole role matrix: a multi-role requirement reads "role sre or oncall"', () => {
+    // Every ops tool now publishes its required roles, so the card shows the
+    // hierarchy per row rather than one badge that looks like an exception.
+    const html = renderToStaticMarkup(<ToolVisibility tiers={[WRITE_CAROL]} />);
+    const row = html.match(/<li[^>]*data-tool="restart_deployment"[\s\S]*?<\/li>/)?.[0] ?? '';
+    expect(row).toContain('role sre or oncall');
+    expect(row).toContain('lucide-check');
+    expect(row).not.toContain('needs');
   });
 
   it('states the gate each tier had to pass', () => {

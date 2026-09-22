@@ -146,7 +146,7 @@ describe('toolInfos', () => {
     ]);
   });
 
-  it('is callable when the caller holds ANY of the required roles — the same rule as imageRoleDenial', () => {
+  it('is callable when the caller holds ANY of the required roles — the same rule as toolRoleDenial', () => {
     const listed = [{ name: 'set_deployment_image', meta: { 'io.curity.demo/required-roles': ['sre', 'oncall'] } }];
     expect(toolInfos(listed, ['oncall'])[0]).toMatchObject({ callable: true });
   });

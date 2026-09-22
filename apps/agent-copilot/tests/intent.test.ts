@@ -47,6 +47,25 @@ describe('detectIntent — privileged verbs', () => {
     expect(detectIntent('set image checkout-svc=demo/checkout:v2').kind).toBe('restart');
     expect(detectIntent('roll out v1.3 to api-gateway').kind).toBe('restart');
   });
+  it('routes the image-change phrasings a presenter is likely to use', () => {
+    // demo.md Act 4 has carol ask to "change its image"; a phrasing the router
+    // does not recognise silently takes the READ path and the copilot just says
+    // it cannot — so the presenter's vocabulary is pinned here.
+    for (const msg of [
+      'change the image of order-service to busybox:1.36',
+      'switch the image on order-service to busybox:1.36',
+      'bump order-service image to busybox:1.36',
+      'update order-service image to busybox:1.36',
+    ]) {
+      const out = detectIntent(msg);
+      expect(out.kind, msg).toBe('restart');
+      if (out.kind === 'restart') expect(out.deployment, msg).toBe('order-service');
+    }
+  });
+  it('does not treat a question about a change as a privileged verb', () => {
+    expect(detectIntent('what changed in prod overnight?').kind).toBe('observe');
+    expect(detectIntent('did the image change on order-service?').kind).toBe('observe');
+  });
   it('does not pick a version token as the deployment name', () => {
     // The version precedes the real name; we must skip `v1.3`/`v1` and pick `api-gateway`.
     const out = detectIntent('roll out v1.3 to api-gateway');
