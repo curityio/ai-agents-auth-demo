@@ -76,9 +76,12 @@ describe('buildJourney', () => {
       .filter((a) => a !== 'curity')
       .filter((a, i, all) => all[i - 1] !== a);
 
-  it('read: walks the read tier only, in chain order', () => {
+  it('read: the copilot asks the model through the gateway, then walks the read tier in chain order', () => {
     expect(visited(read)).toEqual([
       'web',
+      'agent-copilot',
+      'agentgateway',
+      'llm-provider',
       'agent-copilot',
       'agentgateway',
       'mcp-observability',
@@ -86,24 +89,66 @@ describe('buildJourney', () => {
     ]);
     expect(read.some((s) => s.lit.includes('agent-specialist'))).toBe(false);
   });
-  it('privileged: goes through the specialist to mcp-ops and ops-api', () => {
+  it('privileged: the specialist passes the ops gate BEFORE the model runs, then goes to mcp-ops and ops-api', () => {
     expect(visited(priv)).toEqual([
       'web',
       'agent-copilot',
       'agent-specialist',
       'agentgateway',
+      'llm-provider',
+      'agent-specialist',
+      'agentgateway',
       'mcp-ops',
       'ops-api',
     ]);
+    const gate = priv.findIndex((s) => s.caption.includes('acr=mfa required'));
+    const model = priv.findIndex((s) => s.at === 'llm-provider');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(model);
+  });
+  it('never sends the same workload to Curity twice in a row — the specialist mints both tokens in one trip', () => {
+    for (const steps of [read, priv]) {
+      for (let i = 0; i + 3 < steps.length; i++) {
+        const [a, b, c, d] = [steps[i]!, steps[i + 1]!, steps[i + 2]!, steps[i + 3]!];
+        const doubleDip = a.at !== 'curity' && b.at === 'curity' && c.at === a.at && d.at === 'curity';
+        expect(doubleDip, `${a.at} dips twice at step ${i}`).toBe(false);
+      }
+    }
+    const trip = priv.find((s) => s.caption.startsWith('Curity → agent-specialist'));
+    expect(trip?.caption).toMatch(/ops:write/);
+    expect(trip?.caption).toMatch(/llm:invoke/);
+  });
+  it('the model call is a leaf: the packet fades at the provider and reappears at the caller', () => {
+    for (const [steps, caller] of [
+      [read, 'agent-copilot'],
+      [priv, 'agent-specialist'],
+    ] as const) {
+      const i = steps.findIndex((s) => s.at === 'llm-provider');
+      expect(steps[i]!.packet).toBe(true);
+      expect(steps[i + 1]!.at).toBe('llm-provider');
+      expect(steps[i + 1]!.packet).toBe(false);
+      expect(steps[i + 2]!.at).toBe(caller);
+      expect(steps[i + 2]!.packet).toBe(false);
+      expect(steps[i + 3]!.packet).toBe(true);
+      // the llm:invoke exchange precedes it, and stamps no may_act
+      const leaf = steps.slice(0, i).reverse().find((s) => s.caption.includes('llm-gateway'));
+      expect(leaf?.caption).toMatch(/no may_act/);
+      // the provider never exchanges
+      expect(steps.some((s) => s.links.includes('llm-provider' as never))).toBe(false);
+    }
   });
   it('every workload that exchanges makes a round trip to Curity before moving on', () => {
     for (const steps of [read, priv]) {
       for (const from of ['agent-copilot', 'agentgateway']) {
-        const i = steps.findIndex((s) => s.at === from);
-        expect(steps[i + 1].at).toBe('curity');
-        expect(steps[i + 2].at).toBe(from);
-        expect(steps[i + 1].caption).toMatch(new RegExp(`^${from} → Curity`));
-        expect(steps[i + 2].caption).toMatch(new RegExp(`^Curity → ${from}`));
+        const roundTrips = steps.filter(
+          (s, i) =>
+            s.at === from &&
+            steps[i + 1]?.at === 'curity' &&
+            steps[i + 2]?.at === from &&
+            new RegExp(`^${from} → Curity`).test(steps[i + 1]!.caption) &&
+            new RegExp(`^Curity → ${from}`).test(steps[i + 2]!.caption),
+        );
+        expect(roundTrips.length, from).toBeGreaterThan(0);
       }
     }
     // the APIs never exchange: the packet stops there
@@ -130,11 +175,13 @@ describe('buildJourney', () => {
       }
     }
   });
-  it('IDLE_LOOP plays read then privileged and fits in about twenty seconds', () => {
+  it('IDLE_LOOP plays read then privileged and fits in about half a minute', () => {
     expect(IDLE_LOOP[0].at).toBe('web');
     const total = IDLE_LOOP.reduce((a, s) => a + s.ms + s.hold, 0);
-    expect(total).toBeGreaterThan(12_000);
-    expect(total).toBeLessThan(26_000);
+    expect(total).toBeGreaterThan(18_000);
+    expect(total).toBeLessThan(36_000);
+    // the model is consulted exactly once per journey
+    expect(IDLE_LOOP.filter((s) => s.at === 'llm-provider' && s.packet).length).toBe(2);
     // one arrival each; the closing linger repeats the stop with the packet gone
     expect(IDLE_LOOP.filter((s) => s.at === 'ops-api' && s.packet).length).toBe(1);
     expect(IDLE_LOOP.filter((s) => s.at === 'obs-api' && s.packet).length).toBe(1);

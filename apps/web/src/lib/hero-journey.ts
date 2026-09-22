@@ -31,7 +31,8 @@ export type NodeId =
   | 'mcp-observability'
   | 'mcp-ops'
   | 'obs-api'
-  | 'ops-api';
+  | 'ops-api'
+  | 'llm-provider';
 
 export type TopoNode = {
   id: NodeId;
@@ -45,6 +46,14 @@ export type TopoNode = {
   exchanges: boolean;
   /** Explicit route to Curity when a straight drop would cross another row. */
   route?: Point[];
+  /** Display text when the id is not a workload name. */
+  label?: string;
+  /**
+   * Outside the trust domain: no SPIFFE ID, never exchanges, drawn dashed. The
+   * LLM provider only ever sees an `aud=llm-gateway` leaf token, and the vendor
+   * API key exists solely at agentgateway — the point of the `/llm` route.
+   */
+  external?: boolean;
 };
 export type Point = { x: number; y: number };
 
@@ -71,6 +80,14 @@ export const NODES: TopoNode[] = [
   node('obs-api', 622, ROW.top, 'apis', false),
   node('mcp-ops', 504, ROW.bottom, 'mcp', true),
   node('ops-api', 622, ROW.bottom, 'apis', false),
+  // The model, on the middle row beside the two APIs: reached only through
+  // agentgateway's /llm route. Its edge crosses mcp-observability's dashed drop
+  // at a right angle — the one crossing on the stage, and a perpendicular one.
+  {
+    ...node('llm-provider', 622, ROW.mid, '', false),
+    label: 'LLM provider',
+    external: true,
+  },
 ];
 
 export const EDGES: [NodeId, NodeId][] = [
@@ -82,6 +99,7 @@ export const EDGES: [NodeId, NodeId][] = [
   ['agentgateway', 'mcp-ops'],
   ['mcp-observability', 'obs-api'],
   ['mcp-ops', 'ops-api'],
+  ['agentgateway', 'llm-provider'],
 ];
 
 /**
@@ -272,6 +290,57 @@ class Script {
     });
   }
 
+  /**
+   * The governed model call, once per journey: `from` carries the `llm:invoke`
+   * leaf through agentgateway's /llm route to the provider, and the completion
+   * comes back the same way. The packet fades at the provider and reappears at
+   * `from` rather than retracing two edges — the return leg carries no token
+   * worth drawing. Pass `exchange` when the leaf still has to be minted; the
+   * specialist mints it in the same trip as its ops:write token (see
+   * buildJourney), because two identical back-to-back dips read as a stutter.
+   */
+  modelCall(from: NodeId, exchange?: { ask: string; issued: string }) {
+    if (exchange) this.exchange(from, exchange.ask, exchange.issued);
+    this.travel(
+      from,
+      'agentgateway',
+      `${from} → agentgateway (/llm) · carrying the llm:invoke leaf token`,
+      200,
+    );
+    this.travel(
+      'agentgateway',
+      'llm-provider',
+      'agentgateway → LLM provider · the gateway injects the vendor key; the provider never sees a user token',
+      520,
+    );
+    const here = nodeById('llm-provider');
+    this.push({
+      at: 'llm-provider',
+      x: here.x,
+      y: here.y,
+      ms: 1,
+      hold: 380,
+      ease: 'linear',
+      via: [],
+      caption: 'the completion returns the same way',
+      glow: false,
+      packet: false,
+    });
+    const back = nodeById(from);
+    this.push({
+      at: from,
+      x: back.x,
+      y: back.y,
+      ms: 1,
+      hold: 160,
+      ease: 'linear',
+      via: [],
+      caption: `${from} has the model's plan`,
+      glow: false,
+      packet: false,
+    });
+  }
+
   /** Linger at the last stop with a closing line, then let the packet fade. */
   finish(at: NodeId, caption: string) {
     const n = nodeById(at);
@@ -298,12 +367,16 @@ class Script {
   }
 }
 
+const USER_HOP: Hop = {
+  from: 'web',
+  to: 'agent-copilot',
+  carry: 'web → agent-copilot · the request carries the user token',
+};
+
+const LLM_ASK = 'asks for aud=llm-gateway scope=llm:invoke';
+const LLM_ISSUED = 'issued aud=llm-gateway scope=llm:invoke · no may_act: a leaf, nothing exchanges it onward';
+
 const READ_HOPS: Hop[] = [
-  {
-    from: 'web',
-    to: 'agent-copilot',
-    carry: 'web → agent-copilot · the request carries the user token',
-  },
   {
     from: 'agent-copilot',
     to: 'agentgateway',
@@ -327,26 +400,27 @@ const READ_HOPS: Hop[] = [
   },
 ];
 
+const A2A_HOP: Hop = {
+  from: 'agent-copilot',
+  to: 'agent-specialist',
+  ask: 'asks for aud=agent-specialist',
+  issued: 'issued aud=agent-specialist scope=ops:write obs:read · may_act: agent-specialist',
+  carry: 'agent-copilot → agent-specialist · hands the goal over A2A with that token',
+};
+
+// The specialist's trip to Curity is its own beat: the role + acr gate fires
+// HERE, before the model ever runs — so the model call is scripted after it. In
+// the running system this is two exchanges (ops:write, then the llm:invoke
+// leaf); the stage draws them as ONE dip with both in the caption, because two
+// identical back-to-back dips looked like a stutter, not a second token.
+const OPS_GATE = {
+  ask: 'asks for aud=mcp-gateway scope=ops:write · role sre + acr=mfa required (RFC 9470) · then the aud=llm-gateway leaf',
+  issued:
+    'issued aud=mcp-gateway scope=ops:write acr=mfa · act: agent-specialist, agent-copilot — and aud=llm-gateway scope=llm:invoke, no may_act: a leaf',
+  carry: 'agent-specialist → agentgateway · carrying the privileged token',
+};
+
 const PRIVILEGED_HOPS: Hop[] = [
-  {
-    from: 'web',
-    to: 'agent-copilot',
-    carry: 'web → agent-copilot · the request carries the user token',
-  },
-  {
-    from: 'agent-copilot',
-    to: 'agent-specialist',
-    ask: 'asks for aud=agent-specialist',
-    issued: 'issued aud=agent-specialist scope=ops:write obs:read · may_act: agent-specialist',
-    carry: 'agent-copilot → agent-specialist · hands the goal over A2A with that token',
-  },
-  {
-    from: 'agent-specialist',
-    to: 'agentgateway',
-    ask: 'asks for aud=mcp-gateway scope=ops:write · role sre + acr=mfa required (RFC 9470)',
-    issued: 'issued aud=mcp-gateway scope=ops:write acr=mfa · act: agent-specialist, agent-copilot',
-    carry: 'agent-specialist → agentgateway · carrying the privileged token',
-  },
   {
     from: 'agentgateway',
     to: 'mcp-ops',
@@ -371,6 +445,9 @@ export function buildJourney(kind: Tone): Step[] {
       'alice signs in at Curity · web holds her user token (scope obs:read ops:write)',
       900,
     );
+    s.run([USER_HOP]);
+    // The copilot asks the model which tool to call before it calls one.
+    s.modelCall('agent-copilot', { ask: LLM_ASK, issued: LLM_ISSUED });
     s.run(READ_HOPS);
     s.finish(
       'obs-api',
@@ -382,6 +459,12 @@ export function buildJourney(kind: Tone): Step[] {
       'alice steps up with TOTP at Curity · a stronger factor before anything privileged',
       900,
     );
+    s.run([USER_HOP, A2A_HOP]);
+    // Gate first, model second: the specialist holds a privileged token before
+    // the LLM plans anything, and only then carries it to the gateway.
+    s.exchange('agent-specialist', OPS_GATE.ask, OPS_GATE.issued);
+    s.modelCall('agent-specialist');
+    s.travel('agent-specialist', 'agentgateway', OPS_GATE.carry);
     s.run(PRIVILEGED_HOPS);
     s.finish('ops-api', 'ops-api verifies the act chain + acr=mfa · then restarts the deployment');
   }

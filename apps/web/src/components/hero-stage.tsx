@@ -70,9 +70,14 @@ function usePlayer(steps: Step[], paused: boolean) {
   return { step: steps[i], pos };
 }
 
-const targetOf = (n: TopoNode) => (n.ns === 'apis' ? '#tools' : '#identities');
+const targetOf = (n: TopoNode) =>
+  n.external ? '#chain' : n.ns === 'apis' ? '#tools' : '#identities';
 const tipOf = (n: TopoNode) =>
-  n.exchanges ? spiffeIdOf(n) : `${n.id} · verifies what arrives, never exchanges`;
+  n.external
+    ? `${n.label ?? n.id} · outside the trust domain: reached only through agentgateway's /llm route with an aud=llm-gateway leaf token. The vendor API key exists solely at the gateway.`
+    : n.exchanges
+      ? spiffeIdOf(n)
+      : `${n.id} · verifies what arrives, never exchanges`;
 
 function Jump({
   href,
@@ -127,8 +132,9 @@ export function HeroStage({
       >
         <title id="hero-stage-title">
           How a request travels: left to right from web through the agents and the gateway to the
-          tool servers and APIs. Curity sits below the path; each workload drops down to it to
-          exchange the token before its next hop.
+          tool servers and APIs, with a side trip through the gateway to the LLM provider, which
+          sits outside the trust domain. Curity sits below the path; each workload drops down to it
+          to exchange the token before its next hop.
         </title>
         <defs>
           <marker
@@ -265,6 +271,7 @@ export function HeroStage({
                   fill={on ? color.replace(')', ' / 0.18)') : 'hsl(0 0% 100% / 0.06)'}
                   stroke={on ? color : 'hsl(0 0% 100% / 0.25)'}
                   strokeWidth={on ? 1.3 : 1}
+                  {...(n.external ? { strokeDasharray: '4 3' } : {})}
                   style={{ transition: 'fill .3s, stroke .3s' }}
                 />
                 <text
@@ -276,7 +283,7 @@ export function HeroStage({
                   fill={on ? 'white' : 'hsl(0 0% 100% / 0.65)'}
                   style={{ transition: 'fill .3s' }}
                 >
-                  {n.id}
+                  {n.label ?? n.id}
                 </text>
               </g>
             </Jump>
@@ -297,42 +304,53 @@ export function HeroStage({
         </g>
       </svg>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      {/* Two rows on purpose: the capability chips, then the legend with the
+          pause button. Five chips no longer share a row with the legend, and a
+          wrap-dependent layout left one chip stranded under the others. */}
+      <div className="mt-4 flex flex-col gap-3">
         {footer}
-        <p className="ml-auto flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-white/60">
-          {/* The packet's colour is the tier — the legend has to say so. */}
-          <span className="inline-flex items-center gap-2">
-            <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: LILAC }} />
-            read · obs:read
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: AMBER }} />
-            privileged · ops:write, acr=mfa
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <i className="inline-block h-0 w-6 border-t-[1.5px]" style={{ borderColor: LILAC }} />
-            request, carrying the token it was issued
-          </span>
-          <span className="inline-flex items-center gap-2">
-            {/* Neutral on purpose: the exchange takes the tier colour of its request. */}
-            <i
-              data-legend-exchange
-              className="inline-block h-0 w-6 border-t border-dashed border-white/60"
-            />
-            token exchange · RFC 8693
-          </span>
-        </p>
-        <button
-          type="button"
-          data-hero-toggle
-          aria-label={stopped ? 'Play animation' : 'Pause animation'}
-          aria-pressed={stopped}
-          title={stopped ? 'Play the animation' : 'Pause the animation'}
-          onClick={() => setStopped((v) => !v)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white/80 backdrop-blur transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-        >
-          {stopped ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
+          <p className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-white/60">
+            {/* The packet's colour is the tier — the legend has to say so. */}
+            <span className="inline-flex items-center gap-2">
+              <i
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: LILAC }}
+              />
+              read · obs:read
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <i
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: AMBER }}
+              />
+              privileged · ops:write, acr=mfa
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <i className="inline-block h-0 w-6 border-t-[1.5px]" style={{ borderColor: LILAC }} />
+              request, carrying the token it was issued
+            </span>
+            <span className="inline-flex items-center gap-2">
+              {/* Neutral on purpose: the exchange takes the tier colour of its request. */}
+              <i
+                data-legend-exchange
+                className="inline-block h-0 w-6 border-t border-dashed border-white/60"
+              />
+              token exchange · RFC 8693
+            </span>
+          </p>
+          <button
+            type="button"
+            data-hero-toggle
+            aria-label={stopped ? 'Play animation' : 'Pause animation'}
+            aria-pressed={stopped}
+            title={stopped ? 'Play the animation' : 'Pause the animation'}
+            onClick={() => setStopped((v) => !v)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white/80 backdrop-blur transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          >
+            {stopped ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
     </div>
   );

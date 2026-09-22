@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { ShieldCheck, Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
+import {
+  ShieldCheck,
+  Fingerprint,
+  KeyRound,
+  ShieldAlert,
+  Radar,
+  ArrowUpRight,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { HeroStage } from '@/components/hero-stage';
@@ -29,6 +36,9 @@ const CAPABILITIES = [
   },
   { icon: ShieldAlert, label: 'RFC 9470 step-up MFA', target: '#ask', tint: 'text-[#F7B9DE]' },
   { icon: Radar, label: 'OpenTelemetry tracing', target: '#result', tint: 'text-success' },
+  // No LLM chip on purpose: the dashed LLM provider node on the stage carries
+  // that claim (and jumps to the chain panel's leaf row); a fifth chip crowded
+  // the row without adding a capability the picture does not already show.
 ];
 
 const CHIP_CLASS =

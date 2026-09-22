@@ -21,12 +21,24 @@ describe('HeroStage', () => {
       'mcp-ops',
       'obs-api',
       'ops-api',
+      'LLM provider',
     ]) {
       expect(html, label).toMatch(new RegExp(`>${label}<`));
     }
     expect(html).toContain('CURITY');
     expect(html).toMatch(/sole token issuer · consulted at every hop/);
     expect(html).not.toMatch(/never in the request path/);
+  });
+  it('draws the LLM provider dashed, outside the trust domain, jumping to the chain panel', () => {
+    const node = html.match(/<g[^>]*data-node="llm-provider"[^]*?<\/g>/)?.[0] ?? '';
+    expect(html).toMatch(/<a[^>]*href="#chain"[^>]*>\s*<g[^>]*data-node="llm-provider"/);
+    expect(node).toMatch(/stroke-dasharray="4 3"/);
+    expect(node).toMatch(/outside the trust domain/);
+    expect(node).not.toMatch(/spiffe:\/\//);
+    // every workload stays solid
+    const gw = html.match(/<g[^>]*data-node="agentgateway"[^]*?<\/g>/)?.[0] ?? '';
+    expect(gw).toContain('<rect');
+    expect(gw).not.toMatch(/stroke-dasharray/);
   });
   it('shows only the legend under the picture — no narration, it flips too fast to read', () => {
     expect(html).not.toMatch(/data-hero-caption/);
@@ -97,6 +109,7 @@ describe('AppShell hero', () => {
       expect(html, target).toMatch(new RegExp(`<a[^>]*href="${target}"`));
     }
     expect(html).toContain('SPIFFE workload identity');
+    expect(html).not.toContain('Governed LLM egress'); // the stage's LLM node carries that claim
   });
   it('colours each chip icon by what it stands for, text stays white', () => {
     const icon = (label: string) => {

@@ -370,7 +370,16 @@ The page is built to be narrated top to bottom:
   expired*.
 - **Hero.** An animated stage of the delegation chain: one packet walks a read
   request and then a privileged one, dropping to Curity for every RFC 8693
-  exchange. The read run is lilac throughout and the privileged run amber
+  exchange. Once per journey it makes the **model call**: the agent exchanges
+  for the `aud=llm-gateway` leaf, carries it through agentgateway's `/llm`
+  route to the **LLM provider** (dashed — outside the trust domain, no SPIFFE
+  ID, never exchanges) and the packet fades there and reappears at the agent.
+  Signed in, that node jumps to the chain panel's leaf row — it is the stage's
+  claim for governed LLM egress, so there is no separate chip for it.
+  On the privileged run that happens *after* the specialist's trip to Curity,
+  because the role + `acr` gate fires before the model ever runs; that one dip
+  stands for both of its exchanges (`ops:write`, then the leaf) — two identical
+  back-to-back dips read as a stutter. The read run is lilac throughout and the privileged run amber
   throughout, exchange drops included — alice's token carries `ops:write` +
   `acr=mfa` from the step-up on, so amber is the journey's tier, never a hop's
   state. It has
