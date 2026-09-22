@@ -74,6 +74,34 @@ describe('Chat — Ask card', () => {
   });
 });
 
+describe('Chat — Workload identities card', () => {
+  const panel = (html: string) =>
+    html.match(/<div[^>]*id="identities"[\s\S]*?id="chain"/)?.[0] ?? '';
+
+  it('says no flow has run yet instead of conjuring a read chain', () => {
+    const html = panel(renderToStaticMarkup(<Chat preview={{ svids: [] }} />));
+    expect(html).toMatch(/No flow yet/);
+    expect(html).toMatch(/ask the copilot a question first/);
+    expect(html).not.toMatch(/Read flow/);
+    expect(html).not.toContain('data-chain-cards');
+  });
+
+  it('renders the chain cards once a flow has populated the panel', () => {
+    const svid = {
+      workload: 'web',
+      sub: 'spiffe://demo.curity.local/ns/web/sa/web',
+      aud: ['https://curity.localtest.me/oauth/v2/oauth-token'],
+      iss: 'https://oidc-discovery.demo.curity.local',
+      iat: 1000,
+      exp: 1300,
+      ttl_seconds: 300,
+    };
+    const html = panel(renderToStaticMarkup(<Chat preview={{ svids: [svid] }} />));
+    expect(html).not.toMatch(/No flow yet/);
+    expect(html).toContain('data-chain-cards');
+  });
+});
+
 describe('RequestFailure', () => {
   it('shows a denial as a verdict, in prose', () => {
     const html = renderToStaticMarkup(

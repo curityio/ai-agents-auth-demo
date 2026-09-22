@@ -206,7 +206,7 @@ only; gate them behind a flag before any production use.
 | `GET /spiffe-id` — every workload (agentgateway's is served by its `exchange-shim` through a no-auth gateway route) | none | the pod's decoded JWT-SVID claims (`sub`, `aud`, `iss`, `iat`, `exp`, `ttl_seconds`) — never the raw JWT |
 | `GET /last-token` — copilot, specialist, both MCP servers | Bearer for that hop's audience | `{ chain: ChainHop[] }`: this hop's inbound token plus the tokens it minted, decoded; `?raw=1` adds the raw JWT (only the BFF's `/api/inspect` asks) |
 | `GET /tools` — copilot, specialist | Bearer | the per-tier `tools/list` verdict for the caller (`ok` + tools with `requiredRoles`/`callable`, `step-up`, `denied`, or `error`) |
-| BFF `GET /api/spiffe-identities?flow=read\|privileged` | session | the SVIDs of exactly the workloads in that flow, in chain order (`web → agent-copilot → [agent-specialist →] agentgateway → mcp-observability [→ mcp-ops]`) |
+| BFF `GET /api/spiffe-identities?flow=read\|privileged` | session | the SVIDs of exactly the workloads in that flow, in chain order (`web → agent-copilot → [agent-specialist →] agentgateway → mcp-observability [→ mcp-ops]`). The route has no "no flow" answer — it is the panel that decides whether to call it: the flow comes from the answer on screen (`svidFlowToShow`), and before any answer the panel says *No flow yet* rather than defaulting to the read chain |
 | BFF `GET /api/obo-chain`, `GET /api/tools` | session | proxies of the copilot's `/last-token` and `/tools`; a 401 upstream is surfaced as `session_expired` |
 | BFF `GET /api/inspect` | session + `AUTH_DEBUG=true` | the copilot's `/last-token?raw=1`, for the `/inspect` page (404 when the flag is off) |
 

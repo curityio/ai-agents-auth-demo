@@ -306,7 +306,7 @@ a new answer, and each has a **Hide** control for when you are narrating:
 
 | Card | Button | What it shows |
 |---|---|---|
-| **Workload identities** | *Show identities* | The live SPIFFE JWT-SVIDs of exactly the workloads in the flow you last ran, in chain order — the `actor_token` of every exchange — each with a lifetime bar counting down its 5-minute TTL. Press *Refresh* twice a minute apart and a **rotated** badge marks the SVIDs `spiffe-helper` re-issued in between. |
+| **Workload identities** | *Show identities* | The live SPIFFE JWT-SVIDs of exactly the workloads in the flow you last ran, in chain order — the `actor_token` of every exchange — each with a lifetime bar counting down its 5-minute TTL. Before the first answer it says *No flow yet*: nothing has acted, so nothing is shown. Press *Refresh* twice a minute apart and a **rotated** badge marks the SVIDs `spiffe-helper` re-issued in between. |
 | **On-behalf-of chain** | *Show chain* | One row per token in the last flow, diffed against its parent: dropped scopes struck through, the appended `act` actor highlighted, `may_act` naming the next permitted actor and the next row confirming it. The `aud=llm-gateway` token appears as a *leaf* row (no `may_act`) under the agent that called the model. |
 | **Tools this token can reach** | *Check tools* | agentgateway's per-tier `tools/list` for *this* user, or the gate (step-up / Curity denial) that stopped the probe first. |
 

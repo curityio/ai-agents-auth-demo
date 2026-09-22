@@ -5,7 +5,7 @@
  * each example prompt (drives the chip icon so the audience can predict MFA).
  */
 import { describe, it, expect } from 'vitest';
-import { flowOf, panelsToRefresh, SUGGESTIONS } from '../src/lib/chat-rules';
+import { flowOf, panelsToRefresh, SUGGESTIONS, svidFlowToShow } from '../src/lib/chat-rules';
 
 describe('flowOf', () => {
   it('is privileged when the copilot routed to the specialist', () => {
@@ -15,6 +15,20 @@ describe('flowOf', () => {
   it('is read otherwise', () => {
     expect(flowOf({})).toBe('read');
     expect(flowOf({ route: undefined, specialist: undefined })).toBe('read');
+  });
+});
+
+describe('svidFlowToShow', () => {
+  it('is null before any prompt has been answered — the identities panel shows the flow you last ran, and none has', () => {
+    expect(svidFlowToShow(null)).toBeNull();
+  });
+  it('follows the answer on screen once there is one', () => {
+    expect(svidFlowToShow({})).toBe('read');
+    expect(svidFlowToShow({ route: 'a2a:specialist' })).toBe('privileged');
+  });
+  it('lets a fresh answer override the one on screen, so the refresh after a new answer never lags a render', () => {
+    expect(svidFlowToShow(null, 'privileged')).toBe('privileged');
+    expect(svidFlowToShow({ route: 'a2a:specialist' }, 'read')).toBe('read');
   });
 });
 

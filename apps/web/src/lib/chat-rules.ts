@@ -15,6 +15,22 @@ export function flowOf(response: { route?: string; specialist?: unknown }): Flow
   return response.route || response.specialist ? 'privileged' : 'read';
 }
 
+/**
+ * Which flow the identities panel should fetch SVIDs for. The panel shows the
+ * workloads of "the flow you last ran", so before any answer there is nothing
+ * to show — `null`, and the panel says so. Defaulting to the read chain here
+ * conjured four workloads that had not acted yet. A fresh answer passes its
+ * flow explicitly, because the refresh runs before React has re-rendered with
+ * the new response.
+ */
+export function svidFlowToShow(
+  response: { route?: string; specialist?: unknown } | null,
+  override?: Flow,
+): Flow | null {
+  if (override) return override;
+  return response ? flowOf(response) : null;
+}
+
 export interface OpenPanels {
   svidsOpen: boolean;
   oboOpen: boolean;

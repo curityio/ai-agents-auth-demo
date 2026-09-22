@@ -842,6 +842,13 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     - The ledger and the identities panel **never poll** — `useNow` ticks a 1 s clock
       for the countdowns, because re-fetching `/api/obo-chain` would add spans and
       OBO-log lines to the very telemetry the demo is showing.
+    - **The identities panel decides "which flow" from CLIENT state, and before any
+      answer that is "none".** `/api/spiffe-identities` always answers for the `flow`
+      it is given (default `read`), so `loadSvids` used to fall back to `read` and
+      show four workloads that had not acted yet. `svidFlowToShow` (`chat-rules.ts`)
+      returns `null` until a response is on screen and the panel prints *No flow yet*
+      without fetching. It cannot borrow the chain panel's server-side signal
+      (`/last-token` is empty until a flow runs) because that walk mints tokens.
 
 35. **Curity's login/consent pages are themed from CONFIG (`<themes><default-theme>` in
     the configmap), not template overrides or volume mounts.** Curity 11 renders every

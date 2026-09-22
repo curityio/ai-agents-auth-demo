@@ -33,6 +33,7 @@ import {
   flowOf,
   panelsToRefresh,
   SUGGESTION_GROUPS,
+  svidFlowToShow,
   type AgentFailure,
   type Flow,
 } from '@/lib/chat-rules';
@@ -190,8 +191,15 @@ export function Chat({
     try {
       // Show only the workloads in the flow the user just ran. The privileged
       // (A2A → mcp-ops) path is signalled by `route`/`specialist` on the response;
-      // anything else is the read path through mcp-observability.
-      const flow = flowOverride ?? (response ? flowOf(response) : 'read');
+      // anything else is the read path through mcp-observability. Before any
+      // answer there is no flow, so nothing is fetched and the panel says so —
+      // the same beat as the chain panel's "No hops yet".
+      const flow = svidFlowToShow(response, flowOverride);
+      if (!flow) {
+        setSvidRotated(new Set());
+        setSvids([]);
+        return;
+      }
       const r = await fetch(`/api/spiffe-identities?flow=${flow}`, { cache: 'no-store' });
       if (!r.ok) {
         setSvidError(`${r.status}: ${await r.text()}`);
@@ -493,7 +501,14 @@ export function Chat({
                 </AlertDescription>
               </Alert>
             )}
-            {svids && <WorkloadIdentities svids={svids} flow={svidFlow} rotated={svidRotated} />}
+            {svids && svids.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No flow yet — ask the copilot a question first, then refresh.
+              </p>
+            )}
+            {svids && svids.length > 0 && (
+              <WorkloadIdentities svids={svids} flow={svidFlow} rotated={svidRotated} />
+            )}
           </CardContent>
         )}
       </Card>
