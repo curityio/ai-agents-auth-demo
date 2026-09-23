@@ -425,7 +425,14 @@ export function Chat({
                   { callbackUrl: '/' },
                   {
                     acr_values: stepUp.acrValues,
-                    prompt: 'login consent',
+                    // NOT `login`: Curity's TOTP authenticator has html-auth as its
+                    // previous-authenticator, so the user's existing password SSO
+                    // session identifies them and the step-up lands straight on the
+                    // OTP page. prompt=login discards every SSO session and would put
+                    // a password prompt in front of the TOTP. The TOTP factor itself
+                    // cannot be satisfied by SSO (1s lifetime in the configmap), so
+                    // every privileged action still asks for a code.
+                    prompt: 'consent',
                     // Keep llm:invoke on the step-up re-auth: this scope string
                     // OVERRIDES the login default, so omitting it would strip
                     // llm:invoke from the post-MFA token and break the agents' LLM

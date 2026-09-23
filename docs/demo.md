@@ -61,6 +61,18 @@ second factor run as an authentication *action* leaves the token at
 `acr=html-form`, so the step-up fired anyway and they typed a TOTP twice. The
 three stories stay distinct because the **verdict after the step-up** differs.
 
+The step-up lands **directly on the TOTP code page** — no "Enter your username"
+in between. `totp-authn` names `html-auth` as its `previous-authenticator`, so
+the user's password SSO session (from the login minutes earlier) identifies them
+and Curity skips straight to the OTP form; a fresh browser with no session is
+sent to the password page first, then the OTP. Two things make that work and are
+easy to undo by accident: the step-up request sends `prompt=consent`, **not**
+`prompt=login` (which discards every SSO session and would put a password prompt
+back in front of the TOTP), and the web-app client has **no `force-authn`**
+(same effect, for every request). The TOTP factor itself is never satisfied by
+SSO — its `sso-expiration-time` is 1 s — so each privileged action asks for a
+code. Verified end to end with a scripted login + step-up on 2026-09-23.
+
 Outcomes: alice can read and, after step-up, restart *and* set image (the happy
 path). bob can read — including his own service's logs — and after the same
 step-up is **denied `ops:write` entirely**: he proved MFA seconds earlier and
@@ -359,7 +371,9 @@ The page is built to be narrated top to bottom:
   structure before the first login. The button sends `login_hint` (Curity
   pre-fills the username) and `prompt=login`: signing out of the app clears only
   its own cookie, so without that Curity's SSO session would silently sign the
-  *previous* person back in. The sheet is `apps/web/src/lib/personas.ts`; a test
+  *previous* person back in. (The plain *Sign in* button sends `prompt=login` for
+  the same reason — the Curity client no longer sets `force-authn`, see the
+  step-up note below.) The sheet is `apps/web/src/lib/personas.ts`; a test
   pins its roles to `add-roles.js` so the cards can never promise a role Curity
   does not assign.
 - **Hero legend.** Two swatches name what the packet's colour means (lilac =

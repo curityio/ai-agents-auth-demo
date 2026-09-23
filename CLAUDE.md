@@ -930,6 +930,40 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       overwritten by the next `make apply` — *Download CSS* there and paste into the tracked
       files instead.
 
+36. **The step-up lands on the TOTP page directly because TOTP is configured as a
+    SECOND factor — and three things must all hold, each of which was a bug first.**
+    Curity's TOTP authenticator, used standalone, renders "Enter your username" unless an
+    earlier authenticator in the same flow already identified the user
+    (`TOTPAuthenticateRequestHandler.get()` → `_authenticatedState.isAuthenticated()`).
+    `login_hint` does NOT skip it — it only feeds the remembered-username cookie that
+    prefills the field. What skips it:
+    - **`totp-authn` has `<previous-authenticator>html-auth</previous-authenticator>`.**
+      Curity then looks for an SSO session with html-auth's acr and, if found, hands its
+      attributes to TOTP; if not, it redirects to the password page first, then TOTP.
+    - **The step-up request must NOT send `prompt=login`** (`chat.tsx` sends
+      `prompt=consent`). `prompt=login` ⇒ `forceAuthN`, and `SsoManager.getFreshSsoSessions`
+      then keeps only sessions created in the current transaction — the password session is
+      invisible and the user gets password + TOTP, worse than before.
+    - **The web-app client must NOT have `<force-authn>true</force-authn>`** (removed
+      2026-09-23; it had been there since the initial commit, undocumented). A client-level
+      force has the same effect as `prompt=login` on EVERY request, regardless of `prompt`.
+      This one cost an hour: config and request looked right and Curity still redirected to
+      `html-auth`. Both LOGIN entry points (`sign-in-button.tsx`, `persona-cards.tsx`) now
+      force a fresh password with `prompt=login` themselves, which is what `force-authn` was
+      protecting (signing out of the app clears only its own cookie).
+    - **`totp-authn` has `sso-expiration-time=1`** so the mfa SSO session is never reusable:
+      every privileged action asks for a code even seconds after the last one. The profile
+      default (3600 s) stays on html-auth so the previous-authenticator can be satisfied for
+      an hour after login; after that the step-up shows password then TOTP.
+    - The pre-existing `mfa-totp` multi-factor-condition action on `html-auth` is inert: its
+      `attribute-enable-condition` keys on a `requireSecondFactor` attribute nothing sets.
+    - Apply config changes to a running Curity with `idsh` (fact #33). In `configure` mode the
+      profile list needs its TYPE key too: `delete profiles profile token-service oauth-service
+      settings …` — `show` accepts the id alone, `delete` does not (`"settings" is not a valid
+      value`). Editing the pod's `log4j2.xml` to TRACE did NOT take effect within two
+      `monitorInterval`s; don't count on it for diagnosis — read the source instead
+      (`~/workspace/curity/idsvr-work/identity-server`, `identityserver.authn`).
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:

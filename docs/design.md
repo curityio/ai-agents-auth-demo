@@ -365,6 +365,16 @@ the privileged scope at `acr=html-form`. The TIA makes it an **issuance invarian
 the token cannot exist. `scripts/smoke-stepup.sh` `[2/4]` asserts exactly that by
 driving a password-only login that *asks* for `ops:write` and checking it is withheld.
 
+**Step-up UX — TOTP as a second factor, not a standalone login.** The re-auth
+requests `acr_values=mfa` with `prompt=consent` (no `login`). `totp-authn` carries
+`previous-authenticator=html-auth`, so Curity satisfies the prerequisite from the
+user's existing password SSO session and renders the OTP page directly
+(`TOTPAuthenticateRequestHandler.get()` skips the username page whenever the
+`AuthenticatedState` is already populated). Anything that hides that SSO session —
+`prompt=login`, a client-level `force-authn`, `max_age` — reintroduces a password
+step in front of the TOTP. The TOTP factor's own SSO lifetime is 1 s, so it can never
+be satisfied silently and every privileged action still costs a code.
+
 Three properties worth knowing:
 
 - **It applies to every grant**, including each RFC 8693 hop

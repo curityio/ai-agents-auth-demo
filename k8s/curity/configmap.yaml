@@ -133,6 +133,15 @@ data:
                   <authentication-actions>
                     <login>add-roles</login>
                   </authentication-actions>
+                  <!-- Step-up (acr_values=mfa) must ask for the TOTP code EVERY time: a 1s SSO
+                       lifetime makes the mfa session unusable for a later silent SSO login, while
+                       html-auth keeps the profile default so it can satisfy previous-authenticator. -->
+                  <sso-expiration-time>1</sso-expiration-time>
+                  <!-- TOTP is a SECOND factor: the user's html-auth SSO session identifies them, so
+                       the step-up lands on the OTP page instead of "Enter your username". Requires
+                       the step-up request NOT to send prompt=login (that discards every SSO session
+                       and would add a password prompt in front of the TOTP). -->
+                  <previous-authenticator>html-auth</previous-authenticator>
                   <required-authenticator-for-registration>html-auth</required-authenticator-for-registration>
                   <totp xmlns="https://curity.se/ns/ext-conf/totp">
                     <account-manager>
@@ -525,10 +534,15 @@ data:
                     <scope>obs:read</scope>
                     <scope>ops:write</scope>
                     <scope>llm:invoke</scope>
+                    <!-- No <force-authn>: it discards EVERY SSO session on every authorize
+                         request, which would make the totp-authn previous-authenticator
+                         chain unable to see the user's password session (so step-up would
+                         ask for username or password again). The LOGIN paths force fresh
+                         authentication themselves with prompt=login (sign-in-button.tsx,
+                         persona-cards.tsx); the step-up in chat.tsx deliberately does not. -->
                     <user-authentication>
                       <allowed-authenticators>html-auth</allowed-authenticators>
                       <allowed-authenticators>totp-authn</allowed-authenticators>
-                      <force-authn>true</force-authn>
                     </user-authentication>
                     <allowed-origins>*</allowed-origins>
                     <capabilities>
