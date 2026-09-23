@@ -9,14 +9,84 @@
 # point: add the three otpauth URIs printed below to your authenticator app once, and
 # they stay valid across `make clean`, `make demo` and every Curity restart, because the
 # seed re-inserts the same secrets.
+#
+#   --print   Only re-print the persona cards (username, role, password, otpauth URI +
+#             QR) from the existing env file — no kubectl, no file writes. `make users`
+#             wraps it and `make demo` ends with it, because the URIs printed while
+#             seeding have scrolled off the screen by the time the URLs appear.
 set -euo pipefail
 
 ENV_FILE="${DEMO_USERS_ENV_FILE:-.demo-users.env}"
 NS="${NS_CURITY:-curity}"
 USERS=(alice bob carol)
 ISSUER="ai-agents-demo"
+PRINT_ONLY=false
+[[ "${1:-}" == "--print" ]] && PRINT_ONLY=true
 
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
+
+# Roles are assigned at login by k8s/curity/procedures/add-roles.js — this mirrors it
+# for display only (the contract test pins the two to each other).
+role_of() {
+  case "$1" in
+    alice) echo "sre        — full write tier, may set_deployment_image" ;;
+    carol) echo "oncall     — may restart/scale, NOT set_deployment_image" ;;
+    bob)   echo "developer  — read-only, ops:write is refused at the exchange" ;;
+    *)     echo "?" ;;
+  esac
+}
+
+env_value() { sed -n "s/^$(upper "$1")_$2=//p" "$ENV_FILE"; }
+
+# One card per persona: what the presenter needs to log in and to enrol the
+# authenticator app. Reads ONLY the env file, so it is safe to call without a cluster.
+print_personas() {
+  printf '\n'
+  printf '  ═══════════════════════════════════════════════════════════\n'
+  printf '   👤  Demo personas  —  sign-in credentials + TOTP QR codes\n'
+  printf '  ═══════════════════════════════════════════════════════════\n'
+  printf '\n'
+  printf '  Roles are assigned at login (add-roles.js); every persona is MFA-capable.\n'
+  printf '  Scan each QR (or type the otpauth URI / secret) into your authenticator app. \n'
+  printf '  The same secrets are re-seeded on every rebuild, so the entries never go stale.\n'
+  for u in "${USERS[@]}"; do
+    local password secret uri
+    password="$(env_value "$u" PASSWORD)"
+    secret="$(env_value "$u" TOTP_SECRET)"
+    uri="otpauth://totp/${ISSUER}:${u}?secret=${secret}&issuer=${ISSUER}&algorithm=SHA1&digits=6&period=30"
+    printf '\n'
+    printf '  %s   (role: %s)\n' "$u" "$(role_of "$u")"
+    printf '    %-14s %s\n' 'username' "$u"
+    printf '    %-14s %s\n' 'password' "$password"
+    printf '    %-14s %s\n' 'TOTP secret' "$secret"
+    printf '    %-14s %s\n' 'otpauth URI' "$uri"
+    if command -v qrencode >/dev/null 2>&1; then
+      # ANSI256UTF8, not ANSIUTF8: the latter paints with ANSI black/white (40/37), which
+      # terminal themes remap to their own dark/light tints — a low-contrast blue-grey QR
+      # that phone cameras struggle with. Indexed 256-colour black (16) / white (231) are
+      # left alone by themes. -m 2 keeps a real quiet zone around the code.
+      printf '\n'
+      qrencode -t ANSI256UTF8 -m 2 "$uri" | sed 's/^/      /'
+    fi
+  done
+  printf '\n'
+  if ! command -v qrencode >/dev/null 2>&1; then
+    printf '  (install qrencode to get scannable QR codes here: brew install qrencode)\n'
+  fi
+  printf '  Source of truth: %s (gitignored). Edit passwords there and re-run\n' "$ENV_FILE"
+  printf "  'make seed-users' to apply; keep the TOTP secrets — they are what your app holds.\n"
+  printf "  Re-print this any time with 'make users'.\n"
+  printf '\n'
+}
+
+if $PRINT_ONLY; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "ERROR: $ENV_FILE not found — run 'make seed-users' first (it generates the file and seeds Curity)." >&2
+    exit 1
+  fi
+  print_personas
+  exit 0
+fi
 
 # 20 random bytes as RFC 4648 base32 (32 chars, no padding) — what authenticator apps
 # and Curity's TOTP plugin both expect. node is a repo prerequisite; base32(1) is not
@@ -53,13 +123,4 @@ kubectl -n "$NS" create secret generic curity-demo-users \
   --from-env-file="$ENV_FILE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-echo ""
-echo "Authenticator entries (one per persona — the same every rebuild):"
-for u in "${USERS[@]}"; do
-  U="$(upper "$u")"
-  secret="$(sed -n "s/^${U}_TOTP_SECRET=//p" "$ENV_FILE")"
-  uri="otpauth://totp/${ISSUER}:${u}?secret=${secret}&issuer=${ISSUER}&algorithm=SHA1&digits=6&period=30"
-  echo "  $u  $uri"
-  if command -v qrencode >/dev/null 2>&1; then qrencode -t ANSIUTF8 "$uri"; fi
-done
-command -v qrencode >/dev/null 2>&1 || echo "  (install qrencode to get scannable QR codes here: brew install qrencode)"
+print_personas

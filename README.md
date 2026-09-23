@@ -107,12 +107,15 @@ make demo            # one command, end to end. Prompts up front for the license
                      # secret, builds/loads images, applies manifests, wires routing.
 
 # make demo finishes by printing every browser-exposed URL (app, Curity admin,
-# Grafana, plus the OAuth/SPIFFE metadata endpoints). Re-print anytime:
+# Grafana, plus the OAuth/SPIFFE metadata endpoints) and one card per demo persona
+# (username, role, password, otpauth URI + QR code). Re-print anytime:
 make urls
+make users
 
 # alice, carol & bob (password Password1) are seeded into Curity automatically, TOTP
-# included. Add their authenticator entries once — `make seed-users` prints the URIs —
-# then sign in (docs/curity-seed.md §Accounts):
+# included. Scan their QR codes into your authenticator app once — the secrets live in
+# the gitignored .demo-users.env and survive rebuilds — then sign in
+# (docs/curity-seed.md §Accounts):
 open https://app.localtest.me
 ```
 
@@ -132,6 +135,9 @@ token per tier.
 ```bash
 # Day-to-day cluster ops
 make urls            # print every browser-exposed URL (apps + metadata endpoints)
+make users           # print the demo personas: username, role, password, TOTP QR code
+make image-web       # rebuild + load ONE image (or: make images IMAGES="web mcp-ops");
+                     # then restart the deployments it prints — pods keep the old :dev image
 make status          # pod health across all namespaces
 make routing         # re-wire pod→Curity routing (after cluster recreation)
 make doctor          # Docker + KIND disk audit

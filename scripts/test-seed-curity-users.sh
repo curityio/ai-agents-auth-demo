@@ -40,6 +40,10 @@ cat > "$TMP/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$KUBECTL_CAPTURE"
 if [[ "$*" == *"--dry-run=client"* ]]; then echo "kind: Secret"; fi
+# `apply -f -` must DRAIN stdin like the real kubectl: exiting without reading makes the
+# `--dry-run | apply` pipeline's writer die of SIGPIPE (141) under pipefail — a flaky
+# "host script exited non-zero" that has nothing to do with the script under test.
+if [[ "$*" == *" -f -"* ]]; then cat >/dev/null; fi
 SH
 chmod +x "$TMP/bin/"*
 
@@ -138,4 +142,35 @@ PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl2.log" DEMO_USERS_ENV_FILE="$
   bash "$HOST" >/dev/null || fail "second host run exited non-zero"
 diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "an existing .demo-users.env must be reused verbatim (secrets must survive rebuilds)"
 
-green "OK: curity-users-init renders the four linked rows per persona, fails closed, seeds the DB copy; seed-curity-users keeps stable TOTP secrets"
+# ── 5. --print re-shows the personas for the presenter WITHOUT seeding anything ──
+# `make demo` ends with it (via `make users`): the URIs printed during seed-secrets
+# have long scrolled away by then, and the presenter needs username + password +
+# otpauth (QR) in one place to enrol the authenticator app.
+: > "$TMP/kubectl3.log"
+PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl3.log" DEMO_USERS_ENV_FILE="$ENVF" \
+  bash "$HOST" --print > "$TMP/print.out" || fail "--print exited non-zero"
+[[ ! -s "$TMP/kubectl3.log" ]] || fail "--print must not touch the cluster (kubectl was called)"
+diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "--print must not rewrite .demo-users.env"
+for u in alice bob carol; do
+  grep -q "^ *$u\b" "$TMP/print.out" || fail "--print must list $u"
+  grep -q "otpauth://totp/.*$u.*secret=$(sed -n "s/^$(echo $u | tr a-z A-Z)_TOTP_SECRET=//p" "$ENVF")" "$TMP/print.out" \
+    || fail "--print must show $u's otpauth URI with the secret from the env file"
+done
+grep -q "Password1" "$TMP/print.out" || fail "--print must show the passwords"
+grep -q "Custom9" "$TMP/print.out" || fail "--print must show an EDITED password (carol), not the default"
+# roles come from k8s/curity/procedures/add-roles.js — the card must agree with it
+grep -Eq "alice.*sre" "$TMP/print.out" || fail "--print must show alice's role (sre)"
+grep -Eq "carol.*oncall" "$TMP/print.out" || fail "--print must show carol's role (oncall)"
+grep -Eq "bob.*developer" "$TMP/print.out" || fail "--print must show bob's role (developer)"
+grep -q "$ENVF" "$TMP/print.out" || fail "--print must point the presenter at the env file"
+grep -q "make seed-users" "$TMP/print.out" || fail "--print must say how to re-seed after editing the file"
+
+# ── 6. --print with no env file fails closed and says how to create it ─────────
+if PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl4.log" DEMO_USERS_ENV_FILE="$TMP/missing.env" \
+   bash "$HOST" --print > "$TMP/missing.out" 2>"$TMP/missing.err"; then
+  fail "--print must fail when .demo-users.env does not exist"
+fi
+grep -q "make seed-users" "$TMP/missing.err" || fail "the missing-file error must point at 'make seed-users'"
+[[ ! -e "$TMP/missing.env" ]] || fail "--print must never create the env file"
+
+green "OK: curity-users-init renders the four linked rows per persona, fails closed, seeds the DB copy; seed-curity-users keeps stable TOTP secrets and --print re-shows the persona cards"

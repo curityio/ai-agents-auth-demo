@@ -41,6 +41,14 @@ CERT_DIR ?= certs
 # App images, keyed by their apps/<name>/Dockerfile. Used by `make images`
 # (build + kind load) and `make clean` (removal).
 IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web exchange-shim
+# The subset `make images` actually builds — defaults to everything. Override to
+# rebuild one or more: `make images IMAGES="web agent-copilot"`, or `make image-web`.
+IMAGES ?= $(IMAGE_NAMES)
+
+# Where each image runs, for the post-load "now restart these" hint (a reloaded :dev
+# image does NOT restart a running pod — imagePullPolicy IfNotPresent keeps the old one).
+# exchange-shim is a sidecar inside the agentgateway Deployment.
+image_deploy = $(if $(filter exchange-shim,$1),mcp/agentgateway,$(if $(filter agent-%,$1),agents/$1,$(if $(filter mcp-%,$1),mcp/$1,$(if $(filter %-api,$1),apis/$1,$1/$1))))
 
 # ---- platform chart versions (PINNED — see below) ----
 # Every `helm upgrade --install` passes an explicit --version. Without one Helm
@@ -286,15 +294,29 @@ curity-theme: ## Embed k8s/curity/theme/*.css as Base64 into the Curity configma
 # Application images + deploy
 # ============================================================================
 .PHONY: images
-images: ## Build all app images and load them into KIND
-	@for img in $(IMAGE_NAMES); do \
+images: ## Build app images and load them into KIND — all by default, or a subset: IMAGES="web mcp-ops" (see also image-<name>)
+	@unknown="$(filter-out $(IMAGE_NAMES),$(IMAGES))"; \
+	  if [ -n "$$unknown" ]; then \
+	    echo "ERROR: unknown image(s): $$unknown"; \
+	    echo "  valid names: $(IMAGE_NAMES)"; exit 2; fi
+	@for img in $(IMAGES); do \
 	  echo "==> build ai-agents-demo/$$img:dev"; \
 	  docker build -t ai-agents-demo/$$img:dev -f apps/$$img/Dockerfile . || exit $$?; \
 	done
-	@for img in $(IMAGE_NAMES); do \
+	@for img in $(IMAGES); do \
 	  echo "==> kind load ai-agents-demo/$$img:dev"; \
 	  kind load docker-image --name $(CLUSTER_NAME) ai-agents-demo/$$img:dev || exit $$?; \
 	done
+	@echo ""
+	@echo "==> Loaded: $(IMAGES)"
+	@echo "    Running pods keep the OLD image until restarted. On a live cluster run:"
+	@$(foreach img,$(IMAGES),echo "      kubectl -n $(word 1,$(subst /, ,$(call image_deploy,$(img)))) rollout restart deploy/$(word 2,$(subst /, ,$(call image_deploy,$(img))))";)
+	@echo "    (a fresh 'make apply' after 'make demo' needs none of this)"
+
+# `make image-web`, `make image-agent-copilot`, … — one image, same build + load path.
+.PHONY: $(addprefix image-,$(IMAGE_NAMES))
+$(addprefix image-,$(IMAGE_NAMES)): image-%: ## Build + load ONE image (image-web, image-mcp-ops, …)
+	@$(MAKE) --no-print-directory images IMAGES=$*
 
 .PHONY: apply
 apply: curity-procedures curity-truststore curity-theme render-gateway-config ## Apply all manifests (assumes images built/loaded) and run routing
@@ -574,14 +596,14 @@ demo-inputs: ## Gather the license file + LLM provider credentials up front (int
 demo: tools-check demo-inputs kind-up certs platform seed-secrets images apply ## Stand up EVERYTHING on a fresh KIND cluster (one command)
 	@echo ""
 	@echo "==> Platform, secrets, images, and manifests are all deployed."
-	@echo "    alice, bob and carol are seeded into Curity (password Password1 unless you"
-	@echo "    edited .demo-users.env). Add their TOTP entries to your authenticator app"
-	@echo "    once — 'make seed-users' prints the otpauth URIs — they survive rebuilds."
+	@echo "    alice, bob and carol are seeded into Curity — their credentials and"
+	@echo "    authenticator (TOTP) QR codes are printed below the URLs."
 	@echo ""
 	@echo "    TLS note: the mkcert root CA was NOT added to your keychain, so the"
 	@echo "    browser will warn on https://app.localtest.me (safe to proceed)."
 	@echo "    (Optional) To trust the CA and remove the warnings: make trust-ca  (undo: mkcert -uninstall)"
 	@$(MAKE) --no-print-directory urls
+	@$(MAKE) --no-print-directory users
 	@echo "    Full runbook: docs/demo.md"
 	@echo ""
 
@@ -604,8 +626,12 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '    %-41s https://$(HOST_MCP_OPS)/.well-known/oauth-protected-resource\n'  'mcp-ops resource metadata'
 	@printf '    %-41s https://$(HOST_MCP_OBS)/.well-known/oauth-protected-resource\n'  'mcp-observability resource metadata'
 	@printf '\n'
-	@printf '  Note: the apps need the alice/bob accounts seeded in Curity first (see above).\n'
+	@printf '  Sign in as one of the demo personas — credentials + TOTP QR codes: make users\n'
 	@printf '\n'
+
+.PHONY: users
+users: ## Print the demo personas: usernames, roles, passwords, otpauth URIs + QR codes (also shown at the end of `make demo`)
+	@bash scripts/seed-curity-users.sh --print
 
 # ============================================================================
 # Teardown + diagnostics

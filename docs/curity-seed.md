@@ -76,8 +76,9 @@ and publishes it as the `curity-demo-users` Secret. The Curity pod's init contai
 (`scripts/curity-users-init.sh`) then writes the accounts, password hashes and TOTP
 enrolments straight into the file-based HSQLDB before the server opens it, so they
 are back after every restart or rebuild with the **same** secrets. Add the three
-otpauth URIs that `make seed-users` prints to your authenticator app once (re-run it
-any time to print them again; `brew install qrencode` for scannable codes). To change
+otpauth URIs to your authenticator app once: `make demo` ends by printing a card per
+persona (username, role, password, URI + QR code), and `make users` re-prints them
+without touching the cluster (`brew install qrencode` for scannable codes). To change
 a password, edit `.demo-users.env` and re-run `make seed-users`. The **persona sheet**
 below is what the seed writes.
 

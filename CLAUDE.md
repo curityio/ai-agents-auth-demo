@@ -939,9 +939,10 @@ make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, m
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
 make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret; prints the otpauth URIs (fact #15)
+make users           # re-print the persona cards (username/role/password/otpauth + QR) from .demo-users.env; `make demo` ends with it
 make configure-llm   # switch LLM provider after editing .demo.env
 make validate-llm    # validate all provider fragments against the pinned gateway image
-make images          # build all 8 app images and `kind load` them
+make images          # build all 8 app images and `kind load` them; IMAGES="web mcp-ops" or `make image-web` for a subset — then rollout-restart the printed deployments
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace

@@ -306,15 +306,19 @@ The alice, carol & bob accounts — passwords and TOTP enrolments included — a
 seeded into Curity's HSQLDB by an init container on every boot, from the
 `curity-demo-users` Secret that `make seed-users` creates out of the gitignored
 `.demo-users.env` ([`curity-seed.md`](curity-seed.md) §Accounts). What no script
-can do is put the secrets into *your* authenticator app: `make seed-users` prints
-one `otpauth://` URI per persona (a QR code too, with `qrencode` installed). Add
-them once — the same secrets are re-seeded after every restart and rebuild, so the
-entries never go stale. Passwords default to `Password1`.
+can do is put the secrets into *your* authenticator app. `make demo` ends by
+printing one card per persona — username, role, password, `otpauth://` URI and a
+scannable QR code (with `qrencode` installed: `brew install qrencode`) — and
+`make users` re-prints them any time. Scan them once — the same secrets are
+re-seeded after every restart and rebuild, so the entries never go stale.
+Passwords default to `Password1`; `.demo-users.env` is the source of truth (edit it
+and re-run `make seed-users` to change a password — keep the TOTP secrets).
 
 ### 5.3 Drive the demo
 
-`make demo` finishes by printing every browser-exposed URL — re-run `make urls`
-any time to see it again:
+`make demo` finishes by printing every browser-exposed URL, followed by the
+persona cards from §5.2 — re-run `make urls` / `make users` any time to see them
+again:
 
 ```text
   ═══════════════════════════════════════════════════════════
@@ -334,10 +338,10 @@ any time to see it again:
     mcp-observability resource md    https://mcp-observability.localtest.me/.well-known/oauth-protected-resource
 ```
 
-The **Apps** are click-to-use (the demo app needs alice/carol/bob seeded first,
-§5.2 — register them through the app's login flow via the HTML Authenticator's
-"create account" feature). The **Identity & metadata** URLs are live OAuth/SPIFFE
-discovery documents — handy for showing what each hop fetches.
+The **Apps** are click-to-use — sign in with one of the persona cards `make users`
+prints (§5.2; the accounts are seeded automatically, nothing to register). The
+**Identity & metadata** URLs are live OAuth/SPIFFE discovery documents — handy for
+showing what each hop fetches.
 
 ```bash
 make status            # (optional) confirm pods are Ready across all namespaces
@@ -762,7 +766,7 @@ make reset             # delete cluster + reclaim docker build cache
 | Every panel says *session expired*; the chain shows only hop 0 | The 10-minute Curity access token expired — the header pill counts it down and turns amber in the last minute. Sign in again (or step up) and re-run the flow. |
 | TLS warnings in the browser | Expected — `make certs` no longer installs the root CA into the keychain by default. Run `make trust-ca` and restart the browser to trust it (undo with `mkcert -uninstall`). |
 | Curity pod stuck in `Init:Error` / `CreateContainerConfigError` | The `seed-users` init container failed. `kubectl -n curity logs deploy/curity -c seed-users`; a missing `curity-demo-users` Secret means `make seed-users` has not run. |
-| A TOTP code is rejected after a rebuild | The authenticator entry belongs to an older `.demo-users.env`. Re-run `make seed-users` and re-enrol the printed URIs; the file — not the cluster — is the source of truth. |
+| A TOTP code is rejected after a rebuild | The authenticator entry belongs to an older `.demo-users.env`. Re-run `make seed-users`, then `make users` and re-enrol the printed QR codes; the file — not the cluster — is the source of truth. |
 
 ---
 
