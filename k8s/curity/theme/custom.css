@@ -8,6 +8,22 @@
 /* The app's .bg-app keeps its aurora fixed while the page scrolls. */
 body {
   background-attachment: fixed;
+  /* main.css never sets a text colour on body: h1/p carry their own variables,
+     but anything without a rule of its own — <pre> on the error pages — falls
+     back to the browser default, black on the dark well. Inherit the theme's. */
+  color: var(--color-text);
+}
+pre {
+  color: var(--color-text);
+}
+
+/* <code> hard-codes a near-white background (#f7fafc) under var(--color-text) —
+   lavender on white here (error identifiers, backup codes). Same surface as the
+   inputs. main.css's `pre code { background-color: unset }` still wins inside pre. */
+code {
+  background-color: var(--form-field-background-color);
+  border-color: var(--form-field-border-color);
+  color: var(--form-field-color);
 }
 
 /* Frost the well like the app's cards. */

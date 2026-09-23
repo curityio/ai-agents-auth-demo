@@ -907,9 +907,19 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       report after shipping the theme. `custom.css` re-routes those (and `dialog`,
       `.well-white`, `.well-border`) through the field/well variables. Sweep for more with
       `grep -oE '[^}]*\{[^}]*background(-color)?:#fff[^}]*\}' main.css` before adding a
-      template to the demo. A TOTP page needs a live login, so verify OTP styling with a
-      local fixture: the `otp-input.vm` markup + the three stylesheets Curity serves, in
-      order, screenshotted with headless Chrome.
+      template to the demo. Two more found on the error pages (2026-09-23): `code`
+      hard-codes `background-color:#f7fafc` under `var(--color-text)` (lavender on
+      white — the *Error identifier* chip), and main.css sets NO text colour on `body`
+      or `pre`, so `<pre>` (the error message) fell back to browser-default black on
+      the dark well; `custom.css` now gives `body`/`pre` the theme text colour and
+      routes `code` through the field variables. A TOTP page needs a live login, so
+      verify styling with a local fixture: the template markup + the three stylesheets
+      Curity serves, in order, screenshotted with headless Chrome — and load the
+      candidate theme as a **file** via `<link>`, never an inline `<style>`: the page's
+      `style-src` CSP carries a nonce, so inline styles are silently dropped
+      (`style.sheet === null`) and the fixture renders Curity's defaults. A probe script
+      reporting `getComputedStyle` colours + WCAG contrast per element turns the
+      screenshot into numbers (message 1.13 → 11.2, chip 1.59 → 20.0).
     - The CSP pins `font-src 'self'` and no template variable widens it, so matching the
       app's Figtree font would need woff2 files mounted into the pod's webroot — Roboto
       stays on purpose.
