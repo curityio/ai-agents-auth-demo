@@ -16,6 +16,7 @@ k8s/secrets-local/
 certs/
 license.json
 .demo.env
+.demo-users.env
 
 # editor
 .vscode/

@@ -92,9 +92,10 @@ test: test-scripts ## Run all unit tests (vitest, via turbo) + the shell-script 
 	pnpm turbo run test
 
 .PHONY: test-scripts
-test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed)
+test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed, user seeding)
 	bash scripts/test-render-gateway-config.sh
 	bash scripts/test-embed-curity-theme.sh
+	bash scripts/test-seed-curity-users.sh
 
 .PHONY: typecheck
 typecheck: ## Type-check all workspaces
@@ -302,6 +303,11 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	# on first start. The `curity-license` secret is created separately by
 	# `make seed-license` (run by `make demo` / `make seed-secrets`) from ./license.json.
 	kubectl apply -f k8s/curity/configmap.yaml
+	# The persona seeder the Curity pod's init container runs (see deployment.yaml).
+	# Its inputs are the curity-demo-users Secret from `make seed-users`.
+	kubectl -n $(NS_CURITY) create configmap curity-users-init-script \
+	  --from-file=curity-users-init.sh=scripts/curity-users-init.sh \
+	  --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/curity/deployment.yaml
 	# Target namespace + sample workloads the agents act on.
 	kubectl apply -f k8s/prod/namespace.yaml
@@ -362,8 +368,13 @@ routing-check: ## Verify every app pod is wired to reach Curity (read-only; no r
 # back to prompting if .demo.env is absent (standalone re-seed).
 # ============================================================================
 .PHONY: seed-secrets
-seed-secrets: seed-license seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-observability-secret seed-gateway-secret ## Seed the license + every workload secret + agent keys
-	@echo "==> License + all workload secrets seeded."
+seed-secrets: seed-license seed-users seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-observability-secret seed-gateway-secret ## Seed the license + demo users + every workload secret + agent keys
+	@echo "==> License + demo users + all workload secrets seeded."
+
+.PHONY: seed-users
+seed-users: ## Seed alice/bob/carol (+ stable TOTP secrets) — writes .demo-users.env once, creates the curity-demo-users Secret, prints the otpauth URIs
+	@NS_CURITY=$(NS_CURITY) bash scripts/seed-curity-users.sh; \
+	  $(call restart_if_exists,$(NS_CURITY),curity)
 
 .PHONY: seed-license
 seed-license: ## Install the Curity license secret from ./license.json
@@ -563,8 +574,9 @@ demo-inputs: ## Gather the license file + LLM provider credentials up front (int
 demo: tools-check demo-inputs kind-up certs platform seed-secrets images apply ## Stand up EVERYTHING on a fresh KIND cluster (one command)
 	@echo ""
 	@echo "==> Platform, secrets, images, and manifests are all deployed."
-	@echo "    Last step (Curity's in-memory account store starts empty):"
-	@echo "      • Create the alice and bob accounts + enrol TOTP — see docs/curity-seed.md (§Accounts)"
+	@echo "    alice, bob and carol are seeded into Curity (password Password1 unless you"
+	@echo "    edited .demo-users.env). Add their TOTP entries to your authenticator app"
+	@echo "    once — 'make seed-users' prints the otpauth URIs — they survive rebuilds."
 	@echo ""
 	@echo "    TLS note: the mkcert root CA was NOT added to your keychain, so the"
 	@echo "    browser will warn on https://app.localtest.me (safe to proceed)."

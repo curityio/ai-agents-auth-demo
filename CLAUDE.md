@@ -163,8 +163,39 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     procedure refetches on an unknown `kid`. (Historically this was an embedded
     snapshot refreshed via `make spire-jwks-snapshot`; that tooling is gone.)
 
-15. **`kubectl rollout restart deploy/curity` wipes the in-memory HSQLDB** — re-
-    seed alice/bob + TOTP per `docs/curity-seed.md`.
+15. **Curity's users are seeded automatically: the HSQLDB is FILE-based, not
+    in-memory, and an init container writes the personas into it before idsvr
+    opens it.** The idsvr image ships a pristine, schema-complete HSQLDB at
+    `/opt/idsvr/var/db` (`db.script` plus a plaintext-SQL `db.log` — read it to see
+    exactly which rows a UI action writes); users used to vanish on restart only
+    because nothing was mounted there. `k8s/curity/deployment.yaml` mounts an
+    `emptyDir` at that path and runs `scripts/curity-users-init.sh` (same image;
+    shipped via the `curity-users-init-script` ConfigMap that `make apply` creates)
+    as an init container: it copies the pristine DB into the volume, renders
+    alice/bob/carol as the FOUR rows a real registration + TOTP enrolment writes —
+    `accounts`, `credentials` (`$5$` SHA-256-crypt from the image's own
+    `crypttools --password`), `devices` (`device_type=idsvr-totp`, `account_id` +
+    `owner` = the account id) and `buckets` (`purpose=totp_key_store`, `subject` =
+    the DEVICE id, not the account id, `{"totp_key":"<base32>"}`) — applies them
+    with the bundled `hsqltool` (SqlTool) and ends with `SHUTDOWN;`. Inputs come
+    from the `curity-demo-users` Secret, written by `make seed-users` (part of
+    `seed-secrets`) from the gitignored `.demo-users.env`: passwords default to
+    `Password1`, TOTP secrets are generated ONCE and then reused verbatim, so the
+    presenter adds the three printed otpauth URIs to an authenticator app once and
+    they survive `rollout restart`, `make clean` and `make demo` (verified: login +
+    `acr=mfa` step-up after a restart with the same secret). Gotchas: an emptyDir is
+    root-owned, so the pod sets `securityContext.fsGroup: 10000` (idsvr's gid) or
+    the init container dies with `Permission denied`; `cp -a` onto the volume root
+    fails on `preserving times` — it uses `cp -R`; the row shapes are pinned to the
+    11.4.0 image and a mismatch fails LOUDLY (`Init:Error`), never silently;
+    `scripts/test-seed-curity-users.sh` (`make test-scripts`) pins the SQL and the
+    usernames to `add-roles.js`. A restart still discards everything ELSE in the
+    store (consent grants, sessions, `used_totp_store`), which is harmless — but it
+    does mean the first scripted login after a restart meets the consent page,
+    which `smoke-stepup.sh`'s `parse_post_form` now submits (`submit_consent` +
+    checkboxes as `on`). Since the debug action left the html-auth chain, an
+    ACCEPTED password answers 200 with the "Redirecting…" resume form rather than a
+    302 — `web_login_access_token` walks "response in hand" hops for that reason.
 
 16. **Tempo retention is 30 min and its query API is on `:3200`** (not 3100).
     Empty TraceQL usually means expiry; query within ~25 min of driving the demo.
@@ -741,7 +772,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       enclosing `<token-issuance-authorizers>` is core `profile-oauth` and inherits.
       Omit the xmlns and ConfD refuses the whole file with only *"One or more of the XML
       files in the /opt/idsvr/etc/init directory are corrupt"* — no element named, and
-      Curity CrashLoops, which per fact #15 also costs an HSQLDB re-seed.
+      Curity CrashLoops (per fact #15 the users come back by themselves — consent
+      grants and sessions do not).
     - **Validate offline before applying, in ~25s.** Boot the SAME pinned image in a
       scratch namespace with the candidate configmap + the license secret, then read the
       config back out of CDB: `printf 'show configuration profiles profile token-service
@@ -895,7 +927,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 ```bash
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
 make demo            # stand up the full platform on a fresh KIND cluster
-make seed-secrets    # interactive: web/mcp secrets, agent RSA keypairs, LLM provider key
+make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
+make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret; prints the otpauth URIs (fact #15)
 make configure-llm   # switch LLM provider after editing .demo.env
 make validate-llm    # validate all provider fragments against the pinned gateway image
 make images          # build all 8 app images and `kind load` them
@@ -912,8 +945,8 @@ make clean           # full teardown
 make reset           # tear down + reclaim docker build cache (ENOSPC recovery)
 ```
 
-**First-time setup:** `make demo` → seed Curity offline per `docs/curity-seed.md`
-→ install the license Secret → `make seed-secrets` → `make images apply` →
+**First-time setup:** put `license.json` in the repo root → `make demo` (it seeds the
+license, the users and every workload secret) → `make images apply` →
 `make status` → open `https://app.localtest.me`. Full runbook: `docs/demo.md`.
 
 **TypeScript dev loop** (pnpm 9.x via corepack):

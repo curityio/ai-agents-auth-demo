@@ -8,7 +8,8 @@ export) and the token-exchange procedure in
 `k8s/curity/procedures/token-exchange.js`. For how the exchange policy works
 (per-client audience/scope caps, the nested `act` chain, the role gate, step-up),
 see [`design.md`](design.md) §3.2. This page is the human-facing checklist for
-the bits you seed by hand (license + users).
+the bits that come from outside the repo (the license) and for what the automatic
+user seed puts into Curity (§Accounts).
 
 ---
 
@@ -63,24 +64,31 @@ CSS* and paste into the tracked files instead.
 
 ### Authenticators
 - HTML Form authenticator
-- In-memory account manager — fine for the demo; swap for a real DB in production
+- Account manager on Curity's bundled file-based HSQLDB, seeded by an init
+  container at every boot (§Accounts) — fine for the demo; swap for a real DB in production
 - TOTP authenticator enrolled for each user (drives the RFC 9470 step-up for `ops:write`)
 
 ### Accounts
-Create accounts alice, carol, and bob via the HTML Form authenticator's
-"create account" flow during login. Use the **persona sheet** below for the
-name and email fields: the web app's header pill shows them, and Curity's
-in-memory store is wiped on every Curity restart (fact #15), so a fixed sheet
-keeps the demo looking the same across re-seeds.
+The three accounts are **seeded automatically**. `make seed-users` (run by
+`make seed-secrets` / `make demo`) writes a gitignored `.demo-users.env` — passwords
+default to `Password1`, and each persona gets a random TOTP secret generated once —
+and publishes it as the `curity-demo-users` Secret. The Curity pod's init container
+(`scripts/curity-users-init.sh`) then writes the accounts, password hashes and TOTP
+enrolments straight into the file-based HSQLDB before the server opens it, so they
+are back after every restart or rebuild with the **same** secrets. Add the three
+otpauth URIs that `make seed-users` prints to your authenticator app once (re-run it
+any time to print them again; `brew install qrencode` for scannable codes). To change
+a password, edit `.demo-users.env` and re-run `make seed-users`. The **persona sheet**
+below is what the seed writes.
 
 | Username | Display name | Email | Who they are | Password | Roles | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `alice` | Alice Andersson | `alice@demo.curity.local` | SRE lead | (your choice) | `sre` | Happy-path SRE. `ops:write` triggers the on-demand RFC 9470 `acr=mfa` challenge; after it she may use **all** ops tools incl. `set_deployment_image`. `sre` alone passes both gates — she deliberately has no second role. |
-| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | (your choice) | `developer` | Counter-example. Can read his own service's logs (`obs:read`); a restart steps him up like everyone else and is THEN refused by the role gate — he proved MFA and still gets no `ops:write`. Nothing reads `developer`; it exists to be *not* a write role. |
-| `carol` | Carol Carlsson | `carol@demo.curity.local` | On-call engineer this week | (your choice) | `oncall` | Holds a write role, so after the step-up gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is denied downstream at **mcp-ops** (`sre`-only). She *sees* the tool in `tools/list` — the gateway lists all ops tools — the **call** is what's refused. "This week" is the talking point: `oncall` is a role attached to a rotation, not a person. |
+| `alice` | Alice Andersson | `alice@demo.curity.local` | SRE lead | `Password1` | `sre` | Happy-path SRE. `ops:write` triggers the on-demand RFC 9470 `acr=mfa` challenge; after it she may use **all** ops tools incl. `set_deployment_image`. `sre` alone passes both gates — she deliberately has no second role. |
+| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | `Password1` | `developer` | Counter-example. Can read his own service's logs (`obs:read`); a restart steps him up like everyone else and is THEN refused by the role gate — he proved MFA and still gets no `ops:write`. Nothing reads `developer`; it exists to be *not* a write role. |
+| `carol` | Carol Carlsson | `carol@demo.curity.local` | On-call engineer this week | `Password1` | `oncall` | Holds a write role, so after the step-up gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is denied downstream at **mcp-ops** (`sre`-only). She *sees* the tool in `tools/list` — the gateway lists all ops tools — the **call** is what's refused. "This week" is the talking point: `oncall` is a role attached to a rotation, not a person. |
 
-All three enrol TOTP (the step-up needs it) and **none is forced through it at
-login**. bob and carol used to be (`requireSecondFactor` in `add-roles.js`), but a
+All three come **pre-enrolled for TOTP** (the step-up needs it) with the secrets in
+`.demo-users.env`, and **none is forced through it at login**. bob and carol used to be (`requireSecondFactor` in `add-roles.js`), but a
 second factor run as an authentication *action* leaves the token's `acr` at the
 primary authenticator's `html-form`, so the `ops:write` TIA stripped the scope and
 the step-up fired anyway — a TOTP typed twice for nothing. Everyone now steps up
@@ -92,7 +100,8 @@ The signed-out landing page shows this same sheet as three *Sign in as …* card
 button passes the username as `login_hint`, so Curity's form opens pre-filled.
 
 > Roles are assigned by `k8s/curity/procedures/add-roles.js` keyed on username, so the
-> account **usernames must be exactly** `alice`, `carol`, `bob`. The write-tier gate
+> account **usernames must be exactly** `alice`, `carol`, `bob` —
+> `scripts/test-seed-curity-users.sh` pins the seeded usernames to that procedure. The write-tier gate
 > (`token-exchange.js`) admits `ops:write` for `sre` **or** `oncall`; the finer
 > `set_deployment_image` = `sre`-only split is enforced **downstream at `mcp-ops`**
 > (`Config.toolRequiredRoles`), not at the agentgateway — the gateway lists and
@@ -123,12 +132,11 @@ not procedure code: the ACR Token Issuance Authorizer bound to the scope
 
 ## Cluster-side seeding
 
-`make demo` already does all of this for you — it runs `seed-secrets` (license +
-every workload secret + the agent keypairs), then `images` and `apply`. The only
-step it can't automate is creating the **alice/carol/bob accounts** in Curity's
-in-memory store; do that by hand during the login flow via the HTML Form
-authenticator's "create account" feature (see §Accounts above) — open
-`https://app.localtest.me`, register alice, carol & bob, then log in as Alice.
+`make demo` does all of this for you — it runs `seed-secrets` (license + demo users
++ every workload secret + the agent keypairs), then `images` and `apply`. Nothing is
+created by hand: the alice/carol/bob accounts and their TOTP enrolments are written
+by the Curity pod's init container from the `curity-demo-users` Secret (§Accounts).
+Open `https://app.localtest.me` and sign in as alice with `Password1`.
 
 `make seed-secrets` does **not** prompt for client secrets: the web and MCP
 clients use the fixed demo value `Password1` (whose hash is committed in the

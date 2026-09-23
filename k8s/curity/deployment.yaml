@@ -22,6 +22,31 @@ spec:
         app: curity
     spec:
       serviceAccountName: curity
+      # The idsvr image runs as idsvr (uid 10001, gid 10000); an emptyDir is root-owned,
+      # so without fsGroup the init container cannot write the seeded DB into it.
+      securityContext:
+        fsGroup: 10000
+      # Seed alice/bob/carol (+ TOTP) into the file-based HSQLDB BEFORE idsvr opens it.
+      # The image ships a pristine schema-complete DB at /opt/idsvr/var/db; the init
+      # container copies it into the `db` emptyDir, INSERTs the persona rows with the
+      # bundled hsqltool, and exits. Inputs come from the curity-demo-users Secret
+      # (`make seed-users`); the script from the curity-users-init-script ConfigMap
+      # (`make apply`, from scripts/curity-users-init.sh). Same image → same uid, so
+      # the files are owned by idsvr. A restart re-runs it with the SAME secrets.
+      initContainers:
+        - name: seed-users
+          image: curity.azurecr.io/curity/idsvr:latest
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/curity-users-init.sh"]
+          envFrom:
+            - secretRef:
+                name: curity-demo-users
+          volumeMounts:
+            - name: db
+              mountPath: /seed
+            - name: seed-script
+              mountPath: /scripts
+              readOnly: true
       containers:
         - name: idsvr
           # Pin to a known-good Curity Identity Server image in your seed step.
@@ -39,6 +64,8 @@ spec:
             - name: LOGGING_LEVEL
               value: DEBUG
           volumeMounts:
+            - name: db
+              mountPath: /opt/idsvr/var/db
             - name: config
               mountPath: /opt/idsvr/etc/init/curity-config.xml
               subPath: curity-config.xml
@@ -58,6 +85,11 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 30
       volumes:
+        - name: db
+          emptyDir: {}
+        - name: seed-script
+          configMap:
+            name: curity-users-init-script
         - name: config
           configMap:
             name: curity-config

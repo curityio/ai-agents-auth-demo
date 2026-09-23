@@ -31,8 +31,8 @@
 # Token env vars (each obtained by signing in at https://app.localtest.me and
 # reading the token from /api/whoami's log with AUTH_DEBUG=true — see below):
 #   SMOKE_TOKEN_ALICE_MFA  — alice, authenticated WITH MFA (acr=mfa; role sre). REQUIRED.
-#   SMOKE_ALICE_PASSWORD   — alice's html-form password (whatever you chose when you
-#         registered her; see docs/curity-seed.md). Optional → skips [2/4]. NOT a
+#   SMOKE_ALICE_PASSWORD   — alice's html-form password. Defaults to ALICE_PASSWORD in
+#         .demo-users.env (written by `make seed-users`); unset + no file → skips [2/4]. NOT a
 #         token: [2/4] drives the login itself, because the thing under test is what
 #         Curity will ISSUE, and no pre-existing token can demonstrate a refusal to
 #         mint one. The web-app client secret is read from the `web-secrets` Secret
@@ -150,6 +150,7 @@ class Form(HTMLParser):
         self.fields = []
         self._in = False
         self._done = False
+        self._submitted = False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -158,7 +159,19 @@ class Form(HTMLParser):
             self.action = a.get("action") or ""
         elif tag == "input" and self._in:
             name = a.get("name")
-            if name and (a.get("type") or "text").lower() != "submit":
+            kind = (a.get("type") or "text").lower()
+            if not name:
+                return
+            if kind == "submit":
+                # The Curity consent page has TWO named submits (submit_consent, then
+                # cancel_consent) and re-renders forever unless the first is sent.
+                if not self._submitted:
+                    self._submitted = True
+                    self.fields.append((name, a.get("value") or ""))
+            elif kind == "checkbox":
+                # consent.* boxes are rendered checked+disabled with no value attr.
+                self.fields.append((name, a.get("value") or "on"))
+            else:
                 self.fields.append((name, a.get("value") or ""))
 
     def handle_endtag(self, tag):
@@ -185,7 +198,8 @@ print(f.action + "\t" + urllib.parse.urlencode(f.fields))
 #     an already-used code and read as a policy failure rather than a test bug.
 #   - The html-form authenticator is GET-then-POSTed at the same path
 #     (/authn/authentication/html-auth) and carries no hidden CSRF field, so userName
-#     and password are the whole form.
+#     and password are the whole form. An accepted password answers 200 with the
+#     "Redirecting…" resume form (not a 302) now that no action follows it.
 #   - The chain is NOT all redirects: it interleaves 302s with rendered forms (see
 #     parse_post_form). All of this was read off the running instance, not assumed.
 web_login_access_token() {
@@ -204,50 +218,49 @@ web_login_access_token() {
     --data-urlencode "state=smoke-$$" \
     || { echo "authorize request failed" >&2; rm -f "$jar"; return 1; }
 
-  # 2. Pick the html-form authenticator, then post the credentials to it.
+  # 2. Pick the html-form authenticator, then post the credentials to it. The
+  #    response is the first "page in hand" for the walk below.
   curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null \
     "$CURITY_BASE/authn/authentication/html-auth"
-  loc=$(curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null -D - \
-    --data-urlencode "userName=$user" --data-urlencode "password=$pass" \
-    "$CURITY_BASE/authn/authentication/html-auth" \
-    | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -1)
-  if [[ -z "$loc" ]]; then
-    echo "login did not advance (no redirect from the credential POST) — wrong password?" >&2
-    rm -f "$jar"; return 1
-  fi
+  hdr=$(mktemp); page=$(mktemp)
+  loc="$CURITY_BASE/authn/authentication/html-auth"
+  curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o "$page" -D "$hdr" \
+    --data-urlencode "userName=$user" --data-urlencode "password=$pass" "$loc"
 
-  # 3. Advance the chain until the next hop leaves Curity; that hop carries ?code=.
+  # 3. Walk the chain from the response in hand: a 302 is followed, a 200 must carry
+  #    a POST form which is submitted as-is (hidden token/state), until the next hop
+  #    leaves Curity carrying ?code=. Since the debug action left the html-auth chain
+  #    (2026-09-21) an ACCEPTED password answers 200 with the "Redirecting…" resume
+  #    form rather than a 302; a REJECTED one re-renders the login form, whose
+  #    `password` field is the tell.
   while ((hops < 12)); do
     hops=$((hops + 1))
-    [[ "$loc" == /* ]] && loc="$CURITY_BASE$loc"
-    [[ "$loc" == *app.localtest.me* ]] && break
-
-    hdr=$(mktemp); page=$(mktemp)
-    curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o "$page" -D "$hdr" "$loc"
     nloc=$(awk 'tolower($1)=="location:"{print $2}' "$hdr" | tr -d '\r' | tail -1)
-
     if [[ -z "$nloc" ]]; then
-      form=$(parse_post_form < "$page") || {
+      form=$(parse_post_form < "$page") || form=""
+      if [[ -z "$form" ]]; then
         echo "chain stalled at $loc after $hops hops (no redirect, no POST form)" >&2
         rm -f "$hdr" "$page" "$jar"; return 1
-      }
+      fi
+      if [[ "$form" == *"password="* ]]; then
+        echo "login did not advance (the credential POST re-rendered the login form) — wrong password?" >&2
+        rm -f "$hdr" "$page" "$jar"; return 1
+      fi
       action=${form%%$'\t'*}
       body=${form#*$'\t'}
       [[ -z "$action" ]] && action="$loc"
       [[ "$action" == /* ]] && action="$CURITY_BASE$action"
-      nloc=$(curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o /dev/null -D - \
-        --data "$body" "$action" \
-        | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -1)
+      curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o "$page" -D "$hdr" \
+        --data "$body" "$action"
+      loc="$action"
+      continue
     fi
-
-    rm -f "$hdr" "$page"
-    if [[ -z "$nloc" ]]; then
-      echo "chain stalled after $hops hops (last: $loc)" >&2
-      rm -f "$jar"; return 1
-    fi
+    [[ "$nloc" == /* ]] && nloc="$CURITY_BASE$nloc"
     loc="$nloc"
+    [[ "$loc" == *app.localtest.me* ]] && break
+    curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -o "$page" -D "$hdr" "$loc"
   done
-  rm -f "$jar"
+  rm -f "$hdr" "$page" "$jar"
 
   code=$(printf '%s' "$loc" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
   if [[ -z "$code" ]]; then
@@ -393,6 +406,12 @@ esac
 # resource-server check still executes on every call and stays covered by
 # apps/mcp-ops/tests/auth-middleware.test.ts ("401 insufficient_user_authentication
 # when acr is not mfa").
+# Default alice's password from the seeded persona file (`make seed-users`) so [2/4]
+# runs unattended on a seeded cluster; an explicit SMOKE_ALICE_PASSWORD still wins.
+DEMO_USERS_ENV_FILE="${DEMO_USERS_ENV_FILE:-.demo-users.env}"
+if [[ -z "${SMOKE_ALICE_PASSWORD:-}" && -f "$DEMO_USERS_ENV_FILE" ]]; then
+  SMOKE_ALICE_PASSWORD="$(sed -n 's/^ALICE_PASSWORD=//p' "$DEMO_USERS_ENV_FILE")"
+fi
 if [[ -z "${SMOKE_ALICE_PASSWORD:-}" ]]; then
   yellow "SKIP [2/4]: SMOKE_ALICE_PASSWORD not set — alice's html-form password (see"
   yellow "            docs/curity-seed.md). [2/4] drives the login itself."

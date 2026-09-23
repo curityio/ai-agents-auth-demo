@@ -66,9 +66,9 @@ path). bob can read — including his own service's logs — and after the same
 step-up is **denied `ops:write` entirely**: he proved MFA seconds earlier and
 is still refused. carol can read, restart and scale after her step-up, but
 `set_deployment_image` is **denied** at `mcp-ops`: authz is per-tool, not just
-per-tier. Names and emails are what you type when you register the accounts
-([`curity-seed.md`](curity-seed.md) §Accounts) — the header pill shows them, so
-keep them consistent across re-seeds.
+per-tier. Names, emails and passwords come from the automatic seed
+([`curity-seed.md`](curity-seed.md) §Accounts): the password is `Password1` unless
+you edited `.demo-users.env`.
 
 The target is the `prod` namespace, which holds two remediable sample
 deployments named like real microservices: **`order-service`** and
@@ -300,14 +300,16 @@ gitignored `.demo.env`). Then it runs **unattended**:
 - **images / apply** build + load all images and apply every manifest, then wire
   pod routing.
 
-### 5.2 Seed the alice, carol & bob accounts (the only manual step)
+### 5.2 Enrol the TOTP entries (the only thing left for a human)
 
-Curity's in-memory account store starts empty. The three demo users are created
-**during the login flow** via the HTML Authenticator's "create account"
-functionality — register alice, carol & bob and enrol TOTP for each per
-[`curity-seed.md`](curity-seed.md) (§Accounts). The clients, scopes, and token
-procedures all load from the configmap — only the **accounts** are seeded by
-hand.
+The alice, carol & bob accounts — passwords and TOTP enrolments included — are
+seeded into Curity's HSQLDB by an init container on every boot, from the
+`curity-demo-users` Secret that `make seed-users` creates out of the gitignored
+`.demo-users.env` ([`curity-seed.md`](curity-seed.md) §Accounts). What no script
+can do is put the secrets into *your* authenticator app: `make seed-users` prints
+one `otpauth://` URI per persona (a QR code too, with `qrencode` installed). Add
+them once — the same secrets are re-seeded after every restart and rebuild, so the
+entries never go stale. Passwords default to `Password1`.
 
 ### 5.3 Drive the demo
 
@@ -759,7 +761,8 @@ make reset             # delete cluster + reclaim docker build cache
 | Empty Grafana traces | Tempo 30-min retention expiry — re-drive and query promptly. |
 | Every panel says *session expired*; the chain shows only hop 0 | The 10-minute Curity access token expired — the header pill counts it down and turns amber in the last minute. Sign in again (or step up) and re-run the flow. |
 | TLS warnings in the browser | Expected — `make certs` no longer installs the root CA into the keychain by default. Run `make trust-ca` and restart the browser to trust it (undo with `mkcert -uninstall`). |
-| Users gone after a Curity restart | `kubectl rollout restart deploy/curity` wipes the in-memory HSQLDB — re-seed per [`curity-seed.md`](curity-seed.md). |
+| Curity pod stuck in `Init:Error` / `CreateContainerConfigError` | The `seed-users` init container failed. `kubectl -n curity logs deploy/curity -c seed-users`; a missing `curity-demo-users` Secret means `make seed-users` has not run. |
+| A TOTP code is rejected after a rebuild | The authenticator entry belongs to an older `.demo-users.env`. Re-run `make seed-users` and re-enrol the printed URIs; the file — not the cluster — is the source of truth. |
 
 ---
 

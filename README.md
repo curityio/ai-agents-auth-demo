@@ -110,9 +110,9 @@ make demo            # one command, end to end. Prompts up front for the license
 # Grafana, plus the OAuth/SPIFFE metadata endpoints). Re-print anytime:
 make urls
 
-# The ONLY manual step left: create the alice, carol & bob user accounts (+ TOTP) in
-# Curity when running the login flow via the HTML Authenticator create account feature —
-# see docs/curity-seed.md (§Accounts).:
+# alice, carol & bob (password Password1) are seeded into Curity automatically, TOTP
+# included. Add their authenticator entries once — `make seed-users` prints the URIs —
+# then sign in (docs/curity-seed.md §Accounts):
 open https://app.localtest.me
 ```
 
@@ -185,8 +185,9 @@ Makefile
 ## Troubleshooting
 
 See the table in [`docs/demo.md`](docs/demo.md#8-troubleshooting). The most
-common gotchas: re-run `make routing` after recreating the cluster, and re-seed
-Curity users after any `rollout restart deploy/curity`.
+common gotcha: re-run `make routing` after recreating the cluster. (Curity users
+survive a `rollout restart` — an init container re-seeds them from the
+`curity-demo-users` Secret.)
 
 ## License
 

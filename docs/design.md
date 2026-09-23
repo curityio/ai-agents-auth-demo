@@ -871,8 +871,10 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
 - **Cluster recreation invalidates ClusterIPs** → re-run `make routing`. SPIRE
   key rotation is handled automatically — the procedure refetches SPIRE's JWKS
   on an unknown kid.
-- **`kubectl rollout restart deploy/curity` wipes the in-memory HSQLDB** → users
-  (alice/carol/bob + TOTP) must be re-seeded per [`curity-seed.md`](curity-seed.md).
+- **`kubectl rollout restart deploy/curity` discards the HSQLDB volume** → the
+  `seed-users` init container re-creates alice/carol/bob + their TOTP enrolments
+  from the `curity-demo-users` Secret with the same secrets; only consent grants
+  and sessions are lost ([`curity-seed.md`](curity-seed.md) §Accounts).
 - **Tempo retention is 30 minutes** (ephemeral demo storage) — query traces
   within ~25 minutes of driving the demo, or empty TraceQL results will look
   like a broken pipeline when it's just expiry.
