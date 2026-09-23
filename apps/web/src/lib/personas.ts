@@ -32,18 +32,16 @@ export const PERSONAS: readonly Persona[] = [
     roles: ['sre'],
     verdict: 'step-up, then every tool',
     outcome: 'success',
-    story:
-      'Reads freely. The first privileged action stops for a TOTP code; after that the restart and the image change both go through.',
+    story: 'Reads freely. Privileged actions require MFA after that the actions will go through.',
   },
   {
     username: 'bob',
     displayName: 'Bob Bergström',
-    job: 'Backend developer, owns order-service',
+    job: 'Backend developer',
     roles: ['developer'],
     verdict: 'ops:write refused',
     outcome: 'destructive',
-    story:
-      'Reads freely, including his own service’s logs. A restart stops for a TOTP code like everyone else — and is then refused: he just proved MFA, but Curity never issues him ops:write.',
+    story: 'Reads freely but denied all privileged actions.',
   },
   {
     username: 'carol',
@@ -53,6 +51,6 @@ export const PERSONAS: readonly Persona[] = [
     verdict: 'one tool refused',
     outcome: 'warning',
     story:
-      'Reads; after one TOTP code, restarts and scales. Changing an image is refused at the tool server — she can see that tool, but not call it.',
+      'Reads freely. Privileged actions are limited. Changing an image action is refused at the tool server.',
   },
 ];
