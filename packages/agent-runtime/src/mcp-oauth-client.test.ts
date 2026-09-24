@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { _resetAuthorizationServerCache } from './authorization-server.js';
-import { discoverMcpAuthorization, isDiscoveryFailure, _resetDiscoveryCache } from './mcp-oauth-client.js';
+import {
+  createMcpAuthProvider,
+  discoverMcpAuthorization,
+  isDiscoveryFailure,
+  _resetDiscoveryCache,
+} from './mcp-oauth-client.js';
 
 const SERVER = 'https://mcp-gateway.localtest.me/ops/mcp';
 const PRM_URL = 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp';
@@ -174,5 +179,94 @@ describe('isDiscoveryFailure', () => {
     }
     expect(isDiscoveryFailure(new CurityAuthError('x', 'invalid_scope'))).toBe(false);
     expect(isDiscoveryFailure(new Error('x'))).toBe(false);
+  });
+});
+
+describe('createMcpAuthProvider', () => {
+  it('acquire() discovers then exchanges with the discovered token endpoint and scope; token() returns it', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const exchange = vi.fn(async () => 'TOKEN-1');
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 'agent-specialist', exchange, fetchImpl: f });
+    expect(await p.token()).toBeUndefined();
+    expect(await p.acquire()).toBe('TOKEN-1');
+    expect(exchange).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenEndpoint: AS.token_endpoint, scope: 'ops:write' }),
+    );
+    expect(await p.token()).toBe('TOKEN-1');
+    expect(p.current().discovery?.resourceMetadataUrl).toBe(PRM_URL);
+  });
+
+  it('discover() mints nothing', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const exchange = vi.fn(async () => 'TOKEN-1');
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 's', exchange, fetchImpl: f });
+    const d = await p.discover();
+    expect(d.scope).toBe('ops:write');
+    expect(exchange).not.toHaveBeenCalled();
+    expect(await p.token()).toBeUndefined();
+  });
+
+  it('onUnauthorized re-acquires with a forced discovery from the received challenge', async () => {
+    const { f, calls } = fakeFetch(HAPPY);
+    const exchange = vi.fn().mockResolvedValueOnce('TOKEN-1').mockResolvedValueOnce('TOKEN-2');
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 's', exchange, fetchImpl: f });
+    await p.acquire();
+    const before = calls.length;
+    const response = new Response(null, {
+      status: 401,
+      headers: { 'www-authenticate': `Bearer error="invalid_token", resource_metadata="${PRM_URL}"` },
+    });
+    await p.onUnauthorized({ response, serverUrl: new URL(SERVER), fetchFn: f });
+    // Forced: the PRM and AS were fetched again (cache bypassed), no second probe (challenge supplied).
+    expect(calls.slice(before)).toEqual([`GET ${PRM_URL}`, `GET ${AS_URL}`]);
+    expect(exchange).toHaveBeenCalledTimes(2);
+    expect(await p.token()).toBe('TOKEN-2');
+  });
+
+  it('onUnauthorized refuses to exchange or retry on an RFC 9470 step-up challenge', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const exchange = vi.fn(async () => 'TOKEN-1');
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 's', exchange, fetchImpl: f });
+    await p.acquire();
+    const response = new Response(null, {
+      status: 401,
+      headers: {
+        'www-authenticate': `Bearer realm="mcp-ops", error="insufficient_user_authentication", acr_values="mfa", resource_metadata="${PRM_URL}"`,
+      },
+    });
+    await expect(p.onUnauthorized({ response, serverUrl: new URL(SERVER), fetchFn: f }))
+      .rejects.toThrowError(expect.objectContaining({ code: 'step_up_required' }));
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('a discovery failure inside acquire() is logged as DENY once and rethrown with its code', async () => {
+    const { f } = fakeFetch({ ...HAPPY, [`GET ${PRM_URL}`]: { body: { ...PRM, resource: 'https://other/mcp' } } });
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((s: unknown) => { logs.push(String(s)); });
+    try {
+      const p = createMcpAuthProvider({ serverUrl: SERVER, service: 'agent-copilot', exchange: async () => 'x', fetchImpl: f });
+      await expect(p.acquire()).rejects.toThrowError(expect.objectContaining({ code: 'resource_mismatch' }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logs.filter((l) => l.includes('[agent-copilot] DENY')).length).toBe(1);
+  });
+
+  it('an exchange refusal is NOT double-logged here (exchangeToken already logs DENY)', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((s: unknown) => { logs.push(String(s)); });
+    try {
+      const p = createMcpAuthProvider({
+        serverUrl: SERVER,
+        service: 'agent-copilot',
+        exchange: async () => { throw new CurityAuthError('needs mfa', 'invalid_scope'); },
+        fetchImpl: f,
+      });
+      await expect(p.acquire()).rejects.toThrowError(expect.objectContaining({ code: 'invalid_scope' }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logs.some((l) => l.includes('DENY'))).toBe(false);
   });
 });

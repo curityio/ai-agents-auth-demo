@@ -20,10 +20,14 @@ export {
   type ResolvedAuthorizationServer,
 } from './authorization-server.js';
 export {
+  createMcpAuthProvider,
   discoverMcpAuthorization,
   isDiscoveryFailure,
   wellKnownPrmUrls,
   DISCOVERY_TTL_MS,
   type McpAuthDiscovery,
+  type McpAuthProvider,
+  type McpExchangeInput,
   type ProtectedResourceMetadata,
+  type UnauthorizedContext,
 } from './mcp-oauth-client.js';

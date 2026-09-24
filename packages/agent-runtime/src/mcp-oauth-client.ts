@@ -238,5 +238,91 @@ export async function discoverMcpAuthorization(
  */
 export type UnauthorizedContext = Parameters<NonNullable<AuthProvider['onUnauthorized']>>[0];
 
-// The AuthProvider half (createMcpAuthProvider) is added in the next task.
+export interface McpExchangeInput {
+  tokenEndpoint: string;
+  scope: string;
+  discovery: McpAuthDiscovery;
+}
+
+/**
+ * The SDK's minimal auth seam plus two explicit entry points the agents call at
+ * the SAME places they used to call `obtainXToken`, so the specialist's gate
+ * order (ops exchange → acr pre-check → open toolsets) is unchanged:
+ *  - `discover()`  learns the AS without minting (the /tools probe's acr pre-check
+ *                  needs the discovered scope + acr_values before any exchange);
+ *  - `acquire()`   discover + exchange, stores the token;
+ *  - `token()`     what the transport attaches to every request;
+ *  - `onUnauthorized()` the transport's 401 hook: forced re-discovery from the
+ *                  received challenge, one more exchange, then the SDK retries once.
+ * One provider per toolset open: tokens are per subject and must never be shared
+ * across users. The discovery cache underneath is process-global.
+ */
+export interface McpAuthProvider extends AuthProvider {
+  discover(): Promise<McpAuthDiscovery>;
+  acquire(): Promise<string>;
+  current(): { token?: string; discovery?: McpAuthDiscovery };
+  token(): Promise<string | undefined>;
+  onUnauthorized(ctx: UnauthorizedContext): Promise<void>;
+}
+
+export function createMcpAuthProvider(opts: {
+  serverUrl: string;
+  service: string;
+  exchange: (input: McpExchangeInput) => Promise<string>;
+  fetchImpl?: FetchLike;
+}): McpAuthProvider {
+  let token: string | undefined;
+  let discovery: McpAuthDiscovery | undefined;
+
+  const discover = async (o: { force?: boolean; challenge?: Response } = {}): Promise<McpAuthDiscovery> => {
+    try {
+      discovery = await discoverMcpAuthorization(opts.serverUrl, {
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        service: opts.service,
+        ...o,
+      });
+      return discovery;
+    } catch (e) {
+      // The ONE exit every discovery failure crosses (fact #31). Exchange refusals
+      // are deliberately not logged here — exchangeToken's own catch already does.
+      oboLog({
+        service: opts.service,
+        kind: 'DENY',
+        headline: `→ ${opts.serverUrl} (discovery failed)`,
+        fields: {
+          error: e instanceof CurityAuthError ? e.code : 'discovery_failed',
+          description: e instanceof Error ? e.message : String(e),
+        },
+      });
+      throw e;
+    }
+  };
+
+  const acquire = async (o: { force?: boolean; challenge?: Response } = {}): Promise<string> => {
+    const d = await discover(o);
+    token = await opts.exchange({ tokenEndpoint: d.tokenEndpoint, scope: d.scope, discovery: d });
+    return token;
+  };
+
+  return {
+    discover: () => discover(),
+    acquire: () => acquire(),
+    current: () => ({ token, discovery }),
+    token: async () => token,
+    onUnauthorized: async ({ response }) => {
+      const { error } = extractWWWAuthenticateParams(response);
+      if (error === 'insufficient_user_authentication') {
+        // RFC 9470: more authentication from the USER, not a fresh token for the
+        // agent. Never exchanged, never retried. The specialist's intercepting fetch
+        // normally converts this before the transport sees it; this is defence in depth.
+        throw new CurityAuthError(
+          `step-up required: ${response.headers.get('www-authenticate') ?? ''}`,
+          'step_up_required',
+        );
+      }
+      await acquire({ force: true, challenge: response });
+    },
+  };
+}
+
 export type { AuthProvider };
