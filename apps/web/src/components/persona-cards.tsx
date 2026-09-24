@@ -66,10 +66,9 @@ export function PersonaCards() {
           Sign in as one of the three seeded users
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Same copilot, same cluster. Everyone signs in with a password; the first privileged
-          action asks for a TOTP code. What each person may do after that is decided by Curity,
-          the gateway and the tool servers — and every verdict is shown on this page as it
-          happens.
+          Same copilot, same cluster. Everyone signs in with a password and the first privileged
+          action requires a TOTP code. What each person may do after that is decided by Curity,
+          the gateway and the tool servers, with every decision displayed on this page in real time.
         </p>
       </div>
       <ul className="mt-6 grid gap-4 md:grid-cols-3">
