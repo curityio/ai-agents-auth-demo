@@ -625,7 +625,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     back to `createServer`. Relatedly, `otel-bootstrap` disables the `net`/`dns`/`fs`
     auto-instrumentations (`packages/otel-bootstrap/src/instrumentation-config.ts`):
     `tcp.connect`/`tls.connect` were a third of a read-path waterfall and say nothing
-    about delegation. Failures still surface on the enclosing HTTP span.
+    about delegation. Failures still surface on the enclosing HTTP span. The same
+    package also RENAMES the `http`/`undici` spans via `requestHook`
+    (`span-names.ts`): the conventions name a client span `POST` and a server span
+    `POST` until a router sets `http.route` — which the ESM race above often
+    prevents — so a waterfall read `agent-copilot POST` six times over. They now
+    read `METHOD /path` in both directions: `POST /observability/mcp`, `GET
+    /.well-known/oauth-authorization-server/…`, `POST /oauth/v2/oauth-token`,
+    `POST /chat`. Path only — the host stays in `server.address` — and query
+    strings are dropped. Fine here because every path is fixed; the convention's
+    cardinality warning applies the moment a path carries user data.
 
 29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
     `traceparent`, and MCP backends mis-parent the origin span.** Three separate

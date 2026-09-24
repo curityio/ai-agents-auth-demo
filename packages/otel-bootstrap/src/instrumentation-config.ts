@@ -20,11 +20,23 @@ export const NOISY_INSTRUMENTATIONS = [
   '@opentelemetry/instrumentation-fs',
 ] as const;
 
+import type { Span } from '@opentelemetry/api';
+import { httpRequestHook, undiciRequestHook } from './span-names.js';
+
+export interface InstrumentationEntry {
+  enabled?: false;
+  requestHook?: (span: Span, request: unknown) => void;
+}
+
 /**
- * Config passed to `getNodeAutoInstrumentations()`. Only ever disables — anything
- * not named here keeps its upstream default, so `http`, `undici` and `express`
- * (which carry every hop span and the `auth.*` identity attributes) are untouched.
+ * Config passed to `getNodeAutoInstrumentations()`. Two kinds of entry, nothing
+ * else: the noisy instrumentations above are DISABLED, and `http` + `undici` get a
+ * `requestHook` that renames their spans to `METHOD host/path` (see span-names.ts —
+ * a bare `POST` row told the audience nothing). Anything not named here keeps its
+ * upstream default; `express` (which gives the servers their `http.route`) is untouched.
  */
-export const INSTRUMENTATION_CONFIG: Record<string, { enabled: false }> = Object.fromEntries(
-  NOISY_INSTRUMENTATIONS.map((name) => [name, { enabled: false }]),
-);
+export const INSTRUMENTATION_CONFIG: Record<string, InstrumentationEntry> = {
+  ...Object.fromEntries(NOISY_INSTRUMENTATIONS.map((name) => [name, { enabled: false as const }])),
+  '@opentelemetry/instrumentation-undici': { requestHook: undiciRequestHook },
+  '@opentelemetry/instrumentation-http': { requestHook: httpRequestHook },
+};

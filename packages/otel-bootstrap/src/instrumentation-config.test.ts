@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { INSTRUMENTATION_CONFIG, NOISY_INSTRUMENTATIONS } from './instrumentation-config.js';
+import { undiciRequestHook, httpRequestHook } from './span-names.js';
 
 describe('INSTRUMENTATION_CONFIG', () => {
   it('disables the net instrumentation, which contributes only tcp/tls connect spans', () => {
@@ -31,13 +32,19 @@ describe('INSTRUMENTATION_CONFIG', () => {
       '@opentelemetry/instrumentation-express',
     ]) {
       expect(NOISY_INSTRUMENTATIONS).not.toContain(keep);
-      expect(INSTRUMENTATION_CONFIG[keep]).toBeUndefined();
+      expect(INSTRUMENTATION_CONFIG[keep]?.enabled).not.toBe(false);
     }
   });
 
-  it('only ever disables — it never enables something that ships off by default', () => {
-    for (const cfg of Object.values(INSTRUMENTATION_CONFIG)) {
-      expect(cfg).toEqual({ enabled: false });
+  it('names http/undici spans by host + path via request hooks (bare "POST" told the audience nothing)', () => {
+    expect(INSTRUMENTATION_CONFIG['@opentelemetry/instrumentation-undici']?.requestHook).toBe(undiciRequestHook);
+    expect(INSTRUMENTATION_CONFIG['@opentelemetry/instrumentation-http']?.requestHook).toBe(httpRequestHook);
+  });
+
+  it('never enables something that ships off by default — only disables noise or adds hooks', () => {
+    for (const [name, cfg] of Object.entries(INSTRUMENTATION_CONFIG)) {
+      if ((NOISY_INSTRUMENTATIONS as readonly string[]).includes(name)) expect(cfg).toEqual({ enabled: false });
+      else expect(cfg).not.toHaveProperty('enabled');
     }
   });
 });
