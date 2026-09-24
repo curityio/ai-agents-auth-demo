@@ -91,7 +91,6 @@ async function main(): Promise<void> {
         audience: cfg.expectedAudience,
         mcp_ops_url: cfg.mcpOpsUrl,
         mcp_ops_audience: cfg.mcpOpsAudience,
-        mcp_ops_scope: cfg.mcpOpsScope,
       }),
     );
   });

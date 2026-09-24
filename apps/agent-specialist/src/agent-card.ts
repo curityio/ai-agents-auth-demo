@@ -30,7 +30,7 @@ export function buildAgentCard(cfg: Config): AgentCard {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        description: `Curity-issued JWT, aud=${cfg.expectedAudience}, scope ${cfg.mcpOpsScope}, act.sub=agent-copilot.`,
+        description: `Curity-issued JWT, aud=${cfg.expectedAudience}, act.sub=agent-copilot.`,
       },
     },
     security: [{ bearer: [] }],

@@ -4,7 +4,7 @@
  *
  * The probe must reuse the SAME gates the real remediation runs through, in the
  * same order, so the card the presenter shows is truthful for every persona:
- *   acr pre-check (no token minted) → ops:write exchange (role gate) → tools/list.
+ *   discovery (nothing minted) → acr pre-check (no token minted) → ops:write exchange (role gate) → tools/list.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
@@ -12,14 +12,29 @@ import { listOpsTools, toolInfos, type ToolsDeps } from '../src/tools-route.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
-  mcpOpsUrl: 'http://gw/ops/mcp',
-  mcpOpsScope: 'ops:write',
+  mcpOpsUrl: 'https://mcp-gateway.localtest.me/ops/mcp',
   requiredAcr: 'mfa',
 } as unknown as Config;
 
+const OPS_DISCOVERY = {
+  resourceMetadataUrl: 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp',
+  resourceMetadata: { resource: cfg.mcpOpsUrl, scopes_supported: ['ops:write'], acr_values_supported: ['mfa'] },
+  scope: 'ops:write',
+};
+
+function fakeProvider(token: string, acquireError?: Error) {
+  return {
+    discover: vi.fn(async () => OPS_DISCOVERY),
+    acquire: vi.fn(async () => { if (acquireError) throw acquireError; return token; }),
+    current: () => ({ token, discovery: OPS_DISCOVERY }),
+    token: async () => token,
+    onUnauthorized: async () => {},
+  };
+}
+
 function deps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
   return {
-    obtainOpsToken: vi.fn(async () => 'OPS_TOKEN'),
+    buildOpsAuthProvider: vi.fn(() => fakeProvider('OPS_TOKEN')) as never,
     openMcpToolset: vi.fn(async () => ({
       tools: {},
       listed: [
@@ -33,30 +48,32 @@ function deps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
 }
 
 describe('listOpsTools', () => {
-  it('reports step-up when the caller has not done MFA, WITHOUT minting a privileged token', async () => {
-    const d = deps();
-    const out = await listOpsTools({
-      cfg,
-      bearer: 'B',
-      claims: { sub: 'alice', acr: 'html-form' },
-      deps: d,
-    });
+  it('reports step-up from the DISCOVERED acr_values_supported and scope, WITHOUT minting a privileged token', async () => {
+    const provider = fakeProvider('OPS_TOKEN');
+    const d = deps({ buildOpsAuthProvider: vi.fn(() => provider) as never });
+    const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'html-form' }, deps: d });
     expect(out).toEqual({ status: 'step-up', acrValues: 'mfa', scope: 'ops:write' });
-    expect(d.obtainOpsToken).not.toHaveBeenCalled();
+    expect(provider.discover).toHaveBeenCalled();
+    expect(provider.acquire).not.toHaveBeenCalled();
   });
 
-  it('reports a denial with Curity\'s error when the ops:write exchange is refused (role gate)', async () => {
+  it("reports a denial with Curity's error when the ops:write exchange is refused (role gate)", async () => {
     const d = deps({
-      obtainOpsToken: vi.fn(async () => {
-        throw new CurityAuthError('Role sre or oncall required', 'access_denied');
-      }),
+      buildOpsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('Role sre or oncall required', 'access_denied'))) as never,
     });
     const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'bob', acr: 'mfa' }, deps: d });
-    expect(out).toEqual({
-      status: 'denied',
-      error: 'access_denied',
-      description: 'Role sre or oncall required',
+    expect(out).toEqual({ status: 'denied', error: 'access_denied', description: 'Role sre or oncall required' });
+  });
+
+  it('reports an error (not a denial) when discovery itself fails', async () => {
+    const d = deps({
+      buildOpsAuthProvider: vi.fn(() => ({
+        ...fakeProvider('OPS_TOKEN'),
+        discover: vi.fn(async () => { throw new CurityAuthError('no PRM', 'discovery_failed'); }),
+      })) as never,
     });
+    const out = await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'mfa' }, deps: d });
+    expect(out).toEqual({ status: 'error', error: 'discovery_failed', description: 'no PRM' });
   });
 
   it('lists the tool names the gateway returned, and closes the toolset', async () => {
@@ -81,14 +98,14 @@ describe('listOpsTools', () => {
     });
     expect(close).toHaveBeenCalledTimes(1);
     expect(d.openMcpToolset).toHaveBeenCalledWith(
-      expect.objectContaining({ url: 'http://gw/ops/mcp', bearerToken: 'OPS_TOKEN' }),
+      expect.objectContaining({ url: cfg.mcpOpsUrl, authProvider: expect.objectContaining({ acquire: expect.any(Function) }) }),
     );
   });
 
   it('does NOT record the probe as the last ops exchange (keeps /last-token truthful about real flows)', async () => {
     const d = deps();
     await listOpsTools({ cfg, bearer: 'B', claims: { sub: 'alice', acr: 'mfa' }, deps: d });
-    expect(d.obtainOpsToken).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.buildOpsAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
   });
 
   it('turns a toolset connection failure into an error status rather than throwing', async () => {

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { openMcpToolset, requiredRolesOf, type ListedTool } from '@ai-agents-demo/agent-runtime';
-import { obtainOpsToken } from './mcp-ops-client.js';
+import { buildOpsAuthProvider } from './mcp-auth.js';
 import type { Config } from './config.js';
 
 /**
@@ -12,6 +12,7 @@ import type { Config } from './config.js';
  * walks in executor.ts, so the answer is truthful for every persona without
  * special-casing any of them:
  *
+ *   0. discovery (nothing minted)    → `error`    (the server's AS could not be learned)
  *   1. deterministic acr pre-check  → `step-up`  (no privileged token is minted)
  *   2. ops:write exchange            → `denied`   (Curity's role gate / TIA)
  *   3. tools/list via the gateway    → `ok`       (what the gateway lets this tier see)
@@ -41,11 +42,11 @@ export type OpsToolsResult =
   | { status: 'error'; error: string; description: string };
 
 export interface ToolsDeps {
-  obtainOpsToken: typeof obtainOpsToken;
+  buildOpsAuthProvider: typeof buildOpsAuthProvider;
   openMcpToolset: typeof openMcpToolset;
 }
 
-const defaultDeps: ToolsDeps = { obtainOpsToken, openMcpToolset };
+const defaultDeps: ToolsDeps = { buildOpsAuthProvider, openMcpToolset };
 
 export async function listOpsTools(args: {
   cfg: Config;
@@ -56,20 +57,29 @@ export async function listOpsTools(args: {
   const { cfg, bearer, claims } = args;
   const deps = args.deps ?? defaultDeps;
 
+  // 0. Discovery (mints nothing): the pre-check below needs the discovered scope
+  //    and acr_values to phrase its challenge, exactly as remediate() does.
+  const auth = deps.buildOpsAuthProvider({ cfg, subjectToken: bearer, subjectSub: claims.sub, recordLastExchange: false });
+  let d;
+  try {
+    d = await auth.discover();
+  } catch (e) {
+    if (e instanceof CurityAuthError) return { status: 'error', error: e.code, description: e.message };
+    return { status: 'error', error: 'discovery_failed', description: String(e) };
+  }
+
   // 1. Same deterministic pre-check as remediate(): challenge before any exchange.
   if ((claims.acr ?? '') !== cfg.requiredAcr) {
-    return { status: 'step-up', acrValues: cfg.requiredAcr, scope: cfg.mcpOpsScope };
+    return {
+      status: 'step-up',
+      acrValues: d.resourceMetadata.acr_values_supported?.[0] ?? cfg.requiredAcr,
+      scope: d.scope,
+    };
   }
 
   // 2. The privileged exchange — Curity's role gate and the ACR TIA fire here.
-  let opsToken: string;
   try {
-    opsToken = await deps.obtainOpsToken({
-      cfg,
-      subjectToken: bearer,
-      subjectSub: claims.sub,
-      recordLastExchange: false,
-    });
+    await auth.acquire();
   } catch (e) {
     if (e instanceof CurityAuthError) {
       return { status: 'denied', error: e.code, description: e.message };
@@ -82,7 +92,7 @@ export async function listOpsTools(args: {
   try {
     toolset = await deps.openMcpToolset({
       url: cfg.mcpOpsUrl,
-      bearerToken: opsToken,
+      authProvider: auth,
       clientName: 'agent-specialist',
       label: 'mcp-ops (tools/list probe)',
     });

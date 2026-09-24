@@ -1,4 +1,5 @@
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
+import { resolveAuthorizationServer } from '@ai-agents-demo/agent-runtime';
 import { SpiffeJwtSvidSource } from '@ai-agents-demo/spiffe';
 import { TokenExchangeCache } from './token-exchange-cache.js';
 import { getCimdIdentity } from './cimd-identity.js';
@@ -52,14 +53,18 @@ export async function obtainLlmToken(opts: {
   }
 
   const identity = await getCimdIdentity(cfg);
+  // No MCP server to discover from on this hop, so the AS is the configured
+  // issuer — but the token endpoint is still READ from its RFC 8414 metadata,
+  // never configured.
+  const as = await resolveAuthorizationServer(cfg.curityIssuer);
   const result = await exchangeToken({
-    tokenEndpoint: cfg.curityTokenEndpoint,
+    tokenEndpoint: as.tokenEndpoint,
     clientId: cfg.agentClientId,
     clientAuth: {
       method: 'private_key_jwt',
       privateKeyPkcs8Pem: cfg.agentPrivateKeyPem,
       kid: identity.kid,
-      assertionAudience: cfg.curityTokenEndpoint,
+      assertionAudience: as.tokenEndpoint,
     },
     subjectToken,
     actorToken: svid.jwt,

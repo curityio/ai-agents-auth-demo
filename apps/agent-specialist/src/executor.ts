@@ -11,14 +11,9 @@ import {
   summarizeJwt,
   type VerifiedJwt,
 } from '@ai-agents-demo/auth-curity';
-import { buildLlm, openMcpToolset } from '@ai-agents-demo/agent-runtime';
-import {
-  obtainOpsToken,
-  fetchResourceMetadata,
-  buildStepUpInterceptingFetch,
-  type StepUpSink,
-} from './mcp-ops-client.js';
-import { obtainObsToken } from './obs-token.js';
+import { buildLlm, openMcpToolset, type McpAuthDiscovery } from '@ai-agents-demo/agent-runtime';
+import { buildStepUpInterceptingFetch, type StepUpSink } from './mcp-ops-client.js';
+import { buildOpsAuthProvider, buildObsAuthProvider } from './mcp-auth.js';
 import { obtainLlmToken } from './llm-token.js';
 import { SPECIALIST_SYSTEM_PROMPT } from './system-prompt.js';
 import type { Config } from './config.js';
@@ -62,8 +57,8 @@ export function fallbackSummary(steps: RemediationStep[]): string {
 }
 
 export interface RemediationDeps {
-  obtainOpsToken: (o: { cfg: Config; subjectToken: string; subjectSub: string }) => Promise<string>;
-  obtainObsToken: (o: { cfg: Config; subjectToken: string }) => Promise<string>;
+  buildOpsAuthProvider: typeof buildOpsAuthProvider;
+  buildObsAuthProvider: typeof buildObsAuthProvider;
   obtainLlmToken: (o: {
     cfg: Config;
     subjectToken: string;
@@ -83,7 +78,6 @@ export interface RemediationDeps {
      */
     stopEarly?: () => boolean;
   }) => Promise<{ text: string; steps: RemediationStep[] }>;
-  fetchResourceMetadata: typeof fetchResourceMetadata;
   buildStepUpInterceptingFetch: typeof buildStepUpInterceptingFetch;
 }
 
@@ -139,13 +133,21 @@ async function remediate(args: RemediationArgs): Promise<RemediationResult> {
     return { kind: 'error', error: 'bad_request', description: 'empty request' };
   }
 
-  // 1. Acquire the WRITE token (role gate / scope gate fire here).
-  let opsToken: string;
+  // 1. Discover the WRITE server's authorization server (mints nothing), then
+  //    acquire the write token — the role gate / scope gate / ACR TIA fire here.
+  const opsAuth = deps.buildOpsAuthProvider({ cfg, subjectToken: bearer, subjectSub: sub });
+  let opsDiscovery: McpAuthDiscovery;
   try {
-    opsToken = await deps.obtainOpsToken({ cfg, subjectToken: bearer, subjectSub: sub });
+    opsDiscovery = await opsAuth.discover();
+  } catch (e) {
+    if (e instanceof CurityAuthError) return { kind: 'error', error: e.code, description: e.message };
+    return { kind: 'error', error: 'specialist_failure', description: String(e) };
+  }
+  try {
+    await opsAuth.acquire();
   } catch (e) {
     if (e instanceof CurityAuthError && e.code === 'invalid_scope') {
-      return stepUpFromMetadata(cfg, deps);
+      return stepUpFromDiscovery(opsDiscovery, cfg);
     }
     if (e instanceof CurityAuthError) return { kind: 'error', error: e.code, description: e.message };
     return { kind: 'error', error: 'specialist_failure', description: String(e) };
@@ -154,7 +156,7 @@ async function remediate(args: RemediationArgs): Promise<RemediationResult> {
   // 2. Deterministic acr pre-check — challenge BEFORE the LLM runs.
   const acr = String(verified.payload.acr ?? '');
   if (acr !== cfg.requiredAcr) {
-    return stepUpFromMetadata(cfg, deps);
+    return stepUpFromDiscovery(opsDiscovery, cfg);
   }
 
   // 3. Acquire the READ token (no MFA needed) and open BOTH toolsets.
@@ -169,25 +171,28 @@ async function remediate(args: RemediationArgs): Promise<RemediationResult> {
   // propagate, so this is the only path by which the challenge escapes.
   const stepUpSink: StepUpSink = {};
   try {
-    const obsToken = await deps.obtainObsToken({ cfg, subjectToken: bearer });
+    const obsAuth = deps.buildObsAuthProvider({ cfg, subjectToken: bearer });
+    await obsAuth.acquire();
     readSet = await deps.openMcpToolset({
       url: cfg.mcpObservabilityUrl,
-      bearerToken: obsToken,
+      authProvider: obsAuth,
       clientName: 'agent-specialist',
       label: 'mcp-observability',
     });
     writeSet = await deps.openMcpToolset({
       url: cfg.mcpOpsUrl,
-      bearerToken: opsToken,
+      authProvider: opsAuth,
       clientName: 'agent-specialist',
       label: 'mcp-ops',
-      fetchImpl: deps.buildStepUpInterceptingFetch(cfg.mcpOpsScope, stepUpSink),
+      // The interceptor runs in FRONT of the SDK's 401 seam, so an RFC 9470
+      // challenge becomes a StepUpRequiredError before onUnauthorized could see it.
+      fetchImpl: deps.buildStepUpInterceptingFetch(opsDiscovery.scope, stepUpSink),
     });
   } catch (e) {
     await readSet?.close();
     await writeSet?.close();
     if (e instanceof CurityAuthError && e.code === 'invalid_scope') {
-      return stepUpFromMetadata(cfg, deps);
+      return stepUpFromDiscovery(opsDiscovery, cfg);
     }
     if (e instanceof CurityAuthError) return { kind: 'error', error: e.code, description: e.message };
     return { kind: 'error', error: 'specialist_failure', description: String(e) };
@@ -221,20 +226,17 @@ async function remediate(args: RemediationArgs): Promise<RemediationResult> {
   }
 }
 
-async function stepUpFromMetadata(cfg: Config, deps: RemediationDeps): Promise<RemediationResult> {
-  let acrValues = cfg.requiredAcr;
-  let scope = cfg.mcpOpsScope;
-  try {
-    const md = await deps.fetchResourceMetadata(cfg.mcpOpsMetadataUrl);
-    scope = md.scopes_supported?.[0] ?? scope;
-    acrValues = md.acr_values_supported?.[0] ?? acrValues;
-  } catch (e) {
-    console.error('[agent-specialist] RFC 9728 metadata fetch failed, using defaults', e);
-  }
+/**
+ * Build the RFC 9470 challenge from what DISCOVERY learned about the ops server:
+ * the gateway's RFC 9728 document (its `acr_values_supported` demo extension and
+ * the URL it was fetched from) and the scope selected for it. Nothing here is
+ * configured, so the challenge describes the server that actually refused.
+ */
+export function stepUpFromDiscovery(d: McpAuthDiscovery, cfg: Config): RemediationResult {
   const err = new StepUpRequiredError({
-    acrValues,
-    resourceMetadata: cfg.mcpOpsResourceMetadataUrl,
-    scope,
+    acrValues: d.resourceMetadata.acr_values_supported?.[0] ?? cfg.requiredAcr,
+    resourceMetadata: d.resourceMetadataUrl,
+    scope: d.scope,
   });
   return { kind: 'step-up', payload: err.toPayload() };
 }
@@ -345,12 +347,11 @@ export function buildExecutor(cfg: Config): AgentExecutor {
     return { text, steps };
   };
   const deps: RemediationDeps = {
-    obtainOpsToken,
-    obtainObsToken,
+    buildOpsAuthProvider,
+    buildObsAuthProvider,
     obtainLlmToken,
     openMcpToolset,
     runLlm,
-    fetchResourceMetadata,
     buildStepUpInterceptingFetch,
   };
 

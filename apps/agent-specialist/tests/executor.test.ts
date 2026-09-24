@@ -42,29 +42,43 @@ function makeStepUp(): StepUpRequiredError {
 
 const cfg = {
   requiredAcr: 'mfa',
-  // Both MCP URLs are the agentgateway, as in production — the fixture used to
-  // carry the pre-gateway direct-to-mcp-ops URL, which is why deriving the
-  // RFC 9728 origin from `mcpOpsUrl` looked fine in tests and 404'd in the cluster.
-  mcpOpsUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp',
-  mcpObservabilityUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp',
-  mcpOpsResourceMetadataUrl: 'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
-  mcpOpsMetadataUrl: 'http://mcp-ops.mcp.svc.cluster.local:8080/.well-known/oauth-protected-resource',
-  mcpOpsScope: 'ops:write',
+  mcpOpsUrl: 'https://mcp-gateway.localtest.me/ops/mcp',
+  mcpObservabilityUrl: 'https://mcp-gateway.localtest.me/observability/mcp',
   llmGatewayUrl: 'http://gw:8080/llm',
   llmGatewayAudience: 'llm-gateway',
   llmGatewayScope: 'llm:invoke',
 } as never;
 
+/** What discovery returns for the ops route in the cluster. */
+const OPS_DISCOVERY = {
+  serverUrl: 'https://mcp-gateway.localtest.me/ops/mcp',
+  resourceMetadataUrl: 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp',
+  resourceMetadata: { resource: 'https://mcp-gateway.localtest.me/ops/mcp', scopes_supported: ['ops:write'], acr_values_supported: ['mfa'] },
+  authorizationServer: 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
+  tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
+  scope: 'ops:write',
+  scopeSource: 'scopes_supported',
+  discoveredAt: 0,
+} as never;
+
+/** A provider whose discover() resolves and acquire() resolves or rejects. */
+function fakeProvider(token: string, acquireError?: Error, discovery: unknown = OPS_DISCOVERY) {
+  return {
+    discover: vi.fn(async () => discovery),
+    acquire: vi.fn(async () => { if (acquireError) throw acquireError; return token; }),
+    current: () => ({ token, discovery }),
+    token: async () => token,
+    onUnauthorized: async () => {},
+  };
+}
+
 function deps(over: Partial<RemediationDeps> = {}): RemediationDeps {
   return {
-    obtainOpsToken: vi.fn().mockResolvedValue('ops-token'),
-    obtainObsToken: vi.fn().mockResolvedValue('obs-token'),
+    buildOpsAuthProvider: vi.fn(() => fakeProvider('ops-token')) as never,
+    buildObsAuthProvider: vi.fn(() => fakeProvider('obs-token')) as never,
     obtainLlmToken: vi.fn().mockResolvedValue('test-llm-token'),
     openMcpToolset: vi.fn().mockResolvedValue({ tools: {}, close: vi.fn() }),
     runLlm: vi.fn().mockResolvedValue({ text: 'done: restarted api-gateway', steps: [] }),
-    fetchResourceMetadata: vi
-      .fn()
-      .mockResolvedValue({ scopes_supported: ['ops:write'], acr_values_supported: ['mfa'] }),
     buildStepUpInterceptingFetch: vi.fn(() => fetch),
     ...over,
   };
@@ -181,7 +195,7 @@ describe('runRemediation', () => {
 
   it('routes an invalid_scope on the write-token exchange to step-up (no LLM, no toolset)', async () => {
     const d = deps({
-      obtainOpsToken: vi.fn().mockRejectedValue(new CurityAuthError('needs mfa', 'invalid_scope')),
+      buildOpsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('needs mfa', 'invalid_scope'))) as never,
     });
     const out = await runRemediation({
       cfg,
@@ -195,37 +209,57 @@ describe('runRemediation', () => {
     expect(d.openMcpToolset).not.toHaveBeenCalled();
   });
 
-  it('fetches RFC 9728 metadata from mcp-ops itself, not from the agentgateway origin', async () => {
-    // `mcpOpsUrl` points at the gateway (it is the MCP front door), and the
-    // gateway serves no /.well-known/oauth-protected-resource — deriving the
-    // metadata origin from it 404s and silently drops us onto hardcoded
-    // defaults. The document lives on mcp-ops, so that is what must be fetched.
-    const gatewayCfg = {
-      ...(cfg as object),
-      mcpOpsUrl: 'http://agentgateway.mcp.svc.cluster.local:8080/ops/mcp',
-      mcpOpsMetadataUrl: 'http://mcp-ops.mcp.svc.cluster.local/.well-known/oauth-protected-resource',
-    } as never;
+  it('builds the step-up challenge from the DISCOVERED gateway PRM (acr_values_supported, scope, resource_metadata URL)', async () => {
     const d = deps({
-      obtainOpsToken: vi.fn().mockRejectedValue(new CurityAuthError('needs mfa', 'invalid_scope')),
+      buildOpsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('needs mfa', 'invalid_scope'))) as never,
     });
     const out = await runRemediation({
-      cfg: gatewayCfg,
-      bearer: 'b',
-      goal: 'restart api-gateway',
+      cfg, bearer: 'b', goal: 'restart api-gateway',
       verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
       deps: d,
     });
     expect(out.kind).toBe('step-up');
-    expect(d.fetchResourceMetadata).toHaveBeenCalledWith(
-      'http://mcp-ops.mcp.svc.cluster.local/.well-known/oauth-protected-resource',
+    if (out.kind === 'step-up') {
+      expect(out.payload.data).toEqual({
+        acrValues: 'mfa',
+        scope: 'ops:write',
+        resourceMetadata: 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp',
+      });
+    }
+  });
+
+  it('answers with the discovery error (not step-up) when the ops server cannot be discovered', async () => {
+    const d = deps({
+      buildOpsAuthProvider: vi.fn(() => ({
+        ...fakeProvider('ops-token'),
+        discover: vi.fn(async () => { throw new CurityAuthError('no PRM', 'discovery_failed'); }),
+      })) as never,
+    });
+    const out = await runRemediation({
+      cfg, bearer: 'b', goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
+    });
+    expect(out).toEqual({ kind: 'error', error: 'discovery_failed', description: 'no PRM' });
+    expect(d.openMcpToolset).not.toHaveBeenCalled();
+  });
+
+  it('hands the write toolset the ops provider and the DISCOVERED scope to the step-up interceptor', async () => {
+    const d = deps();
+    await runRemediation({
+      cfg, bearer: 'b', goal: 'restart api-gateway',
+      verified: { payload: { sub: 'alice', acr: 'mfa' } } as never,
+      deps: d,
+    });
+    expect(d.buildStepUpInterceptingFetch).toHaveBeenCalledWith('ops:write', expect.anything());
+    expect(d.openMcpToolset).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://mcp-gateway.localtest.me/ops/mcp', authProvider: expect.objectContaining({ acquire: expect.any(Function) }) }),
     );
   });
 
   it('maps a generic CurityAuthError on the write-token exchange to an error result', async () => {
     const d = deps({
-      obtainOpsToken: vi
-        .fn()
-        .mockRejectedValue(new CurityAuthError('bob lacks sre', 'access_denied')),
+      buildOpsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('bob lacks sre', 'access_denied'))) as never,
     });
     const out = await runRemediation({
       cfg,
@@ -399,9 +433,7 @@ describe('runRemediation', () => {
 
   it('routes an invalid_scope on the obs path (acr=mfa, ops token ok) to step-up', async () => {
     const d = deps({
-      obtainObsToken: vi
-        .fn()
-        .mockRejectedValue(new CurityAuthError('obs scope', 'invalid_scope')),
+      buildObsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('obs scope', 'invalid_scope'))) as never,
     });
     const out = await runRemediation({
       cfg,
@@ -425,7 +457,7 @@ describe('runRemediation', () => {
     });
     expect(out.kind).toBe('error');
     if (out.kind === 'error') expect(out.error).toBe('bad_request');
-    expect(d.obtainOpsToken).not.toHaveBeenCalled();
+    expect(d.buildOpsAuthProvider).not.toHaveBeenCalled();
     expect(d.openMcpToolset).not.toHaveBeenCalled();
     expect(d.runLlm).not.toHaveBeenCalled();
   });

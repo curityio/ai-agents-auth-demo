@@ -25,26 +25,30 @@ export function peekLastObsExchange(): { accessToken: string; at: number } | und
 export async function obtainObsToken(opts: {
   cfg: Config;
   subjectToken: string;
+  /** Discovered from the MCP server's authorization-server metadata (never configured). */
+  tokenEndpoint: string;
+  /** Discovered: the 401 challenge's `scope`, else the PRM's `scopes_supported`. */
+  scope: string;
 }): Promise<string> {
-  const { cfg, subjectToken } = opts;
+  const { cfg, subjectToken, tokenEndpoint, scope } = opts;
   const svid = await svidSource.getSvid(SVID_AUDIENCE);
   if (!svid) {
     throw new CurityAuthError(`SPIFFE JWT-SVID not available at ${SVID_FILE}`, 'invalid_actor');
   }
   const identity = await getCimdIdentity(cfg);
   const result = await exchangeToken({
-    tokenEndpoint: cfg.curityTokenEndpoint,
+    tokenEndpoint,
     clientId: cfg.agentClientId,
     clientAuth: {
       method: 'private_key_jwt',
       privateKeyPkcs8Pem: cfg.agentPrivateKeyPem,
       kid: identity.kid,
-      assertionAudience: cfg.curityTokenEndpoint,
+      assertionAudience: tokenEndpoint,
     },
     subjectToken,
     actorToken: svid.jwt,
     audience: cfg.mcpObservabilityAudience,
-    scope: cfg.mcpObservabilityScope,
+    scope,
   });
   lastObsExchange = { accessToken: result.accessToken, at: Date.now() };
   return result.accessToken;

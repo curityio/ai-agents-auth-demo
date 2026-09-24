@@ -5,47 +5,6 @@ import { getCimdIdentity } from './cimd-identity.js';
 import { SVID_AUDIENCE, SVID_FILE } from './spiffe-constants.js';
 import type { Config } from './config.js';
 
-// ---------------------------------------------------------------------------
-// RFC 9728 — Protected Resource Metadata
-// ---------------------------------------------------------------------------
-
-export interface ProtectedResourceMetadata {
-  resource: string;
-  authorization_servers?: string[];
-  scopes_supported?: string[];
-  acr_values_supported?: string[];
-  bearer_methods_supported?: string[];
-}
-
-let metadataCache: { doc: ProtectedResourceMetadata; fetchedAt: number } | undefined;
-const METADATA_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
- * Fetch and cache the RFC 9728 protected resource metadata document from
- * mcp-ops. The document advertises `scopes_supported` and
- * `acr_values_supported`, which the specialist uses to construct a step-up
- * challenge when the token exchange fails with `invalid_scope`.
- */
-export async function fetchResourceMetadata(
-  url: string,
-): Promise<ProtectedResourceMetadata> {
-  if (metadataCache && Date.now() - metadataCache.fetchedAt < METADATA_TTL_MS) {
-    return metadataCache.doc;
-  }
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  if (!res.ok) {
-    throw new Error(`RFC 9728 metadata fetch failed: ${res.status} ${res.statusText}`);
-  }
-  const doc = (await res.json()) as ProtectedResourceMetadata;
-  metadataCache = { doc, fetchedAt: Date.now() };
-  return doc;
-}
-
-/** Reset the metadata cache (for tests). */
-export function _resetMetadataCache(): void {
-  metadataCache = undefined;
-}
-
 const svidSource = new SpiffeJwtSvidSource({
   audiences: [{ audience: SVID_AUDIENCE, filePath: SVID_FILE }],
 });
@@ -77,6 +36,10 @@ export async function obtainOpsToken(opts: {
   cfg: Config;
   subjectToken: string;
   subjectSub: string;
+  /** Discovered from the MCP server's authorization-server metadata (never configured). */
+  tokenEndpoint: string;
+  /** Discovered: the 401 challenge's `scope`, else the PRM's `scopes_supported`. */
+  scope: string;
   /**
    * Whether this call should be recorded as the process's "most recent
    * exchange" for the debug /last-token route. Defaults to true. The tools/list
@@ -86,7 +49,7 @@ export async function obtainOpsToken(opts: {
    */
   recordLastExchange?: boolean;
 }): Promise<string> {
-  const { cfg, subjectToken, subjectSub } = opts;
+  const { cfg, subjectToken, subjectSub, tokenEndpoint, scope } = opts;
   const svid = await svidSource.getSvid(SVID_AUDIENCE);
   if (!svid) {
     throw new CurityAuthError(
@@ -96,18 +59,18 @@ export async function obtainOpsToken(opts: {
   }
   const identity = await getCimdIdentity(cfg);
   const result = await exchangeToken({
-    tokenEndpoint: cfg.curityTokenEndpoint,
+    tokenEndpoint,
     clientId: cfg.agentClientId,
     clientAuth: {
       method: 'private_key_jwt',
       privateKeyPkcs8Pem: cfg.agentPrivateKeyPem,
       kid: identity.kid,
-      assertionAudience: cfg.curityTokenEndpoint,
+      assertionAudience: tokenEndpoint,
     },
     subjectToken,
     actorToken: svid.jwt,
     audience: cfg.mcpOpsAudience,
-    scope: cfg.mcpOpsScope,
+    scope,
   });
   if (opts.recordLastExchange !== false) {
     lastExchange = { sub: subjectSub, accessToken: result.accessToken, at: Date.now() };
