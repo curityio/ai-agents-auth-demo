@@ -103,7 +103,7 @@ export async function obtainLlmToken(opts: {
     accessToken: result.accessToken,
     expiresInSec: result.expiresInSec,
     scope: result.scope,
-  });
+  }, cfg.exchangeCacheTtlMs);
   lastLlmExchange = {
     sub: subjectSub,
     accessToken: result.accessToken,

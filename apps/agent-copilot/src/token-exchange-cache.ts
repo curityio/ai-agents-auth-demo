@@ -49,10 +49,17 @@ export class TokenExchangeCache {
     return { accessToken: entry.accessToken, expiresInSec: entry.expiresInSec, scope: entry.scope };
   }
 
-  set(key: CacheKey, value: CacheValue): void {
+  /**
+   * `ttlMs` overrides the constructor default for this entry; `0` stores nothing.
+   * The agents pass their `exchangeCacheTtlMs` (TOKEN_EXCHANGE_CACHE_TTL_SECONDS):
+   * the demo sets it to 0 so every question shows its exchanges in the trace —
+   * with 60 s, a second question within a minute showed none.
+   */
+  set(key: CacheKey, value: CacheValue, ttlMs: number = this.ttlMs): void {
+    if (ttlMs <= 0) return;
     this.store.set(TokenExchangeCache.keyOf(key), {
       ...value,
-      expiresAtMs: Date.now() + this.ttlMs,
+      expiresAtMs: Date.now() + ttlMs,
     });
   }
 

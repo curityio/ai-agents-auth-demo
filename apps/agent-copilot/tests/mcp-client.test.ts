@@ -56,4 +56,13 @@ describe('obtainMcpToken cache bypass', () => {
     expect(await obtainMcpToken(base)).toBe('TOKEN-2');
     expect(exchangeToken).toHaveBeenCalledTimes(2);
   });
+
+  it('with cfg.exchangeCacheTtlMs = 0 (the demo setting) every call exchanges — a second question within 60 s shows its exchange', async () => {
+    exchangeToken.mockResolvedValue({ accessToken: 'T', tokenType: 'Bearer', expiresInSec: 600, scope: 'obs:read', issuedTokenType: 'x' });
+    const c = { ...cfg, exchangeCacheTtlMs: 0 } as Config;
+    const args = { cfg: c, subjectToken: 'U', subjectSub: 'alice-nocache', subjectAcr: 'html-form', tokenEndpoint: 'https://as/token', scope: 'obs:read' };
+    await obtainMcpToken(args);
+    await obtainMcpToken(args);
+    expect(exchangeToken).toHaveBeenCalledTimes(2);
+  });
 });

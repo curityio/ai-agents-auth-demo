@@ -76,7 +76,7 @@ export async function obtainLlmToken(opts: {
     accessToken: result.accessToken,
     expiresInSec: result.expiresInSec,
     scope: result.scope,
-  });
+  }, cfg.exchangeCacheTtlMs);
   lastLlmExchange = { accessToken: result.accessToken, at: Date.now() };
   return result.accessToken;
 }

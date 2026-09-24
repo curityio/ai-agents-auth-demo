@@ -124,7 +124,7 @@ export async function obtainMcpToken(opts: {
     accessToken: result.accessToken,
     expiresInSec: result.expiresInSec,
     scope: result.scope,
-  });
+  }, cfg.exchangeCacheTtlMs);
   if (record) lastExchange = {
     sub: subjectSub,
     accessToken: result.accessToken,

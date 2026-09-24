@@ -1019,7 +1019,14 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     default is 10 min, but **the demo manifests set `MCP_DISCOVERY_TTL_SECONDS=0`** so
     every question re-runs the chain and its trace + `DISCOVER` OBO-log block show it
     (with 10 min, the *Check tools* probe warmed the cache and the first question
-    showed nothing). One `DISCOVER` block per run. `createMcpAuthProvider` wraps it as the SDK's
+    showed nothing). One `DISCOVER` block per run. **The agents' exchange caches
+    have the same knob**: `TOKEN_EXCHANGE_CACHE_TTL_SECONDS` (code default 60,
+    manifests `0`) governs the copilot's `mcp-gateway`/`llm-gateway`/`agent-specialist`
+    caches and the specialist's `llm-gateway` cache — otherwise a second question
+    within a minute produced a trace with NO agent exchange and, because the
+    copilot re-sent the same token, no shim exchange either. The shim's own 60 s
+    cache (fact #21) stays: a fresh copilot token per question makes it miss exactly
+    once per question, which is the one exchange the trace should show there. `createMcpAuthProvider` wraps it as the SDK's
     `AuthProvider`: `acquire()` = discovery + the UNCHANGED `exchangeToken`,
     `onUnauthorized()` = forced re-discovery + one more exchange (the transport
     retries once), and an RFC 9470 challenge is never exchanged or retried. The

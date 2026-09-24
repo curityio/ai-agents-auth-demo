@@ -7,6 +7,13 @@ export interface Config {
    * 401 → RFC 9728 → RFC 8414 and the trace/OBO log show it (fact #37).
    */
   mcpDiscoveryTtlMs: number;
+  /**
+   * Reuse window (ms) for this agent's RFC 8693 exchange caches (MCP, LLM, A2A
+   * tokens). From TOKEN_EXCHANGE_CACHE_TTL_SECONDS; code default 60 s, the demo
+   * manifests set 0 so EVERY question shows its exchanges in the trace and OBO
+   * log — with 60 s a second question within a minute showed none (fact #37).
+   */
+  exchangeCacheTtlMs: number;
   curityJwksUri: string;
   expectedAudience: string;
   /** CIMD client_id — the HTTPS URL Curity dereferences to fetch this agent's metadata. */
@@ -58,6 +65,14 @@ function discoveryTtlMs(raw: string | undefined): number {
   return n * 1000;
 }
 
+function secondsEnvToMs(name: string, defaultSeconds: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultSeconds * 1000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer, got ${raw}`);
+  return n * 1000;
+}
+
 export function loadConfig(): Config {
   const cfg: Config = {
     port: Number(process.env.PORT ?? 8082),
@@ -69,6 +84,7 @@ export function loadConfig(): Config {
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpOpsUrl: required('MCP_OPS_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
+    exchangeCacheTtlMs: secondsEnvToMs('TOKEN_EXCHANGE_CACHE_TTL_SECONDS', 60),
     mcpOpsAudience: process.env.MCP_OPS_AUDIENCE ?? 'mcp-ops',
     publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'https://specialist.localtest.me',
     llmGatewayUrl:

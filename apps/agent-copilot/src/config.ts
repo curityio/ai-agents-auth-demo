@@ -7,6 +7,13 @@ export interface Config {
    * 401 → RFC 9728 → RFC 8414 and the trace/OBO log show it (fact #37).
    */
   mcpDiscoveryTtlMs: number;
+  /**
+   * Reuse window (ms) for this agent's RFC 8693 exchange caches (MCP, LLM, A2A
+   * tokens). From TOKEN_EXCHANGE_CACHE_TTL_SECONDS; code default 60 s, the demo
+   * manifests set 0 so EVERY question shows its exchanges in the trace and OBO
+   * log — with 60 s a second question within a minute showed none (fact #37).
+   */
+  exchangeCacheTtlMs: number;
   curityJwksUri: string;
   expectedAudience: string;
   mcpObservabilityUrl: string;
@@ -48,6 +55,14 @@ function discoveryTtlMs(raw: string | undefined): number {
   return n * 1000;
 }
 
+function secondsEnvToMs(name: string, defaultSeconds: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return defaultSeconds * 1000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer, got ${raw}`);
+  return n * 1000;
+}
+
 export function loadConfig(): Config {
   const cfg: Config = {
     port: Number(process.env.PORT ?? 8081),
@@ -56,6 +71,7 @@ export function loadConfig(): Config {
     expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-copilot',
     mcpObservabilityUrl: required('MCP_OBSERVABILITY_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
+    exchangeCacheTtlMs: secondsEnvToMs('TOKEN_EXCHANGE_CACHE_TTL_SECONDS', 60),
     agentClientId:
       process.env.AGENT_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),

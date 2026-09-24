@@ -88,6 +88,11 @@ spec:
             # in the trace and the OBO log. Costs ~3 small requests per question.
             - name: MCP_DISCOVERY_TTL_SECONDS
               value: "0"
+            # Likewise for this agent's exchange caches (MCP, LLM, A2A tokens): re-mint
+            # on every question so each trace shows its RFC 8693 exchanges. With the
+            # 60 s code default a second question within a minute showed none.
+            - name: TOKEN_EXCHANGE_CACHE_TTL_SECONDS
+              value: "0"
             - name: MCP_OBSERVABILITY_URL
               # The agentgateway MCP front door, by its PUBLIC name. The agent is a
               # spec-shaped MCP client: it learns the authorization server from this
