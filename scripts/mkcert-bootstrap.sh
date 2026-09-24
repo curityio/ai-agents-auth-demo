@@ -14,6 +14,7 @@ HOSTS=(
   "specialist.localtest.me"
   "mcp-ops.localtest.me"
   "mcp-observability.localtest.me"
+  "mcp-gateway.localtest.me"
 )
 
 if ! command -v mkcert >/dev/null 2>&1; then

@@ -76,6 +76,14 @@ binds:
       matches:
       - path:
           pathPrefix: /observability/mcp
+      # RFC 9728: the gateway only SERVES the protected-resource document for a
+      # request that matched this route (mcp/auth.rs `apply_token_validation`
+      # short-circuits on the well-known path, but routing happens first), so the
+      # well-known path must be matched here too. Without this the 401 below
+      # advertises a URL that answers 404 "route not found" — a dangling pointer
+      # that any spec-shaped client fails closed on.
+      - path:
+          exact: /.well-known/oauth-protected-resource/observability/mcp
       policies:
         mcpAuthentication:
           issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
@@ -153,6 +161,9 @@ binds:
       matches:
       - path:
           pathPrefix: /ops/mcp
+      # RFC 9728 well-known path — see the observability route for why.
+      - path:
+          exact: /.well-known/oauth-protected-resource/ops/mcp
       policies:
         mcpAuthentication:
           issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
@@ -166,6 +177,13 @@ binds:
             - ops:write
             bearerMethodsSupported:
             - header
+            # NON-STANDARD, demo-local (RFC 9470 step-up): the ACR this tier needs.
+            # agentgateway flattens extra keys into the document and snake_cases
+            # them (types/agent.rs ResourceMetadata::to_rfc_json), so this becomes
+            # `acr_values_supported`. Mirrors mcp-ops's own PRM; the specialist's
+            # step-up challenge is built from THIS document now.
+            acrValuesSupported:
+            - mfa
         # Tier gate: ops:write is required for every ops tool. The Curity exchange
         # already requires a WRITE role (sre OR oncall) to issue ops:write, so every
         # caller reaching this route holds one.

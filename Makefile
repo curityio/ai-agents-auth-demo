@@ -35,6 +35,7 @@ HOST_COPILOT      ?= copilot.localtest.me
 HOST_SPECIALIST   ?= specialist.localtest.me
 HOST_MCP_OPS      ?= mcp-ops.localtest.me
 HOST_MCP_OBS      ?= mcp-observability.localtest.me
+HOST_MCP_GATEWAY  ?= mcp-gateway.localtest.me
 
 CERT_DIR ?= certs
 
@@ -104,6 +105,7 @@ test-scripts: ## Run the shell-script contract tests (gateway-config render, Cur
 	bash scripts/test-render-gateway-config.sh
 	bash scripts/test-embed-curity-theme.sh
 	bash scripts/test-seed-curity-users.sh
+	bash scripts/test-mcp-discovery-config.sh
 
 .PHONY: typecheck
 typecheck: ## Type-check all workspaces
@@ -625,6 +627,9 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '    %-41s https://$(HOST_SPECIALIST)/.well-known/oauth-client\n'           'Specialist ai-agent client metadata'
 	@printf '    %-41s https://$(HOST_MCP_OPS)/.well-known/oauth-protected-resource\n'  'mcp-ops resource metadata'
 	@printf '    %-41s https://$(HOST_MCP_OBS)/.well-known/oauth-protected-resource\n'  'mcp-observability resource metadata'
+	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/observability/mcp\n' 'agentgateway PRM (read tier)'
+	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/ops/mcp\n' 'agentgateway PRM (write tier)'
+	@printf '    %-41s https://$(HOST_CURITY)/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous\n' 'Curity RFC 8414 metadata'
 	@printf '\n'
 	@printf '  Sign in as one of the demo personas — credentials + TOTP QR codes: make users\n'
 	@printf '\n'

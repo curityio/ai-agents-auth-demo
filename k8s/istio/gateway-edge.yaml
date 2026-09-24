@@ -105,6 +105,18 @@ spec:
         credentialName: mcp-observability-tls
       hosts:
         - mcp-observability.localtest.me
+    # agentgateway (MCP front door): the agents call it by THIS name, because the
+    # RFC 9728 document it serves says `resource: https://mcp-gateway.localtest.me/…`
+    # and a spec-shaped client checks that the resource equals the URL it uses.
+    - port:
+        number: 443
+        name: https-mcp-gateway
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: mcp-gateway-tls
+      hosts:
+        - mcp-gateway.localtest.me
 ---
 apiVersion: networking.istio.io/v1
 kind: VirtualService
@@ -261,5 +273,22 @@ spec:
     - route:
         - destination:
             host: mcp-observability.mcp.svc.cluster.local
+            port:
+              number: 8080
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: mcp-gateway
+  namespace: istio-ingress
+spec:
+  hosts:
+    - mcp-gateway.localtest.me
+  gateways:
+    - edge
+  http:
+    - route:
+        - destination:
+            host: agentgateway.mcp.svc.cluster.local
             port:
               number: 8080

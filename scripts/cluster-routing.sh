@@ -54,20 +54,24 @@ CURITY_DEPLOY="${CURITY_DEPLOY:-curity}"
 CIMD_HOSTS=("copilot.localtest.me" "specialist.localtest.me")
 
 # RFC 9728: on a step-up challenge the web BFF fetches the protected-resource
-# metadata document to learn the authorization server. The URL it fetches is the
-# PUBLIC https://mcp-*.localtest.me identifier — that is what the challenge
-# advertises, and rewriting it to a cluster-internal name would defeat the point
-# of a stable resource identifier. Inside the web pod that host resolves to
-# 127.0.0.1 (the pod itself), so web needs the same ingress alias Curity gets.
-# Without it the fetch fails, `authServer` comes back empty, and the UI silently
-# loses the discovery hint.
-RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-observability.localtest.me")
+# metadata document to learn the authorization server, and the two agents run
+# the full discovery chain (401 → resource_metadata → PRM → RFC 8414) against the
+# agentgateway. The URLs involved are PUBLIC https://*.localtest.me identifiers —
+# rewriting them to cluster-internal names would defeat the point of a stable
+# resource identifier (a spec-shaped client checks PRM.resource == the URL it
+# calls). Inside a pod those hosts resolve to 127.0.0.1 (the pod itself), so each
+# consumer needs the same ingress alias Curity gets.
+RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-observability.localtest.me" "mcp-gateway.localtest.me")
+# The agents call the MCP front door by its public name (MCP_*_URL in
+# k8s/workloads/agent-*.yaml) — see the RFC 9728 note above.
+AGENT_MCP_HOSTS=("mcp-gateway.localtest.me")
 
 # extra_hosts_for <ns> <deploy> — hostnames this target needs aliased BEYOND
 # $CURITY_HOST, one per line. (bash 3.2 on macOS: no associative arrays.)
 extra_hosts_for() {
   case "$1/$2" in
     web/web) printf '%s\n' "${RESOURCE_HOSTS[@]}" ;;
+    agents/agent-copilot|agents/agent-specialist) printf '%s\n' "${AGENT_MCP_HOSTS[@]}" ;;
   esac
 }
 
