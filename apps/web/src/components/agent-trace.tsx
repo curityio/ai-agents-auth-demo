@@ -174,7 +174,7 @@ export function ToolTrace({
         <>
           <p className="text-sm text-muted-foreground">
             The specialist's LLM chose these tool calls, in order: inspect, act, verify. Reads went
-            to mcp-observability on <code className="font-mono">obs:read</code>; the action went to
+            to mcp-inspect on <code className="font-mono">inspect:read</code>; the action went to
             mcp-ops on <code className="font-mono">ops:write</code>, which Curity only issues for{' '}
             <code className="font-mono">acr=mfa</code>.
           </p>
@@ -189,8 +189,8 @@ export function ToolTrace({
       ) : (
         <p className="text-sm text-muted-foreground">
           The copilot's LLM chose these tool calls, in order. Each one travelled through
-          agentgateway to mcp-observability on a token narrowed to{' '}
-          <code className="font-mono">obs:read</code>.
+          agentgateway to mcp-inspect on a token narrowed to{' '}
+          <code className="font-mono">inspect:read</code>.
         </p>
       )}
 

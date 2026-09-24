@@ -159,7 +159,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "actor_token=$COPILOT_SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
   -d "audience=agent-specialist" \
-  -d "scope=obs:read ops:write" \
+  -d "scope=inspect:read ops:write" \
   "$CURITY_TOKEN_URL")
 SPECIALIST_BEARER=$(echo "$RESP" | jq -r '.access_token // empty')
 [[ -n "$SPECIALIST_BEARER" ]] || { red "no token in A: $(echo "$RESP" | redact)"; exit 1; }

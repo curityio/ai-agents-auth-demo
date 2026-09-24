@@ -50,7 +50,7 @@ describe('buildTraceRows', () => {
   });
 
   it('decodes a JSON-encoded string result (MCP text content) before summarising', () => {
-    // mcp-observability returns tool output as text content that is itself JSON.
+    // mcp-inspect returns tool output as text content that is itself JSON.
     const json = JSON.stringify(
       [
         { name: 'a', status: 'Running' },

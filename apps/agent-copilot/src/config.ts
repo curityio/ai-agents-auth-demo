@@ -16,7 +16,7 @@ export interface Config {
   exchangeCacheTtlMs: number;
   curityJwksUri: string;
   expectedAudience: string;
-  mcpObservabilityUrl: string;
+  mcpInspectUrl: string;
   /** CIMD client_id — the HTTPS URL Curity dereferences to fetch this agent's metadata. */
   agentClientId: string;
   /** PKCS8 PEM private key used to sign the private_key_jwt client assertion. */
@@ -28,7 +28,7 @@ export interface Config {
    * chain (packages/agent-runtime mcp-oauth-client.ts). It would be replaced by
    * the RFC 8707 `resource` parameter once Curity accepts it.
    */
-  mcpObservabilityAudience: string;
+  mcpInspectAudience: string;
   // A2A path to agent-specialist for privileged actions.
   // The intent router in server.ts decides when to use this.
   specialistA2aUrl: string;
@@ -69,13 +69,13 @@ export function loadConfig(): Config {
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-copilot',
-    mcpObservabilityUrl: required('MCP_OBSERVABILITY_URL'),
+    mcpInspectUrl: required('MCP_INSPECT_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
     exchangeCacheTtlMs: secondsEnvToMs('TOKEN_EXCHANGE_CACHE_TTL_SECONDS', 60),
     agentClientId:
       process.env.AGENT_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
-    mcpObservabilityAudience: process.env.MCP_OBSERVABILITY_AUDIENCE ?? 'mcp-observability',
+    mcpInspectAudience: process.env.MCP_INSPECT_AUDIENCE ?? 'mcp-inspect',
     specialistA2aUrl:
       process.env.SPECIALIST_A2A_URL ??
       'http://agent-specialist.agents.svc.cluster.local:8082/a2a',
@@ -84,7 +84,7 @@ export function loadConfig(): Config {
     // under this audience. The specialist re-checks ops:write, and needs
     // llm:invoke in its delegated subject token to exchange to aud=llm-gateway
     // for its own reasoning hop (else its LLM egress fails mid-remediation).
-    specialistScope: process.env.SPECIALIST_SCOPE ?? 'obs:read ops:write llm:invoke',
+    specialistScope: process.env.SPECIALIST_SCOPE ?? 'inspect:read ops:write llm:invoke',
     llmGatewayUrl:
       process.env.LLM_GATEWAY_URL ?? 'http://agentgateway.mcp.svc.cluster.local:8080/llm',
     llmGatewayAudience: process.env.LLM_GATEWAY_AUDIENCE ?? 'llm-gateway',

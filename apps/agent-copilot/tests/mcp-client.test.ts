@@ -26,7 +26,7 @@ import type { Config } from '../src/config.js';
 const cfg = {
   agentClientId: 'https://copilot.localtest.me/.well-known/oauth-client',
   agentPrivateKeyPem: 'pem',
-  mcpObservabilityAudience: 'mcp-gateway',
+  mcpInspectAudience: 'mcp-gateway',
 } as unknown as Config;
 
 const base = {
@@ -35,14 +35,14 @@ const base = {
   subjectSub: 'alice-cache-test',
   subjectAcr: 'mfa',
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  scope: 'obs:read',
+  scope: 'inspect:read',
   recordLastExchange: false,
 };
 
 beforeEach(() => {
   exchangeToken.mockReset();
   let n = 0;
-  exchangeToken.mockImplementation(async () => ({ accessToken: `TOKEN-${++n}`, expiresInSec: 600, scope: 'obs:read' }));
+  exchangeToken.mockImplementation(async () => ({ accessToken: `TOKEN-${++n}`, expiresInSec: 600, scope: 'inspect:read' }));
 });
 
 describe('obtainMcpToken cache bypass', () => {
@@ -58,9 +58,9 @@ describe('obtainMcpToken cache bypass', () => {
   });
 
   it('with cfg.exchangeCacheTtlMs = 0 (the demo setting) every call exchanges — a second question within 60 s shows its exchange', async () => {
-    exchangeToken.mockResolvedValue({ accessToken: 'T', tokenType: 'Bearer', expiresInSec: 600, scope: 'obs:read', issuedTokenType: 'x' });
+    exchangeToken.mockResolvedValue({ accessToken: 'T', tokenType: 'Bearer', expiresInSec: 600, scope: 'inspect:read', issuedTokenType: 'x' });
     const c = { ...cfg, exchangeCacheTtlMs: 0 } as Config;
-    const args = { cfg: c, subjectToken: 'U', subjectSub: 'alice-nocache', subjectAcr: 'html-form', tokenEndpoint: 'https://as/token', scope: 'obs:read' };
+    const args = { cfg: c, subjectToken: 'U', subjectSub: 'alice-nocache', subjectAcr: 'html-form', tokenEndpoint: 'https://as/token', scope: 'inspect:read' };
     await obtainMcpToken(args);
     await obtainMcpToken(args);
     expect(exchangeToken).toHaveBeenCalledTimes(2);

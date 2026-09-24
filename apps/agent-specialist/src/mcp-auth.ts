@@ -1,6 +1,6 @@
 import { createMcpAuthProvider, type McpAuthProvider } from '@ai-agents-demo/agent-runtime';
 import { obtainOpsToken } from './mcp-ops-client.js';
-import { obtainObsToken } from './obs-token.js';
+import { obtainInspectToken } from './inspect-token.js';
 import type { Config } from './config.js';
 
 /**
@@ -34,13 +34,13 @@ export function buildOpsAuthProvider(opts: {
   });
 }
 
-export function buildObsAuthProvider(opts: { cfg: Config; subjectToken: string }): McpAuthProvider {
+export function buildInspectAuthProvider(opts: { cfg: Config; subjectToken: string }): McpAuthProvider {
   return createMcpAuthProvider({
-    serverUrl: opts.cfg.mcpObservabilityUrl,
+    serverUrl: opts.cfg.mcpInspectUrl,
     service: 'agent-specialist',
     allowedAuthorizationServers: [opts.cfg.curityIssuer],
     discoveryTtlMs: opts.cfg.mcpDiscoveryTtlMs,
     exchange: ({ tokenEndpoint, scope }) =>
-      obtainObsToken({ cfg: opts.cfg, subjectToken: opts.subjectToken, tokenEndpoint, scope }),
+      obtainInspectToken({ cfg: opts.cfg, subjectToken: opts.subjectToken, tokenEndpoint, scope }),
   });
 }

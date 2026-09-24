@@ -38,13 +38,13 @@ const TIER_META: Record<
     iconClass: string;
   }
 > = {
-  observability: {
+  inspect: {
     title: 'Read tier',
-    scope: 'obs:read',
-    blurb: 'mcp-observability, reached by the copilot directly.',
+    scope: 'inspect:read',
+    blurb: 'mcp-inspect, reached by the copilot directly.',
     gate: (
       <>
-        Listed when <span className="font-mono">obs:read</span> is on the copilot&rsquo;s token.
+        Listed when <span className="font-mono">inspect:read</span> is on the copilot&rsquo;s token.
       </>
     ),
     Icon: Eye,

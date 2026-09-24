@@ -38,7 +38,7 @@ var JWKS_CACHE = { resolver: null, kids: {} };
 
 var SPIRE_TRUST_DOMAIN = 'spiffe://demo.curity.local';
 // `/ns/` (not `/ns/agents/sa/`) so MCP SVIDs (…/ns/mcp/sa/mcp-ops,
-// …/ns/mcp/sa/mcp-observability) also pass the actor sub prefix check.
+// …/ns/mcp/sa/mcp-inspect) also pass the actor sub prefix check.
 // The exact-ID gate remains each client's `allowedActors` regex.
 var SPIRE_AGENT_PREFIX = SPIRE_TRUST_DOMAIN + '/ns/';
 var EXPECTED_ACTOR_AUD = 'https://curity.localtest.me/oauth/v2/oauth-token';
@@ -50,29 +50,29 @@ var EXPECTED_ACTOR_AUD = 'https://curity.localtest.me/oauth/v2/oauth-token';
 var SPIFFE_SPECIALIST = SPIRE_TRUST_DOMAIN + '/ns/agents/sa/agent-specialist';
 var SPIFFE_GATEWAY = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/agentgateway';
 var SPIFFE_MCP_OPS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-ops';
-var SPIFFE_MCP_OBS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-observability';
+var SPIFFE_MCP_INSPECT = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-inspect';
 
 // Per-client policy: scopes are keyed BY AUDIENCE so a client cannot request
 // a privileged scope for an audience that doesn't accept it. Without this,
 // copilot — which legitimately needs `ops:write` when forwarding to
 // `agent-specialist` — could also obtain `ops:write` for the read-only
-// `mcp-observability` audience and leak that capability to anything down
+// `mcp-inspect` audience and leak that capability to anything down
 // the line that's less strict than that MCP's own middleware.
 //
 // Exchange paths the procedure must support:
-//   - agent-copilot      ─exch→ audience=mcp-gateway         scope=obs:read
-//   - agent-copilot      ─exch→ audience=agent-specialist    scope=obs:read ops:write llm:invoke
+//   - agent-copilot      ─exch→ audience=mcp-gateway         scope=inspect:read
+//   - agent-copilot      ─exch→ audience=agent-specialist    scope=inspect:read ops:write llm:invoke
 //     (the token copilot forwards over A2A; act.sub=copilot; llm:invoke rides
 //     along because this token becomes the specialist's subject token)
 //   - agent-copilot      ─exch→ audience=llm-gateway         scope=llm:invoke
-//   - agent-specialist   ─exch→ audience=mcp-gateway         scope=obs:read ops:write
+//   - agent-specialist   ─exch→ audience=mcp-gateway         scope=inspect:read ops:write
 //     (subject is the just-received Bearer, so act nests automatically)
 //   - agent-specialist   ─exch→ audience=llm-gateway         scope=llm:invoke
-//   - agentgateway       ─exch→ audience=mcp-observability   scope=obs:read
+//   - agentgateway       ─exch→ audience=mcp-inspect   scope=inspect:read
 //   - agentgateway       ─exch→ audience=mcp-ops             scope=ops:write
 //     (the agentgateway's exchange-shim narrowing the aud=mcp-gateway caller
 //     token per tool-target; act gains the gateway's SPIFFE ID)
-//   - mcp-observability  ─exch→ audience=obs-api             scope=obs:read
+//   - mcp-inspect  ─exch→ audience=inspect-api             scope=inspect:read
 //   - mcp-ops            ─exch→ audience=ops-api             scope=ops:write
 var CLIENT_POLICY = {
   // agent-copilot and agent-specialist are CIMD ephemeral clients: their client
@@ -82,9 +82,9 @@ var CLIENT_POLICY = {
   // signs the actor_token is still the agent's K8s service account.
   'https://copilot.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-gateway': { scopes: ['obs:read'], mayAct: SPIFFE_GATEWAY },
+      'mcp-gateway': { scopes: ['inspect:read'], mayAct: SPIFFE_GATEWAY },
       'agent-specialist': {
-        scopes: ['obs:read', 'ops:write', 'llm:invoke'],
+        scopes: ['inspect:read', 'ops:write', 'llm:invoke'],
         mayAct: SPIFFE_SPECIALIST
       },
       // Terminal: the gateway swaps in the configured LLM provider's upstream
@@ -96,7 +96,7 @@ var CLIENT_POLICY = {
   },
   'https://specialist.localtest.me/.well-known/oauth-client': {
     perAudience: {
-      'mcp-gateway': { scopes: ['obs:read', 'ops:write'], mayAct: SPIFFE_GATEWAY },
+      'mcp-gateway': { scopes: ['inspect:read', 'ops:write'], mayAct: SPIFFE_GATEWAY },
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
@@ -106,24 +106,24 @@ var CLIENT_POLICY = {
   // narrowing the broad aud=mcp-gateway caller token per tool-target.
   'agentgateway': {
     perAudience: {
-      'mcp-observability': { scopes: ['obs:read'], mayAct: SPIFFE_MCP_OBS },
+      'mcp-inspect': { scopes: ['inspect:read'], mayAct: SPIFFE_MCP_INSPECT },
       'mcp-ops': { scopes: ['ops:write'], mayAct: SPIFFE_MCP_OPS }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/]
   },
   // MCPs are confidential clients exchanging to their backend API. Both are
-  // terminal: {obs,ops}-api consume the token, they never exchange onward.
+  // terminal: {inspect,ops}-api consume the token, they never exchange onward.
   'mcp-ops': {
     perAudience: {
       'ops-api': { scopes: ['ops:write'] }
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/mcp-ops$/]
   },
-  'mcp-observability': {
+  'mcp-inspect': {
     perAudience: {
-      'obs-api': { scopes: ['obs:read'] }
+      'inspect-api': { scopes: ['inspect:read'] }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/mcp-observability$/]
+    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/mcp-inspect$/]
   }
 };
 
@@ -353,7 +353,7 @@ function result(context) {
   //     can't widen delegation, and the authority is verifiable by anyone holding
   //     the token without reading Curity's configuration.
   //
-  //     Enforce-if-present: terminal tokens (…→llm-gateway, →obs-api, →ops-api)
+  //     Enforce-if-present: terminal tokens (…→llm-gateway, →inspect-api, →ops-api)
   //     carry no `may_act` because nothing exchanges them onward. Absent means
   //     unconstrained, which keeps a token minted before this claim existed
   //     working through its short lifetime rather than breaking mid-chain.

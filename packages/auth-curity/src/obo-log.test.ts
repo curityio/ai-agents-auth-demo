@@ -45,7 +45,7 @@ describe('summarizeJwt', () => {
     const jwt = makeJwt({
       sub: 'alice',
       aud: ['agent-copilot'],
-      scope: 'obs:read ops:write',
+      scope: 'inspect:read ops:write',
       acr: 'mfa',
       roles: ['sre', 'oncall'],
       act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
@@ -53,7 +53,7 @@ describe('summarizeJwt', () => {
     expect(summarizeJwt(jwt)).toEqual({
       sub: 'alice',
       aud: 'agent-copilot',
-      scope: 'obs:read ops:write',
+      scope: 'inspect:read ops:write',
       acr: 'mfa',
       roles: 'sre, oncall',
       act: 'agent-copilot',
@@ -66,18 +66,18 @@ describe('formatOboLog', () => {
     const out = formatOboLog({
       service: 'agent-copilot',
       kind: 'EXCHANGE',
-      headline: '→ mcp-observability',
-      fields: { user: 'alice', scope: 'obs:read' },
+      headline: '→ mcp-inspect',
+      fields: { user: 'alice', scope: 'inspect:read' },
     });
-    expect(out).toContain('┌─ INFO [agent-copilot] EXCHANGE → mcp-observability');
+    expect(out).toContain('┌─ INFO [agent-copilot] EXCHANGE → mcp-inspect');
     expect(out).toContain('│  user  : alice');
-    expect(out).toContain('│  scope : obs:read');
+    expect(out).toContain('│  scope : inspect:read');
     expect(out.endsWith('└─')).toBe(true);
   });
 
   it('omits empty/undefined fields', () => {
     const out = formatOboLog({
-      service: 'obs-api',
+      service: 'inspect-api',
       kind: 'RECEIVE',
       headline: 'GET /pods',
       fields: { sub: 'alice', acr: undefined, note: '' },
@@ -125,24 +125,24 @@ describe('traceFields', () => {
 describe('formatOboLog timestamp', () => {
   it('renders the emission time on the header line', () => {
     const out = formatOboLog({
-      service: 'obs-api',
+      service: 'inspect-api',
       kind: 'RECEIVE',
       headline: 'GET /pods',
       at: '2026-08-07T07:48:08.619Z',
     });
-    expect(out.split('\n')[0]).toBe('┌─ 2026-08-07T07:48:08.619Z INFO [obs-api] RECEIVE GET /pods');
+    expect(out.split('\n')[0]).toBe('┌─ 2026-08-07T07:48:08.619Z INFO [inspect-api] RECEIVE GET /pods');
   });
 
   it('leaves the header unchanged when no time is supplied', () => {
-    const out = formatOboLog({ service: 'obs-api', kind: 'RECEIVE', headline: 'GET /pods' });
-    expect(out.split('\n')[0]).toBe('┌─ INFO [obs-api] RECEIVE GET /pods');
+    const out = formatOboLog({ service: 'inspect-api', kind: 'RECEIVE', headline: 'GET /pods' });
+    expect(out.split('\n')[0]).toBe('┌─ INFO [inspect-api] RECEIVE GET /pods');
   });
 });
 
 describe('formatOboLog trace correlation', () => {
   it('renders trace ▸ span as the first field, ahead of the caller fields', () => {
     const out = formatOboLog({
-      service: 'mcp-observability',
+      service: 'mcp-inspect',
       kind: 'RECEIVE',
       headline: 'MCP tool list_pods',
       trace: { traceId: TRACE_ID, spanId: SPAN_ID },
@@ -181,9 +181,9 @@ describe('oboLog', () => {
 
   it('stamps every line it emits with the current time', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    oboLog({ service: 'obs-api', kind: 'RECEIVE', headline: 'GET /pods' });
+    oboLog({ service: 'inspect-api', kind: 'RECEIVE', headline: 'GET /pods' });
     const header = spy.mock.calls[0]![0]!.split('\n')[0]!;
-    expect(header).toMatch(/^┌─ \d{4}-\d{2}-\d{2}T[\d:.]+Z INFO \[obs-api\] RECEIVE GET \/pods$/);
+    expect(header).toMatch(/^┌─ \d{4}-\d{2}-\d{2}T[\d:.]+Z INFO \[inspect-api\] RECEIVE GET \/pods$/);
   });
 });
 

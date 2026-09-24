@@ -27,9 +27,9 @@ current spec. The canonical docs above supersede them. Don't reintroduce
 ## Architecture you should know before touching code
 
 ```
-Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s API (prod)
                                                                 └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
-                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s API (prod)
         agent-copilot / agent-specialist ─ LLM ─▶ agentgateway (/llm; aud=llm-gateway, require llm:invoke; backendAuth.key=Azure key) ─▶ Azure OpenAI
         agentgateway = MCP front door (aud=mcp-gateway; coarse per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
         (the set_deployment_image=sre role split is authoritative at mcp-ops; the gateway's HTTP-layer `authorization` rule is a first line only — see #27)
@@ -55,12 +55,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   HTTPS URL they self-host (`https://{copilot,specialist}.localtest.me/.well-known/oauth-client`)
   that Curity dereferences for a metadata document + JWKS; they authenticate with
   a **`private_key_jwt`** assertion (no shared secret). The MCP servers
-  (`mcp-observability`/`mcp-ops`) remain static `client_secret_basic` clients.
+  (`mcp-inspect`/`mcp-ops`) remain static `client_secret_basic` clients.
   `packages/auth-curity` (`exchange.ts` `clientAuth`, `cimd.ts`) owns both paths.
 - **Both agents are LLM agents (Vercel AI SDK).** `agent-copilot` is the
   front-line agent; `agent-specialist` is a privileged **cross-tier LLM agent**
   (NOT a deterministic adapter): it takes a natural-language goal over A2A, holds
-  *two* tokens (`ops:write` to `mcp-ops` + `obs:read` to `mcp-observability`),
+  *two* tokens (`ops:write` to `mcp-ops` + `inspect:read` to `mcp-inspect`),
   and runs a tool-using inspect→act→verify loop. Its authz gates (the `ops:write`
   exchange = role+scope gate, and a deterministic `acr=mfa` step-up pre-check) run
   **outside/before** the LLM loop — see `apps/agent-specialist/src/executor.ts`
@@ -72,15 +72,15 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   direct-to-Azure path (`@ai-sdk/azure` in `buildLlm`) is gone. The gateway model is
   built with `@ai-sdk/openai-compatible`, deliberately NOT `@ai-sdk/openai` — see
   fact #30.
-- **MCP servers are thin clients.** `mcp-observability`/`mcp-ops` (in the `mcp`
+- **MCP servers are thin clients.** `mcp-inspect`/`mcp-ops` (in the `mcp`
   namespace) validate the caller then re-exchange to a backend resource server
-  (`obs-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
-  hold Kubernetes credentials, behind minimal RBAC in `prod` (obs-api: get/list
-  pods + logs **and** get/list deployments; ops-api: patch deployments). obs-api
+  (`inspect-api`/`ops-api`, in the separate `apis` namespace). Only the backend APIs
+  hold Kubernetes credentials, behind minimal RBAC in `prod` (inspect-api: get/list
+  pods + logs **and** get/list deployments; ops-api: patch deployments). inspect-api
   accepts **two** actor chains (`expectedActorChains`/`chainMatchesAny`), both of
-  which include the gateway: `[mcp-observability, agentgateway, agent-copilot]`
+  which include the gateway: `[mcp-inspect, agentgateway, agent-copilot]`
   (copilot reads directly) and
-  `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`
+  `[mcp-inspect, agentgateway, agent-specialist, agent-copilot]`
   (specialist reads while remediating).
 - **Resource servers enforce, in order:** Bearer → JWT valid → required scope →
   `act` present → exact actor-chain (length + per-position SPIFFE-ID regex) →
@@ -274,10 +274,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `agentgateway` (ns `mcp`, Service `agentgateway.mcp.svc.cluster.local:8080`,
     `k8s/workloads/agentgateway-config.yaml`) is the MCP front door for BOTH MCP
     servers, and **replaces** the former Istio ambient waypoint
-    (`k8s/istio/mcp-l7-authz.yaml`, now deleted; `mcp-observability`/`mcp-ops` no
+    (`k8s/istio/mcp-l7-authz.yaml`, now deleted; `mcp-inspect`/`mcp-ops` no
     longer carry `istio.io/use-waypoint`). Hard-won details:
     - **Path-routed, not federated.** ONE listener (`:8080`) with TWO path-scoped
-      routes: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops. It is
+      routes: `/inspect/mcp` → mcp-inspect, `/ops/mcp` → mcp-ops. It is
       path-routed (not a single federated `/mcp`) because agentgateway does **not**
       expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
       narrowing can't be done on a single federated endpoint. Callers pick the path.
@@ -312,7 +312,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       JWKS fetched from the in-cluster plain-HTTP URL
       `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`,
       same loopback foot-gun as #5). `mcpAuthorization` then does **coarse tier authz**:
-      the `/ops/mcp` route requires `ops:write`, `/observability/mcp` requires `obs:read`,
+      the `/ops/mcp` route requires `ops:write`, `/inspect/mcp` requires `inspect:read`,
       and `tools/list` is filtered by that tier scope. The gateway **lists and allows
       ALL ops tools** (`restart_deployment`/`scale_deployment`/`set_deployment_image`) for
       any `ops:write` caller — it does NOT split ops tools by role. It can't: agentgateway
@@ -373,14 +373,14 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       revision it negotiates. `make smoke-mcp-discovery` walks the chain;
       `make test-scripts` pins the config.
     - **The gateway inserts ONE position into every downstream `act` chain** — SPIFFE
-      ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. So obs-api now expects
-      `[mcp-observability, agentgateway, agent-copilot]` (copilot direct) OR
-      `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`; ops-api
+      ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. So inspect-api now expects
+      `[mcp-inspect, agentgateway, agent-copilot]` (copilot direct) OR
+      `[mcp-inspect, agentgateway, agent-specialist, agent-copilot]`; ops-api
       `[mcp-ops, agentgateway, agent-specialist, agent-copilot]`; mcp-ops
       `[agentgateway, agent-specialist, agent-copilot]`. New Curity client
       `agentgateway` (confidential, `client_secret_basic`; named after the workload,
       NOT after the `mcp-gateway` audience it fronts) is allowed to exchange
-      `mcp-observability`→`obs:read` and `mcp-ops`→`ops:write`, with `allowedActor`
+      `mcp-inspect`→`inspect:read` and `mcp-ops`→`ops:write`, with `allowedActor`
       pinned to the agentgateway SPIFFE ID.
     - **The gateway does NOT enforce `acr`/step-up or match the `act` chain** — those
       stay in the resource-server middleware (`auth-middleware.ts`). The RFC 9470
@@ -389,9 +389,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       NOT mTLS SPIFFE identity. The Kubernetes Gateway API CRDs / `istio-waypoint`
       GatewayClass are no longer needed for MCP authz — but they ARE still installed and
       used by the **apis-tier waypoint** (`k8s/istio/apis-l7-authz.yaml`, applied by
-      `make apply`): `obs-api`/`ops-api` carry `istio.io/use-waypoint: apis-waypoint`,
+      `make apply`): `inspect-api`/`ops-api` carry `istio.io/use-waypoint: apis-waypoint`,
       and its `AuthorizationPolicy` pins each API to the mesh identity of the one MCP
-      server that fronts it (`cluster.local/ns/mcp/sa/mcp-observability`/`mcp-ops`) plus
+      server that fronts it (`cluster.local/ns/mcp/sa/mcp-inspect`/`mcp-ops`) plus
       the token's audience + scope. Don't remove `gateway-api-crds` from `make platform`
       on the strength of "MCP no longer needs it".
 
@@ -480,7 +480,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       JSON string, or a plain object depending on how Curity hydrated the introspected
       token. `act` dodges this by being forwarded opaquely; `may_act` must be read into,
       hence the `mayActSub()` normaliser. Same hazard, different mitigation.
-    - **Enforce-if-present.** Terminal audiences (`llm-gateway`, `obs-api`, `ops-api`)
+    - **Enforce-if-present.** Terminal audiences (`llm-gateway`, `inspect-api`, `ops-api`)
       carry no `may_act` — nothing exchanges them onward — and absent means unconstrained,
       so tokens minted before the claim existed still work out their lifetime.
     - Surfaced for demos via `summarizeJwt().mayAct`. `act` = who **did** act (audit);
@@ -494,7 +494,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `registerTool(name, { description, inputSchema }, cb)`, and `inputSchema` must be a
       *wrapped* `z.object({...})`, not a raw shape. It must also expose
       `~standard.jsonSchema`, which **zod 3 does not have on either entry point** (neither
-      `zod` nor `zod/v4` in 3.25). So `mcp-observability`/`mcp-ops` are on **zod 4** while
+      `zod` nor `zod/v4` in 3.25). So `mcp-inspect`/`mcp-ops` are on **zod 4** while
       `agent-runtime` and the agents stay on **zod 3** (AI SDK v4 peers on it). Divergent
       zod majors in one pnpm workspace is deliberate, not drift.
     - **Serving is `createMcpHandler(factory, …)` + `toNodeHandler`,** replacing the
@@ -525,7 +525,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       servers' own support is pinned by `apps/mcp-*/tests/mcp-http.test.ts`, so a
       mismatch there indicts the gateway, not the origin.
     - **External MCP clients must speak 2026-07-28** — including MCP Inspector
-      (`make inspect-obs`/`inspect-ops`). An older Inspector will be refused at connect
+      (`make mcp-inspector-read`/`mcp-inspector-write`). An older Inspector will be refused at connect
       rather than silently served on the old revision.
     - **Client-side response caching (SEP-2549) is off by default and `tools/call` is
       never cacheable** — `defaultCacheTtlMs` is `0`, so nothing is served from cache
@@ -631,7 +631,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     (`span-names.ts`): the conventions name a client span `POST` and a server span
     `POST` until a router sets `http.route` — which the ESM race above often
     prevents — so a waterfall read `agent-copilot POST` six times over. They now
-    read `METHOD /path` in both directions: `POST /observability/mcp`, `GET
+    read `METHOD /path` in both directions: `POST /inspect/mcp`, `GET
     /.well-known/oauth-authorization-server/…`, `POST /oauth/v2/oauth-token`,
     `POST /chat`. Path only — the host stays in `server.address` — and query
     strings are dropped. Fine here because every path is fixed; the convention's
@@ -667,7 +667,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       and nesting is correct; for `mcp:` backends the upstream request is built fresh
       (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
       headers only where absent, carrying the ORIGINAL inbound traceparent. So
-      `mcp-observability`/`mcp-ops` parent to the CALLER, and the gateway looks like a
+      `mcp-inspect`/`mcp-ops` parent to the CALLER, and the gateway looks like a
       bystander to a call that went around it. Not configurable, and still present on
       `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
       the indentation lies.
@@ -716,7 +716,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       propose 50 and learn the bound only from a server-side rejection. **Deliberate
       trade-off:** `jsonSchema()` does no validation without a `validate` function, so
       the model's args are no longer checked client-side. That was never the security
-      boundary — `mcp-ops`/`mcp-observability` validate every call with zod 4, and the
+      boundary — `mcp-ops`/`mcp-inspect` validate every call with zod 4, and the
       gateway's `Mcp-Param-Namespace` rule fails closed on anything unreadable; only
       *where* a malformed call is caught moves. Don't "restore" a converter here: it
       recreates a second, drifting copy of a contract the server already publishes.
@@ -787,7 +787,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       single-line mode rather than flattening the pretty default. `OBO_LOG=off` silences it.
 
 32. **`AUTH_DEBUG` gates demo *features*, not verbose logging — don't re-merge them.**
-    `AUTH_DEBUG=true` (set in `k8s/workloads/web.yaml`) enables the `/inspect` token
+    `AUTH_DEBUG=true` (set in `k8s/workloads/web.yaml`) enables the `/tokens` token
     viewer and `/api/dev/token`, which `make smoke` reads for `SMOKE_SUBJECT_TOKEN`. It
     is therefore permanently ON in the cluster. It used to *also* drive Auth.js's own
     `debug:` flag, which dumps the full decoded ID token and every `Set-Cookie` on each
@@ -844,8 +844,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `getInitializedContext(...)` builds the TIA's `authenticationAttributes`, the gate
       would false-deny a user who HAD stepped up. Proof needs both halves, because a
       pass alone is also consistent with the TIA never running: bind a throwaway ACR TIA
-      to a scope the caller already holds (`obs:read`) with `required-acr: html-form` →
-      the copilot→mcp-gateway exchange still issues `scope=obs:read`; flip it to
+      to a scope the caller already holds (`inspect:read`) with `required-acr: html-form` →
+      the copilot→mcp-gateway exchange still issues `scope=inspect:read`; flip it to
       `required-acr: mfa` → the same exchange returns
       `access_denied "Authorization denied for all requested scopes and claims"`
       (the `isFullyDenied` path). So the TIA runs at the exchange and reads the
@@ -880,7 +880,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       end: it hands the code to the real Next.js callback, which redeems it, so the
       script's own token call then fails on an already-used code.
       Measured against the pre-TIA config, that flow returns
-      `scope=openid obs:read llm:invoke ops:write` at `acr=html-form` — the hole the
+      `scope=openid inspect:read llm:invoke ops:write` at `acr=html-form` — the hole the
       TIA closes, and the reason this assertion is a real regression test.
 
 34. **The identity panels are debug surfaces that mint REAL tokens, and five rules
@@ -895,7 +895,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       privileged), whichever is newer. Without the `jti` gate a previous login's
       exchange for the same user leaked into a fresh session before any flow ran.
     - **Probes are not flows.** `/tools` reuses the agents' auth providers
-      (`buildObservabilityAuthProvider` / `buildOpsAuthProvider`, whose `exchange`
+      (`buildInspectAuthProvider` / `buildOpsAuthProvider`, whose `exchange`
       callbacks are `obtainMcpToken` / `obtainOpsToken`) and `obtainSpecialistToken`,
       which stamp those slots on cache hits too, so the probes pass
       `recordLastExchange: false`. Forgetting it makes *Check tools* conjure a
@@ -1075,10 +1075,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `new Error(...)` line. Both MCP servers' middleware tests had it. Use braces.
 
 38. **istiod fetches the apis-waypoint's JWKS exactly ONCE, and if Curity is booting
-    at that moment every obs-api/ops-api call fails `401 Jwt verification fails`
+    at that moment every inspect-api/ops-api call fails `401 Jwt verification fails`
     until something regenerates the waypoint's filters.** Seen on a fresh
     `make demo` (2026-09-24): alice's read flow passed agentgateway (200) and
-    mcp-observability logged `CALL → obs-api`, but obs-api never logged RECEIVE — the
+    mcp-inspect logged `CALL → inspect-api`, but inspect-api never logged RECEIVE — the
     Istio waypoint between them refused the token. Mechanics, from istio 1.30's
     `pilot/pkg/model/jwks_resolver.go`: `k8s/istio/apis-l7-authz.yaml`'s
     `RequestAuthentication` names Curity's in-cluster `jwksUri`; istiod fetches it

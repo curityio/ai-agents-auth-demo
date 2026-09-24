@@ -9,7 +9,7 @@ import { ResultCard, type AgentResponse } from '../src/components/result-card';
 
 const read: AgentResponse = {
   answer: 'Two pods are running.',
-  identity: { sub: 'alice', scopes: ['obs:read', 'openid'], roles: ['sre'], acr: 'html-form' },
+  identity: { sub: 'alice', scopes: ['inspect:read', 'openid'], roles: ['sre'], acr: 'html-form' },
   steps: [
     {
       toolCalls: [{ name: 'list_pods', args: { namespace: 'prod' } }],
@@ -127,9 +127,9 @@ describe('ResultCard trace tab — privileged run with steps', () => {
     expect(html).toMatch(/privileged-a2a/);
     expect(html).toMatch(/completed/);
   });
-  it('marks the act step as the ops tier and the reads around it as observability', () => {
+  it('marks the act step as the ops tier and the reads around it as inspect', () => {
     const rows = [...html.matchAll(/data-tier="(\w+)"/g)].map((m) => m[1]);
-    expect(rows).toEqual(['observability', 'ops', 'observability']);
+    expect(rows).toEqual(['inspect', 'ops', 'inspect']);
     const act = html.match(/data-tier="ops"[\s\S]*?restart_deployment/)?.[0] ?? '';
     expect(act).toMatch(/text-warn/);
     expect(act).toMatch(/lucide-lock/);

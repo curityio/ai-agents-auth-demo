@@ -6,12 +6,12 @@
 # so the resulting token passes the gateway's full enforcement: issuer, audience
 # and per-tier scope.
 #
-# IMPORTANT — the token is `aud=mcp-gateway`, NOT aud=mcp-observability/mcp-ops,
+# IMPORTANT — the token is `aud=mcp-gateway`, NOT aud=mcp-inspect/mcp-ops,
 # and Inspector must therefore point at the GATEWAY, not at an MCP server:
-#   obs -> http://localhost:<port>/observability/mcp
+#   inspect -> http://localhost:<port>/inspect/mcp
 #   ops -> http://localhost:<port>/ops/mcp
-# `make inspect-obs` / `make inspect-ops` port-forward svc/agentgateway and print
-# the right URL. Minting aud=mcp-observability / aud=mcp-ops directly is IMPOSSIBLE
+# `make mcp-inspector-read` / `make mcp-inspector-write` port-forward svc/agentgateway and print
+# the right URL. Minting aud=mcp-inspect / aud=mcp-ops directly is IMPOSSIBLE
 # for these clients — Curity refuses it ("audience ... not allowed for client ..."),
 # which smoke-token-exchange [3/5] and smoke-a2a [D3] assert on purpose. Only the
 # gateway's own exchange-shim may mint those, using the gateway's SPIFFE SVID.
@@ -21,17 +21,17 @@
 # a token that skipped the gateway is rejected on chain length regardless of scope.
 #
 # It only PRINTS the token (to stdout) — the actual MCP call happens in
-# Inspector. Diagnostic notes go to stderr so `TOKEN=$(... obs)` is clean.
+# Inspector. Diagnostic notes go to stderr so `TOKEN=$(... inspect)` is clean.
 #
 # Usage:
 #   export SMOKE_SUBJECT_TOKEN='eyJ...'        # a fresh Curity access token for Alice
-#   scripts/mint-mcp-token.sh obs              # -> aud=mcp-gateway, scope=obs:read
+#   scripts/mint-mcp-token.sh inspect              # -> aud=mcp-gateway, scope=inspect:read
 #   scripts/mint-mcp-token.sh ops              # -> aud=mcp-gateway, scope=ops:write
 #
 # Getting SMOKE_SUBJECT_TOKEN:
 #   1. Open https://app.localtest.me and sign in as Alice.
 #      - For `ops` you MUST complete the MFA step-up (the token needs acr=mfa,
-#        and Alice must have role=sre). For `obs`, any login works.
+#        and Alice must have role=sre). For `inspect`, any login works.
 #   2. With AUTH_DEBUG=true on the web pod, the access token is logged by
 #      /api/whoami. Copy it.
 #   3. export SMOKE_SUBJECT_TOKEN='eyJ...'
@@ -43,9 +43,9 @@ set -euo pipefail
 
 TARGET="${1:-}"
 case "$TARGET" in
-  obs|ops) ;;
+  inspect|ops) ;;
   *)
-    printf 'usage: %s <obs|ops>\n' "$(basename "$0")" >&2
+    printf 'usage: %s <inspect|ops>\n' "$(basename "$0")" >&2
     exit 2
     ;;
 esac
@@ -127,14 +127,14 @@ exchange() {
   printf '%s' "$token"
 }
 
-if [[ "$TARGET" == "obs" ]]; then
+if [[ "$TARGET" == "inspect" ]]; then
   note "Minting aud=mcp-gateway token for the READ tier (user -> agent-copilot -> gateway)"
   COPILOT_PEM=$(read_pem agent-copilot-curity)
   COPILOT_SVID=$(read_svid agent-copilot)
   [[ -n "$COPILOT_PEM" && -n "$COPILOT_SVID" ]] || { red "missing copilot key/SVID"; exit 1; }
 
   TOKEN=$(exchange "$COPILOT_CLIENT_ID" "$COPILOT_PEM" "$COPILOT_SVID" \
-    "$SUBJECT_TOKEN" "mcp-gateway" "obs:read")
+    "$SUBJECT_TOKEN" "mcp-gateway" "inspect:read")
 
   P=$(echo "$TOKEN" | decode_jwt_payload)
   green "  OK  aud=$(echo "$P" | jq -r '.aud') scope=$(echo "$P" | jq -r '.scope') act.sub=$(echo "$P" | jq -r '.act.sub') may_act=$(echo "$P" | jq -r '.may_act.sub // "<none>"')"
@@ -155,7 +155,7 @@ else
 
   note "[A] user -> agent-specialist (copilot client + copilot SVID)"
   SPECIALIST_BEARER=$(exchange "$COPILOT_CLIENT_ID" "$COPILOT_PEM" "$COPILOT_SVID" \
-    "$SUBJECT_TOKEN" "agent-specialist" "obs:read ops:write")
+    "$SUBJECT_TOKEN" "agent-specialist" "inspect:read ops:write")
   green "  OK  act.sub=$(echo "$SPECIALIST_BEARER" | decode_jwt_payload | jq -r '.act.sub')"
 
   note "[B] agent-specialist -> mcp-gateway (specialist client + specialist SVID)"

@@ -2,7 +2,7 @@
   "name": "@ai-agents-demo/agent-specialist",
   "version": "0.0.1",
   "private": true,
-  "description": "LLM-driven privileged remediation specialist. Accepts an A2A request carrying an agent-specialist-aud Bearer, inspects deployments (obs:read) and remediates them — restart, set image, scale — via mcp-ops (ops:write), with MFA step-up enforced before any write.",
+  "description": "LLM-driven privileged remediation specialist. Accepts an A2A request carrying an agent-specialist-aud Bearer, inspects deployments (inspect:read) and remediates them — restart, set image, scale — via mcp-ops (ops:write), with MFA step-up enforced before any write.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/server.js",

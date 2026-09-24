@@ -26,8 +26,8 @@ data:
             # Probe server spans are named just "GET" (instrumentation-http names
             # by method; the route lives on a separate express span). Scope the
             # drop to health PATHS only — a blanket `name == "GET"` also discarded
-            # obs-api's legitimate `GET /pods` / `GET /pods/:name/logs` read spans,
-            # erasing the OBS-path identity chain from Tempo.
+            # inspect-api's legitimate `GET /pods` / `GET /pods/:name/logs` read spans,
+            # erasing the INSPECT-path identity chain from Tempo.
             - 'name == "GET" and (attributes["url.path"] == "/healthz" or attributes["url.path"] == "/api/health")'
             - 'name == "GET" and (attributes["http.target"] == "/healthz" or attributes["http.target"] == "/api/health")'
       # NOTE: a production deployment would add an attributes/redaction

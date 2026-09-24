@@ -40,17 +40,17 @@ and deny by role. Three identity planes — **human** (OIDC), **workload**
 (SPIFFE), and **assurance** (MFA) — enforced together, visible in one trace.
 
 ```
-Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s
                                                         ├─ LLM ─▶ agentgateway ─▶ LLM provider
                                                         └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s
-                                                                                    ├─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s
+                                                                                    ├─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s
                                                                                     └─ LLM ─▶ agentgateway ─▶ LLM provider
               agentgateway = MCP front door (aud=mcp-gateway; per-tier scope authz + tools/list filter; extAuthz→exchange-shim OBO hop)
                            + LLM egress   (/llm; aud=llm-gateway + scope=llm:invoke; injects the only provider key — no shim, no act-chain)
               every agent/MCP hop ⇄ Curity (RFC 8693 exchange, SPIFFE actor_token)
 ```
 
-![System topology: browser → istio-ingress → web (BFF) → agent-copilot, fanning out via MCP to mcp-observability/obs-api (read path) and via A2A to agent-specialist → mcp-ops/ops-api (privileged path), with SPIRE issuing JWT-SVIDs and Curity performing RFC 8693 token exchange at every hop.](docs/architecture.jpg)
+![System topology: browser → istio-ingress → web (BFF) → agent-copilot, fanning out via MCP to mcp-inspect/inspect-api (read path) and via A2A to agent-specialist → mcp-ops/ops-api (privileged path), with SPIRE issuing JWT-SVIDs and Curity performing RFC 8693 token exchange at every hop.](docs/architecture.jpg)
 
 See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 
@@ -108,7 +108,7 @@ cp /path/to/your/curity-license.json ./license.json
 
 make demo            # one command, end to end. Prompts up front for the license
                      # file + LLM provider key, then runs unattended:
-                     # kind + Istio Ambient + SPIRE + observability, seeds every
+                     # kind + Istio Ambient + SPIRE + telemetry, seeds every
                      # secret, builds/loads images, applies manifests, wires routing.
 
 # make demo finishes by printing every browser-exposed URL (app, Curity admin,
@@ -163,9 +163,9 @@ apps/
   web/                  # Next.js BFF + Auth.js (Curity OIDC)
   agent-copilot/        # front-line agent (Vercel AI SDK); CIMD ephemeral client
   agent-specialist/     # privileged agent; A2A server; CIMD ephemeral client
-  mcp-observability/    # read-tier MCP (thin client → obs-api)
+  mcp-inspect/    # read-tier MCP (thin client → inspect-api)
   mcp-ops/              # privileged-tier MCP (thin client → ops-api; sre-only set_deployment_image)
-  obs-api/              # read resource server (pods/logs/deployments in prod, RBAC)
+  inspect-api/              # read resource server (pods/logs/deployments in prod, RBAC)
   ops-api/              # privileged resource server (restart/scale/set-image deployments, RBAC)
   exchange-shim/        # agentgateway extAuthz sidecar; runs the per-backend OBO exchange
 packages/
@@ -175,7 +175,7 @@ packages/
   otel-bootstrap/       # OTel SDK wiring + spiffe.id resource attribute
   a2a-helpers/          # A2A client/server + step-up error carrier
 k8s/
-  curity/ spire/ istio/ observability/ workloads/ prod/ kind/
+  curity/ spire/ istio/ telemetry/ workloads/ prod/ kind/
 docs/                   # architecture, design, demo, curity-seed, llm-providers
 scripts/                # bootstrap + smoke-test shell scripts
 Makefile

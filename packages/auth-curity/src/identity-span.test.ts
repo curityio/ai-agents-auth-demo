@@ -15,10 +15,10 @@ function vj(payload: VerifiedJwt['payload']): VerifiedJwt {
 describe('buildIdentityAttributes', () => {
   it('maps sub, scope and acr', () => {
     const attrs = buildIdentityAttributes(
-      vj({ sub: 'alice', scope: 'obs:read ops:write', acr: 'mfa' }),
+      vj({ sub: 'alice', scope: 'inspect:read ops:write', acr: 'mfa' }),
     );
     expect(attrs['auth.sub']).toBe('alice');
-    expect(attrs['auth.scope']).toBe('obs:read ops:write');
+    expect(attrs['auth.scope']).toBe('inspect:read ops:write');
     expect(attrs['auth.acr']).toBe('mfa');
   });
 
@@ -67,10 +67,10 @@ describe('buildIdentityAttributes', () => {
 
   it('maps auth.scope from an scp array (no scope string)', () => {
     const attrs = buildIdentityAttributes({
-      payload: { sub: 'alice', scp: ['obs:read', 'ops:write'] },
+      payload: { sub: 'alice', scp: ['inspect:read', 'ops:write'] },
       protectedHeader: { alg: 'RS256' },
-      scopes: new Set(['obs:read', 'ops:write']),
+      scopes: new Set(['inspect:read', 'ops:write']),
     });
-    expect(attrs['auth.scope']).toBe('obs:read ops:write');
+    expect(attrs['auth.scope']).toBe('inspect:read ops:write');
   });
 });

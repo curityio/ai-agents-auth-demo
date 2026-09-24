@@ -9,8 +9,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createDownstreamChainFetcher } from '../src/last-token-route.js';
 
-const URL = 'http://mcp-observability/last-token';
-const HOPS = [{ hop: 'agentgateway → mcp-observability', header: {}, payload: { sub: 'alice' } }];
+const URL = 'http://mcp-inspect/last-token';
+const HOPS = [{ hop: 'agentgateway → mcp-inspect', header: {}, payload: { sub: 'alice' } }];
 
 function fetchReturning(status: number, chain?: unknown) {
   return vi.fn(

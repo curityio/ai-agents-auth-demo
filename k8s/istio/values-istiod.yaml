@@ -15,7 +15,7 @@ profile: ambient
 #
 # There are three cert consumers in this mesh, not two: ztunnel (its own chart),
 # the edge gateway `istio-ingress`, and the `apis-waypoint` Gateway that fronts
-# obs-api/ops-api (k8s/istio/apis-l7-authz.yaml). The last one is deployed by
+# inspect-api/ops-api (k8s/istio/apis-l7-authz.yaml). The last one is deployed by
 # istiod, not by a Helm chart we pass values to — so setting SECRET_TTL here via
 # proxyMetadata is what covers BOTH Envoys. Putting it in values-gateway.yaml's
 # `env:` instead would silently miss the waypoint.

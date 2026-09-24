@@ -4,7 +4,7 @@
  * Geometry is the landscape picture: the request runs left to right along the
  * middle row, the read tier sits top-right, the privileged tier bottom-right,
  * and Curity is a bar underneath — off the request path. Every workload that
- * exchanges "drops" straight down to the bar and back; mcp-observability is
+ * exchanges "drops" straight down to the bar and back; mcp-inspect is
  * routed around mcp-ops through the corridor between the rows.
  *
  * A journey is a list of stops. Each stop is where the packet is after the
@@ -28,9 +28,9 @@ export type NodeId =
   | 'agent-copilot'
   | 'agent-specialist'
   | 'agentgateway'
-  | 'mcp-observability'
+  | 'mcp-inspect'
   | 'mcp-ops'
-  | 'obs-api'
+  | 'inspect-api'
   | 'ops-api'
   | 'llm-provider';
 
@@ -71,17 +71,17 @@ export const NODES: TopoNode[] = [
   node('agent-copilot', 172, ROW.mid, 'agents', true),
   node('agentgateway', 388, ROW.mid, 'mcp', true),
   node('agent-specialist', 288, ROW.bottom, 'agents', true),
-  node('mcp-observability', 504, ROW.top, 'mcp', true, [
+  node('mcp-inspect', 504, ROW.top, 'mcp', true, [
     { x: 504, y: ROW.top + NH / 2 },
     { x: 504, y: CORRIDOR },
     { x: 424, y: CORRIDOR },
     { x: 424, y: CURITY.y },
   ]),
-  node('obs-api', 622, ROW.top, 'apis', false),
+  node('inspect-api', 622, ROW.top, 'apis', false),
   node('mcp-ops', 504, ROW.bottom, 'mcp', true),
   node('ops-api', 622, ROW.bottom, 'apis', false),
   // The model, on the middle row beside the two APIs: reached only through
-  // agentgateway's /llm route. Its edge crosses mcp-observability's dashed drop
+  // agentgateway's /llm route. Its edge crosses mcp-inspect's dashed drop
   // at a right angle — the one crossing on the stage, and a perpendicular one.
   {
     ...node('llm-provider', 622, ROW.mid, '', false),
@@ -95,9 +95,9 @@ export const EDGES: [NodeId, NodeId][] = [
   ['agent-copilot', 'agentgateway'],
   ['agent-copilot', 'agent-specialist'],
   ['agent-specialist', 'agentgateway'],
-  ['agentgateway', 'mcp-observability'],
+  ['agentgateway', 'mcp-inspect'],
   ['agentgateway', 'mcp-ops'],
-  ['mcp-observability', 'obs-api'],
+  ['mcp-inspect', 'inspect-api'],
   ['mcp-ops', 'ops-api'],
   ['agentgateway', 'llm-provider'],
 ];
@@ -108,7 +108,7 @@ export const EDGES: [NodeId, NodeId][] = [
  * row requires. Derived from the row geometry so a layout change moves them.
  */
 export const TIER_LABELS: readonly { tone: Tone; text: string; x: number; y: number }[] = [
-  { tone: 'read', text: 'read tier · obs:read', x: (504 + 622) / 2, y: ROW.top - NH / 2 - 8 },
+  { tone: 'read', text: 'read tier · inspect:read', x: (504 + 622) / 2, y: ROW.top - NH / 2 - 8 },
   {
     tone: 'privileged',
     text: 'write tier · ops:write · acr=mfa',
@@ -381,22 +381,22 @@ const READ_HOPS: Hop[] = [
     from: 'agent-copilot',
     to: 'agentgateway',
     ask: 'presents the user token + its SPIFFE SVID, asks for aud=mcp-gateway',
-    issued: 'issued aud=mcp-gateway scope=obs:read · act: agent-copilot',
+    issued: 'issued aud=mcp-gateway scope=inspect:read · act: agent-copilot',
     carry: 'agent-copilot → agentgateway · carrying the token it was just issued',
   },
   {
     from: 'agentgateway',
-    to: 'mcp-observability',
-    ask: 'asks for aud=mcp-observability',
-    issued: 'issued aud=mcp-observability scope=obs:read · act nests agentgateway',
-    carry: 'agentgateway → mcp-observability · carrying the token it was just issued',
+    to: 'mcp-inspect',
+    ask: 'asks for aud=mcp-inspect',
+    issued: 'issued aud=mcp-inspect scope=inspect:read · act nests agentgateway',
+    carry: 'agentgateway → mcp-inspect · carrying the token it was just issued',
   },
   {
-    from: 'mcp-observability',
-    to: 'obs-api',
-    ask: 'asks for aud=obs-api',
-    issued: 'issued aud=obs-api scope=obs:read · act: 3 workloads deep',
-    carry: 'mcp-observability → obs-api · carrying the token it was just issued',
+    from: 'mcp-inspect',
+    to: 'inspect-api',
+    ask: 'asks for aud=inspect-api',
+    issued: 'issued aud=inspect-api scope=inspect:read · act: 3 workloads deep',
+    carry: 'mcp-inspect → inspect-api · carrying the token it was just issued',
   },
 ];
 
@@ -404,7 +404,7 @@ const A2A_HOP: Hop = {
   from: 'agent-copilot',
   to: 'agent-specialist',
   ask: 'asks for aud=agent-specialist',
-  issued: 'issued aud=agent-specialist scope=ops:write obs:read · may_act: agent-specialist',
+  issued: 'issued aud=agent-specialist scope=ops:write inspect:read · may_act: agent-specialist',
   carry: 'agent-copilot → agent-specialist · hands the goal over A2A with that token',
 };
 
@@ -442,7 +442,7 @@ export function buildJourney(kind: Tone): Step[] {
   if (kind === 'read') {
     s.start(
       'web',
-      'alice signs in at Curity · web holds her user token (scope obs:read ops:write)',
+      'alice signs in at Curity · web holds her user token (scope inspect:read ops:write)',
       900,
     );
     s.run([USER_HOP]);
@@ -450,8 +450,8 @@ export function buildJourney(kind: Tone): Step[] {
     s.modelCall('agent-copilot', { ask: LLM_ASK, issued: LLM_ISSUED });
     s.run(READ_HOPS);
     s.finish(
-      'obs-api',
-      'obs-api never exchanges · it verifies the act chain and reads the cluster',
+      'inspect-api',
+      'inspect-api never exchanges · it verifies the act chain and reads the cluster',
     );
   } else {
     s.start(

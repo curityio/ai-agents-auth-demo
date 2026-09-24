@@ -13,7 +13,7 @@ check() { # $1 description, $2 file, $3 fixed-string
 }
 
 CFG=k8s/workloads/agentgateway-config.yaml
-check "gateway routes the observability well-known path" "$CFG" "exact: /.well-known/oauth-protected-resource/observability/mcp"
+check "gateway routes the inspect well-known path" "$CFG" "exact: /.well-known/oauth-protected-resource/inspect/mcp"
 check "gateway routes the ops well-known path"           "$CFG" "exact: /.well-known/oauth-protected-resource/ops/mcp"
 check "ops PRM advertises acr_values_supported"          "$CFG" "acrValuesSupported:"
 # agentgateway (v1.4.1, still v1.5.0) hard-codes an informational, non-RFC-9728
@@ -36,7 +36,7 @@ for f in k8s/workloads/agent-copilot.yaml k8s/workloads/agent-specialist.yaml; d
   check "$f calls the gateway by its public name" "$f" "value: https://mcp-gateway.localtest.me/"
   check "$f runs discovery on every question (MCP_DISCOVERY_TTL_SECONDS=0)" "$f" 'name: MCP_DISCOVERY_TTL_SECONDS'
   check "$f re-mints its exchanged tokens on every question (TOKEN_EXCHANGE_CACHE_TTL_SECONDS)" "$f" 'name: TOKEN_EXCHANGE_CACHE_TTL_SECONDS'
-  if grep -qE 'CURITY_TOKEN_ENDPOINT|MCP_(OPS|OBSERVABILITY)_SCOPE|MCP_OPS_(RESOURCE_)?METADATA_URL' "$REPO_ROOT/$f"; then
+  if grep -qE 'CURITY_TOKEN_ENDPOINT|MCP_(OPS|INSPECT)_SCOPE|MCP_OPS_(RESOURCE_)?METADATA_URL' "$REPO_ROOT/$f"; then
     red "FAIL $f still carries static discovery config"; fail=1
   else
     green "OK   $f carries no static discovery config"

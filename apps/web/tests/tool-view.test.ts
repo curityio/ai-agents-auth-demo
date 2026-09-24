@@ -8,7 +8,7 @@ import { orderTools, tierVerdict } from '../src/lib/tool-view';
 
 describe('orderTools', () => {
   it('orders read tools list → describe → logs regardless of server order', () => {
-    const names = orderTools('observability', [
+    const names = orderTools('inspect', [
       { name: 'get_pod_logs' },
       { name: 'list_pods' },
       { name: 'get_deployment' },
@@ -59,13 +59,13 @@ describe('tierVerdict', () => {
 });
 
 describe('toolTier', () => {
-  it('knows the three write tools are ops, everything else observability', async () => {
+  it('knows the three write tools are ops, everything else inspect', async () => {
     const { toolTier } = await import('../src/lib/tool-view');
     expect(toolTier('restart_deployment')).toBe('ops');
     expect(toolTier('scale_deployment')).toBe('ops');
     expect(toolTier('set_deployment_image')).toBe('ops');
-    expect(toolTier('get_deployment')).toBe('observability');
-    expect(toolTier('list_pods')).toBe('observability');
-    expect(toolTier('something_new')).toBe('observability');
+    expect(toolTier('get_deployment')).toBe('inspect');
+    expect(toolTier('list_pods')).toBe('inspect');
+    expect(toolTier('something_new')).toBe('inspect');
   });
 });

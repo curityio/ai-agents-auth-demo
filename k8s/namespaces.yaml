@@ -35,7 +35,7 @@ metadata:
     purpose: mcp-servers
     istio.io/dataplane-mode: ambient
 ---
-# Backend resource servers (obs-api/ops-api). Separated from the thin MCP
+# Backend resource servers (inspect-api/ops-api). Separated from the thin MCP
 # clients in `mcp`: only these hold Kubernetes credentials (minimal RBAC in
 # `prod`). In the ambient mesh for mTLS.
 apiVersion: v1

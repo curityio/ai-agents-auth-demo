@@ -81,7 +81,7 @@ export async function obtainMcpToken(opts: {
 }): Promise<string> {
   const { cfg, subjectToken, subjectSub, subjectAcr, tokenEndpoint, scope } = opts;
   const record = opts.recordLastExchange !== false;
-  const key = { sub: subjectSub, scope, audience: cfg.mcpObservabilityAudience, acr: subjectAcr };
+  const key = { sub: subjectSub, scope, audience: cfg.mcpInspectAudience, acr: subjectAcr };
   if (opts.bypassCache) exchangeCache.invalidate(key);
   const cached = exchangeCache.get(key);
   if (cached) {
@@ -116,7 +116,7 @@ export async function obtainMcpToken(opts: {
     },
     subjectToken,
     actorToken: svid.jwt,
-    audience: cfg.mcpObservabilityAudience,
+    audience: cfg.mcpInspectAudience,
     scope,
   });
 

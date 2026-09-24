@@ -156,7 +156,44 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.19)
 
-  apps/mcp-observability:
+  apps/inspect-api:
+    dependencies:
+      '@ai-agents-demo/auth-curity':
+        specifier: workspace:*
+        version: link:../../packages/auth-curity
+      '@ai-agents-demo/otel-bootstrap':
+        specifier: workspace:*
+        version: link:../../packages/otel-bootstrap
+      '@ai-agents-demo/spiffe':
+        specifier: workspace:*
+        version: link:../../packages/spiffe
+      '@kubernetes/client-node':
+        specifier: ^0.22.3
+        version: 0.22.3
+      '@opentelemetry/api':
+        specifier: ^1.9.0
+        version: 1.9.0
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)
+
+  apps/mcp-inspect:
     dependencies:
       '@ai-agents-demo/auth-curity':
         specifier: workspace:*
@@ -232,43 +269,6 @@ importers:
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.3
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@22.19.19)
-
-  apps/obs-api:
-    dependencies:
-      '@ai-agents-demo/auth-curity':
-        specifier: workspace:*
-        version: link:../../packages/auth-curity
-      '@ai-agents-demo/otel-bootstrap':
-        specifier: workspace:*
-        version: link:../../packages/otel-bootstrap
-      '@ai-agents-demo/spiffe':
-        specifier: workspace:*
-        version: link:../../packages/spiffe
-      '@kubernetes/client-node':
-        specifier: ^0.22.3
-        version: 0.22.3
-      '@opentelemetry/api':
-        specifier: ^1.9.0
-        version: 1.9.0
-      express:
-        specifier: ^4.21.2
-        version: 4.22.2
-    devDependencies:
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25

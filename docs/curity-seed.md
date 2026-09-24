@@ -41,7 +41,7 @@ user seed puts into Curity (§Accounts).
 | Scope | Purpose |
 | --- | --- |
 | `openid` | OIDC base — the only standard scope the web app requests |
-| `obs:read` | Read-only observability MCP |
+| `inspect:read` | Read-only inspect MCP |
 | `ops:write` | Restart / scale / set image on deployments (privileged). Bound to the `require-mfa-for-privileged` ACR Token Issuance Authorizer, so Curity will not mint it below `acr=mfa` ([`design.md`](design.md) §3.2.1). |
 | `llm:invoke` | The user-delegated LLM-egress scope both agents narrow to (`aud=llm-gateway`) for every model call through agentgateway's `/llm` route. Must be granted at every narrowing hop — see [`design.md`](design.md) §3.6. |
 
@@ -53,11 +53,11 @@ change-ticket beat ([`design.md`](design.md) §7 *Descoped*).
 ### Clients
 | Client ID | Type | Auth method | Grants | Redirect URIs | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `web-app` | OIDC confidential | client_secret_basic | authorization_code | `https://app.localtest.me/api/auth/callback/curity` | Auth.js uses PKCE + `state` (`checks` in `auth.ts`; not enforced by the client config). Allowed scopes `openid obs:read ops:write llm:invoke`: login asks for the first three, the RFC 9470 step-up re-auth adds `ops:write` with `acr_values=mfa`. Allowed authenticators `html-auth` + `totp-authn`; **no** `<force-authn>` (it would hide the password SSO session the TOTP step-up relies on). Audiences `web-app` (id_token) + `agent-copilot`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
-| `https://copilot.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | `client_id` is the self-hosted metadata URL; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-copilot`. Not a config-backed client — the `<ephemeral-client>` block admits any `client_id` under `*.localtest.me` (`<client-id-restrictions>`), fetches its metadata + JWKS with the `cimd-fetch` http-client (which trusts the mkcert CA embedded by `make curity-truststore`), and allows `obs:read ops:write llm:invoke`. |
+| `web-app` | OIDC confidential | client_secret_basic | authorization_code | `https://app.localtest.me/api/auth/callback/curity` | Auth.js uses PKCE + `state` (`checks` in `auth.ts`; not enforced by the client config). Allowed scopes `openid inspect:read ops:write llm:invoke`: login asks for the first three, the RFC 9470 step-up re-auth adds `ops:write` with `acr_values=mfa`. Allowed authenticators `html-auth` + `totp-authn`; **no** `<force-authn>` (it would hide the password SSO session the TOTP step-up relies on). Audiences `web-app` (id_token) + `agent-copilot`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
+| `https://copilot.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | `client_id` is the self-hosted metadata URL; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-copilot`. Not a config-backed client — the `<ephemeral-client>` block admits any `client_id` under `*.localtest.me` (`<client-id-restrictions>`), fetches its metadata + JWKS with the `cimd-fetch` http-client (which trusts the mkcert CA embedded by `make curity-truststore`), and allows `inspect:read ops:write llm:invoke`. |
 | `https://specialist.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | as above; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-specialist` |
-| `agentgateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`; named after the workload, not the `mcp-gateway` audience it fronts. Audiences `mcp-observability` + `mcp-ops`, scopes `obs:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
-| `mcp-observability` | confidential | client_secret_basic | token-exchange | n/a | Audience `obs-api`, scope `obs:read`; actor `…/ns/mcp/sa/mcp-observability`. Secret `Password1`. |
+| `agentgateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`; named after the workload, not the `mcp-gateway` audience it fronts. Audiences `mcp-inspect` + `mcp-ops`, scopes `inspect:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
+| `mcp-inspect` | confidential | client_secret_basic | token-exchange | n/a | Audience `inspect-api`, scope `inspect:read`; actor `…/ns/mcp/sa/mcp-inspect`. Secret `Password1`. |
 | `mcp-ops` | confidential | client_secret_basic | token-exchange | n/a | Audience `ops-api`, scope `ops:write`; actor `…/ns/mcp/sa/mcp-ops`. Secret `Password1`. |
 
 `llm-gateway` is an **audience only** — agentgateway validates `aud=llm-gateway` +
@@ -98,7 +98,7 @@ below is what the seed writes.
 | Username | Display name | Email | Who they are | Password | Roles | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `alice` | Alice Andersson | `alice@demo.curity.local` | SRE lead | `Password1` | `sre` | Happy-path SRE. `ops:write` triggers the on-demand RFC 9470 `acr=mfa` challenge; after it she may use **all** ops tools incl. `set_deployment_image`. `sre` alone passes both gates — she deliberately has no second role. |
-| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | `Password1` | `developer` | Counter-example. Can read his own service's logs (`obs:read`); a restart steps him up like everyone else and is THEN refused by the role gate — he proved MFA and still gets no `ops:write`. Nothing reads `developer`; it exists to be *not* a write role. |
+| `bob` | Bob Bergström | `bob@demo.curity.local` | Backend developer, owns `order-service` | `Password1` | `developer` | Counter-example. Can read his own service's logs (`inspect:read`); a restart steps him up like everyone else and is THEN refused by the role gate — he proved MFA and still gets no `ops:write`. Nothing reads `developer`; it exists to be *not* a write role. |
 | `carol` | Carol Carlsson | `carol@demo.curity.local` | On-call engineer this week | `Password1` | `oncall` | Holds a write role, so after the step-up gets `ops:write` (and can `restart_deployment`/`scale_deployment`), but `set_deployment_image` is refused (`sre`-only): first by agentgateway's HTTP-layer `authorization` rule on the `Mcp-Name` header, authoritatively by **mcp-ops**. She still *sees* the tool in `tools/list` — the gateway's MCP-layer policy lists all ops tools on purpose — the **call** is what's refused. "This week" is the talking point: `oncall` is a role attached to a rotation, not a person. |
 
 All three come **pre-enrolled for TOTP** (the step-up needs it) with the secrets in
@@ -133,8 +133,8 @@ button passes the username as `login_hint`, so Curity's form opens pre-filled.
 - The user access token is narrowed to `aud=agent-copilot` by `authorization-code.js`
   (the configured `web-app` audience shapes only the id_token, which OIDC requires
   to include the client_id); each exchanged token names exactly one downstream
-  audience (`mcp-gateway` / `agent-specialist` / `llm-gateway` / `mcp-observability`
-  / `mcp-ops` / `obs-api` / `ops-api`).
+  audience (`mcp-gateway` / `agent-specialist` / `llm-gateway` / `mcp-inspect`
+  / `mcp-ops` / `inspect-api` / `ops-api`).
 
 These are already encoded in `k8s/curity/configmap.yaml` and the procedures
 under `k8s/curity/procedures/`; this list is the conceptual checklist behind
@@ -185,8 +185,8 @@ kubectl -n mcp create secret generic agentgateway-llm \
 ```
 
 The full set of token-exchange clients (the two CIMD agents via the
-`<ephemeral-client>` block, plus `agentgateway`, `mcp-ops`, `mcp-observability`)
-and the terminal audiences (`obs-api`, `ops-api`, `llm-gateway`) is defined in
+`<ephemeral-client>` block, plus `agentgateway`, `mcp-ops`, `mcp-inspect`)
+and the terminal audiences (`inspect-api`, `ops-api`, `llm-gateway`) is defined in
 `k8s/curity/configmap.yaml`.
 
 ---
@@ -196,8 +196,8 @@ and the terminal audiences (`obs-api`, `ops-api`, `llm-gateway`) is defined in
 | Symptom | Likely cause |
 | --- | --- |
 | 502 `mcp_unavailable` from `/api/agent` | The copilot could not *discover* the MCP front door's authorization server (its `error_description` says which step: probe not 401, PRM `resource` mismatch, AS not the trusted issuer, no CIMD support, no scope) or could not reach it. Look for a `DENY → … (discovery failed)` block in `kubectl -n agents logs deploy/agent-copilot`; the usual cause is routing drift — `make routing-check`. |
-| 403 with a Curity error code from `/api/agent` | Curity refused the exchange: `invalid_scope` on a read means the user token lacks `obs:read` (check `/api/whoami`); `access_denied` on a restart means the role gate (bob). |
-| `401 Jwt verification fails` at `obs-api`/`ops-api` after a fresh deploy | The apis-waypoint pinned istiod's placeholder JWKS — `make jwks-check`, then `make jwks-heal` |
+| 403 with a Curity error code from `/api/agent` | Curity refused the exchange: `invalid_scope` on a read means the user token lacks `inspect:read` (check `/api/whoami`); `access_denied` on a restart means the role gate (bob). |
+| `401 Jwt verification fails` at `inspect-api`/`ops-api` after a fresh deploy | The apis-waypoint pinned istiod's placeholder JWKS — `make jwks-check`, then `make jwks-heal` |
 | OIDC redirect loop | `AUTH_URL` mismatch or `AUTH_SECRET` empty |
 | Curity won't start | License missing or invalid; `kubectl -n curity logs deploy/curity` |
 | TLS warnings in the browser | Expected by default — the root CA is not added to the keychain. Run `make trust-ca` and restart the browser to trust it (undo with `mkcert -uninstall`) |

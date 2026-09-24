@@ -79,7 +79,7 @@ spec:
               value: web-app
             - name: AGENT_COPILOT_URL
               value: http://agent-copilot.agents.svc.cluster.local:8081
-            # Demo FEATURE gate, not logging verbosity: enables the /inspect
+            # Demo FEATURE gate, not logging verbosity: enables the /tokens
             # token viewer and /api/dev/token, which `make smoke` reads for
             # SMOKE_SUBJECT_TOKEN. Turning it off breaks the smoke tests.
             # Auth.js's own verbose logging is AUTHJS_DEBUG (unset — it dumps the

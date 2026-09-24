@@ -1,7 +1,7 @@
 # agentgateway — the MCP front door in the `mcp` namespace.
 #
 # Fronts both MCP servers on ONE listener (:8080) via two path-scoped routes
-# (/observability/mcp, /ops/mcp — see k8s/workloads/agentgateway-config.yaml).
+# (/inspect/mcp, /ops/mcp — see k8s/workloads/agentgateway-config.yaml).
 # It validates the caller's aud=mcp-gateway token, applies per-tool CEL RBAC, and
 # for each tool-call drives an extAuthz call to the co-located exchange-shim, which
 # performs the RFC 8693 exchange (subject = caller token, actor = the gateway's own
@@ -122,7 +122,7 @@ spec:
             # OTel: the shim performs the RFC 8693 exchange on every extAuthz
             # call — the hop that inserts `spiffe://…/sa/agentgateway` into the
             # downstream `act` chain. Without this it is invisible, and the
-            # audience silently jumps mcp-gateway → mcp-observability/mcp-ops
+            # audience silently jumps mcp-gateway → mcp-inspect/mcp-ops
             # with nothing in the trace to account for it. With it, auth-curity's
             # `auth.token_exchange` span shows that narrowing like every other
             # hop. Needs the express server in app.ts to actually produce spans.

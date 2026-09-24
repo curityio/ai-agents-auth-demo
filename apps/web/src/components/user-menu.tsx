@@ -118,9 +118,9 @@ export function UserMenu({
         </DropdownMenuItem>
         {debug && (
           <DropdownMenuItem asChild>
-            <Link href="/inspect">
+            <Link href="/tokens">
               <KeyRound />
-              Inspect session
+              Session tokens
             </Link>
           </DropdownMenuItem>
         )}

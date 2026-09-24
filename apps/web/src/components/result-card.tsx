@@ -23,7 +23,7 @@ import type { TraceStep as AgentStep } from '@/lib/trace-view';
 export interface AgentResponse {
   answer: string;
   identity: { sub: string; scopes: string[]; roles?: string[]; acr?: string };
-  // Observability path: the LLM tool-calling steps.
+  // Inspect path: the LLM tool-calling steps.
   steps?: AgentStep[];
   // Privileged path: a deterministic agent-to-agent route (no LLM steps).
   route?: string;

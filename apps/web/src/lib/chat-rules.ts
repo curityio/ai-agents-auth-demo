@@ -9,7 +9,7 @@ export type Flow = 'read' | 'privileged';
 /**
  * Which delegation flow a copilot response came from. The privileged path
  * (A2A → agent-specialist → mcp-ops) is signalled by `route`/`specialist` on
- * the response; anything else went through mcp-observability.
+ * the response; anything else went through mcp-inspect.
  */
 export function flowOf(response: { route?: string; specialist?: unknown }): Flow {
   return response.route || response.specialist ? 'privileged' : 'read';
@@ -55,17 +55,17 @@ export type SuggestionTier = 'read' | 'write';
 
 export interface Suggestion {
   text: string;
-  /** read → mcp-observability inline; write → specialist + MFA step-up. */
+  /** read → mcp-inspect inline; write → specialist + MFA step-up. */
   tier: SuggestionTier;
 }
 
 // Example prompts, chosen to exercise every MCP tool the copilot can reach.
-// Read tier (observe path → mcp-observability): list_pods, get_pod_logs,
+// Read tier (observe path → mcp-inspect): list_pods, get_pod_logs,
 // get_deployment. Write tier (privileged path → agent-specialist → mcp-ops):
 // restart_deployment, scale_deployment, set_deployment_image.
 // The kube-system prompt is the one deliberate refusal on the read tier: the
 // gateway's namespace-confinement rule (SEP-2243 `Mcp-Param-Namespace`) denies
-// any namespace but `prod` before the call reaches mcp-observability. It is the
+// any namespace but `prod` before the call reaches mcp-inspect. It is the
 // only denial in the demo that agentgateway itself decides, and it works for
 // every persona — no role or MFA involved.
 export const SUGGESTIONS: readonly Suggestion[] = [

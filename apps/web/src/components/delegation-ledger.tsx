@@ -28,7 +28,7 @@ export interface LedgerHop {
   hop: string;
   header: Record<string, unknown> | null;
   payload: Record<string, unknown> | null;
-  /** Raw JWT — only present on the debug /inspect surface. */
+  /** Raw JWT — only present on the debug /tokens surface. */
   token?: string;
   /**
    * Presenter-facing caveat set by the agent that emitted the hop. Today only

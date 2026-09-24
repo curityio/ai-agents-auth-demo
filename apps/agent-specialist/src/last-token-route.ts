@@ -3,7 +3,7 @@ import { decodeJwt, decodeProtectedHeader } from 'jose';
 import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import type { Config } from './config.js';
 import { peekLastExchange } from './mcp-ops-client.js';
-import { peekLastObsExchange } from './obs-token.js';
+import { peekLastInspectExchange } from './inspect-token.js';
 import { peekLastLlmExchange } from './llm-token.js';
 
 interface ChainHop {
@@ -32,7 +32,7 @@ function decode(hop: string, token: string, includeRaw: boolean, note?: string):
 
 /**
  * Whether the aud=llm-gateway slot belongs to the run the ops:write slot came
- * from. One remediation exchanges in a fixed order — ops:write → obs:read →
+ * from. One remediation exchanges in a fixed order — ops:write → inspect:read →
  * llm:invoke (executor.ts) — so a leaf stamped BEFORE the current ops slot was minted by an
  * earlier run, and this one was refused before it reached the model (step-up,
  * wrong role). Without an ops slot the model was never reached at all.
@@ -116,16 +116,16 @@ export function buildLastTokenHandlers(cfg: Config): {
         }
 
         // READ branch first (the specialist inspects before it acts): the
-        // agent-specialist → mcp-observability hop, then mcp-observability →
-        // obs-api fetched with the obs:read-bound token.
-        const obs = peekLastObsExchange();
-        if (obs) {
-          // aud=mcp-gateway now (reached via the gateway); the gateway → mcp-obs +
-          // mcp-obs → obs-api legs come from the downstream passthrough walk.
-          chain.push(decode('agent-specialist → agentgateway (/observability/mcp)', obs.accessToken, includeRaw));
-          const obsUrl = cfg.mcpObservabilityUrl.replace(/\/mcp\/?$/, '') + '/last-token';
+        // agent-specialist → mcp-inspect hop, then mcp-inspect →
+        // inspect-api fetched with the inspect:read-bound token.
+        const inspect = peekLastInspectExchange();
+        if (inspect) {
+          // aud=mcp-gateway now (reached via the gateway); the gateway → mcp-inspect +
+          // mcp-inspect → inspect-api legs come from the downstream passthrough walk.
+          chain.push(decode('agent-specialist → agentgateway (/inspect/mcp)', inspect.accessToken, includeRaw));
+          const inspectUrl = cfg.mcpInspectUrl.replace(/\/mcp\/?$/, '') + '/last-token';
           chain.push(
-            ...(await fetchDownstreamChain('mcp-observability', obsUrl, obs.accessToken, includeRaw)),
+            ...(await fetchDownstreamChain('mcp-inspect', inspectUrl, inspect.accessToken, includeRaw)),
           );
         }
 

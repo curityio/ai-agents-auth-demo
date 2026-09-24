@@ -3,23 +3,23 @@
 # Runs against the live KIND cluster.
 #
 # Topology (post-agentgateway): the agent no longer exchanges directly to
-# aud=mcp-observability. It mints an aud=mcp-gateway token and calls the gateway's
-# /observability/mcp route; the gateway validates the JWT, applies per-tool RBAC,
-# and (via the co-located exchange-shim) re-exchanges to aud=mcp-observability —
+# aud=mcp-inspect. It mints an aud=mcp-gateway token and calls the gateway's
+# /inspect/mcp route; the gateway validates the JWT, applies per-tool RBAC,
+# and (via the co-located exchange-shim) re-exchanges to aud=mcp-inspect —
 # inserting the gateway's SPIFFE ID into the act chain — before forwarding to the
-# origin MCP server, which re-exchanges again to obs-api.
+# origin MCP server, which re-exchanges again to inspect-api.
 #
 # Assertions:
 #   [1/5] positive: Alice's subject token + copilot SVID exchange to
-#         aud=mcp-gateway (scope obs:read) with act.sub=copilot.
+#         aud=mcp-gateway (scope inspect:read) with act.sub=copilot.
 #   [2/5] positive (REAL OBO hop): that mcp-gateway token drives a tools/call
 #         list_pods through the gateway → HTTP 200 with prod pods. This exercises
-#         gateway JWT + RBAC + extAuthz→shim→exchange→mcp-observability→obs-api.
-#   [3/5] negative: copilot exchanging DIRECTLY to aud=mcp-observability is denied
+#         gateway JWT + RBAC + extAuthz→shim→exchange→mcp-inspect→inspect-api.
+#   [3/5] negative: copilot exchanging DIRECTLY to aud=mcp-inspect is denied
 #         (the gateway is the only door now — copilot's policy dropped that audience).
 #   [4/5] negative: omitting actor_token → invalid_request from Curity.
 #   [5/5] negative: requesting scope=ops:write for aud=mcp-gateway → invalid_scope
-#         (copilot's claims policy allows only obs:read for the gateway audience).
+#         (copilot's claims policy allows only inspect:read for the gateway audience).
 #
 # Per-hop act.sub / act-chain enforcement lives in the resource-server middleware
 # (apps/*/src/auth-middleware.ts) and is exercised by unit tests + the A2A/step-up
@@ -41,7 +41,7 @@
 set -euo pipefail
 
 CURITY_TOKEN_URL="${CURITY_TOKEN_URL:-https://curity.localtest.me/oauth/v2/oauth-token}"
-GATEWAY_OBS_URL="${GATEWAY_OBS_URL:-http://agentgateway.mcp.svc.cluster.local:8080/observability/mcp}"
+GATEWAY_INSPECT_URL="${GATEWAY_INSPECT_URL:-http://agentgateway.mcp.svc.cluster.local:8080/inspect/mcp}"
 CACERT="$(mkcert -CAROOT)/rootCA.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COPILOT_CLIENT_ID="${COPILOT_CLIENT_ID:-https://copilot.localtest.me/.well-known/oauth-client}"
@@ -149,7 +149,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "actor_token=$SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
   -d "audience=mcp-gateway" \
-  -d "scope=obs:read" \
+  -d "scope=inspect:read" \
   "$CURITY_TOKEN_URL")
 GATEWAY_BEARER=$(echo "$RESP" | jq -r '.access_token // empty')
 [[ -n "$GATEWAY_BEARER" ]] || { red "no access_token in positive response: $(echo "$RESP" | redact_resp)"; exit 1; }
@@ -169,13 +169,13 @@ SCOPE=$(read_claim scope)
 [[ "$ACT_SUB" == "spiffe://demo.curity.local/ns/agents/sa/agent-copilot" ]] \
   || { red "act.sub mismatch: $ACT_SUB"; exit 1; }
 [[ "$AUD" == *"mcp-gateway"* ]] || { red "aud mismatch: $AUD"; exit 1; }
-[[ "$SCOPE" == *"obs:read"* ]] || { red "scope mismatch: $SCOPE"; exit 1; }
+[[ "$SCOPE" == *"inspect:read"* ]] || { red "scope mismatch: $SCOPE"; exit 1; }
 green "  OK (act.sub=$ACT_SUB, aud=$AUD, scope=$SCOPE)"
 
 # ----- [2/5] Positive: real read through the gateway (list_pods → 200 + pods) -----
 note "[2/5] Positive: tools/call list_pods through the gateway (REAL OBO hop)"
 STATUS=$(mcp_call agents agent-copilot agent \
-  "$GATEWAY_OBS_URL" "$GATEWAY_BEARER" "tools/call" \
+  "$GATEWAY_INSPECT_URL" "$GATEWAY_BEARER" "tools/call" \
   '{"name":"list_pods","arguments":{"namespace":"prod"}}')
 case "$STATUS" in
   200*order-service*) green "  OK (gateway returned prod pods: ${STATUS:0:80}...)" ;;
@@ -183,8 +183,8 @@ case "$STATUS" in
   *) red "  expected 200 with pods through the gateway, got: $STATUS"; exit 1 ;;
 esac
 
-# ----- [3/5] Negative: copilot direct-to-mcp-observability is denied --------------
-note "[3/5] Negative: copilot exchanging DIRECTLY to aud=mcp-observability → expect denied"
+# ----- [3/5] Negative: copilot direct-to-mcp-inspect is denied --------------
+note "[3/5] Negative: copilot exchanging DIRECTLY to aud=mcp-inspect → expect denied"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -194,14 +194,14 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "actor_token=$SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
-  -d "audience=mcp-observability" \
-  -d "scope=obs:read" \
+  -d "audience=mcp-inspect" \
+  -d "scope=inspect:read" \
   "$CURITY_TOKEN_URL")
 ACCESS=$(echo "$RESP" | jq -r '.access_token // empty')
 ERR=$(echo "$RESP" | jq -r '.error // empty')
 DESC=$(echo "$RESP" | jq -r '.error_description // empty')
 if [[ -n "$ACCESS" ]]; then
-  red "  copilot should NOT be able to exchange directly to mcp-observability (the gateway is the door)"; exit 1
+  red "  copilot should NOT be able to exchange directly to mcp-inspect (the gateway is the door)"; exit 1
 fi
 # Curity may surface the procedure denial as invalid_request/invalid_scope/
 # access_denied/invalid_audience (it sanitizes procedure-thrown codes into
@@ -222,7 +222,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "subject_token=$SUBJECT_TOKEN" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "audience=mcp-gateway" \
-  -d "scope=obs:read" \
+  -d "scope=inspect:read" \
   "$CURITY_TOKEN_URL")
 ERR=$(echo "$RESP" | jq -r '.error // empty')
 [[ "$ERR" == "invalid_request" ]] \

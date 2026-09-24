@@ -10,7 +10,7 @@
 #     token, never the mTLS peer, so this is ONLY enforceable at the waypoint — it
 #     adds proof-of-possession of the ACTING WORKLOAD.
 #  2. TOKEN VALIDITY + AUDIENCE + SCOPE (defense-in-depth). Duplicates what
-#     {obs,ops}-api/src/auth-middleware.ts already verifies authoritatively, but
+#     {inspect,ops}-api/src/auth-middleware.ts already verifies authoritatively, but
 #     stops a bad/mis-scoped/wrong-audience token at the waypoint before it reaches
 #     the API.
 #
@@ -30,8 +30,8 @@
 #
 # Prereqs: the k8s Gateway API CRDs (this waypoint is their only remaining consumer)
 # and the apis namespace enrolled in ambient (k8s/namespaces.yaml).
-# The obs-api / ops-api Services opt in via `istio.io/use-waypoint: apis-waypoint`
-# (added to k8s/workloads/{obs,ops}-api.yaml).
+# The inspect-api / ops-api Services opt in via `istio.io/use-waypoint: apis-waypoint`
+# (added to k8s/workloads/{inspect,ops}-api.yaml).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -66,20 +66,20 @@ spec:
       forwardOriginalToken: true
       jwksUri: "http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks"
 ---
-# obs-api (read tier): allow only the mcp-observability workload identity, presenting
-# an obs-api-audience token carrying obs:read. The unauthenticated GET /healthz
+# inspect-api (read tier): allow only the mcp-inspect workload identity, presenting
+# an inspect-api-audience token carrying inspect:read. The unauthenticated GET /healthz
 # carve-out keeps the probe from being 403'd once `action: ALLOW` flips this Service
 # to default-deny.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
-  name: obs-api-authz
+  name: inspect-api-authz
   namespace: apis
 spec:
   targetRefs:
     - kind: Service
       group: ""
-      name: obs-api
+      name: inspect-api
   action: ALLOW
   rules:
     - to:
@@ -88,14 +88,14 @@ spec:
             paths: ["/healthz"]
     - from:
         - source:
-            principals: ["cluster.local/ns/mcp/sa/mcp-observability"]
+            principals: ["cluster.local/ns/mcp/sa/mcp-inspect"]
       when:
         - key: request.auth.audiences
-          values: ["obs-api"]
+          values: ["inspect-api"]
         # The exchange narrows the token to a single scope per audience, so this
         # exact-match is safe (no space-delimited multi-value to trip over).
         - key: request.auth.claims[scope]
-          values: ["obs:read"]
+          values: ["inspect:read"]
 ---
 # ops-api (write tier): allow only the mcp-ops workload identity, presenting an
 # ops-api-audience token carrying ops:write. The acr=mfa step-up stays in

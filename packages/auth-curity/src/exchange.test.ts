@@ -20,8 +20,8 @@ const baseParams = {
   clientSecret: 's3cret',
   subjectToken: 'eyJ.subject.jwt',
   actorToken: 'eyJ.actor.svid',
-  audience: 'mcp-observability',
-  scope: 'obs:read',
+  audience: 'mcp-inspect',
+  scope: 'inspect:read',
 } as const;
 
 describe('exchangeToken', () => {
@@ -33,7 +33,7 @@ describe('exchangeToken', () => {
           issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
           token_type: 'Bearer',
           expires_in: 300,
-          scope: 'obs:read',
+          scope: 'inspect:read',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -57,12 +57,12 @@ describe('exchangeToken', () => {
     expect(body.get('actor_token')).toBe(baseParams.actorToken);
     expect(body.get('actor_token_type')).toBe('urn:ietf:params:oauth:token-type:jwt');
     expect(body.get('requested_token_type')).toBe('urn:ietf:params:oauth:token-type:access_token');
-    expect(body.get('audience')).toBe('mcp-observability');
-    expect(body.get('scope')).toBe('obs:read');
+    expect(body.get('audience')).toBe('mcp-inspect');
+    expect(body.get('scope')).toBe('inspect:read');
 
     expect(result.accessToken).toBe('exchanged.jwt');
     expect(result.expiresInSec).toBe(300);
-    expect(result.scope).toBe('obs:read');
+    expect(result.scope).toBe('inspect:read');
   });
 
   it('maps invalid_scope errors', async () => {
@@ -184,9 +184,9 @@ describe('exchangeToken OBO log labelling', () => {
     fetchMock.mockResolvedValue(okResponse());
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await exchangeToken({ ...baseParams, clientId: 'mcp-observability' });
+    await exchangeToken({ ...baseParams, clientId: 'mcp-inspect' });
 
-    expect(spy.mock.calls[0]![0]).toContain('INFO [mcp-observability] EXCHANGE');
+    expect(spy.mock.calls[0]![0]).toContain('INFO [mcp-inspect] EXCHANGE');
   });
 
   it('shortens a CIMD client-id URL to the agent name', async () => {
@@ -258,7 +258,7 @@ describe('exchangeToken denial logging', () => {
 
     await expect(exchangeToken(baseParams)).rejects.toThrow(CurityAuthError);
 
-    expect(spy.mock.calls[0]![0]).toContain('DENY → mcp-observability');
+    expect(spy.mock.calls[0]![0]).toContain('DENY → mcp-inspect');
     expect(spy.mock.calls[0]![0]).toContain('error     : exchange_failed');
   });
 
@@ -312,7 +312,7 @@ describe('exchangeToken with private_key_jwt', () => {
 
   beforeEach(() => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ access_token: 'exchanged.jwt', expires_in: 300, scope: 'obs:read' }), {
+      new Response(JSON.stringify({ access_token: 'exchanged.jwt', expires_in: 300, scope: 'inspect:read' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
@@ -358,6 +358,6 @@ describe('exchangeToken with private_key_jwt', () => {
     const body = new URLSearchParams(init.body as string);
     expect(body.get('grant_type')).toBe('urn:ietf:params:oauth:grant-type:token-exchange');
     expect(body.get('actor_token')).toBe(baseParams.actorToken);
-    expect(body.get('audience')).toBe('mcp-observability');
+    expect(body.get('audience')).toBe('mcp-inspect');
   });
 });

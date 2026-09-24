@@ -13,7 +13,7 @@ HOSTS=(
   "copilot.localtest.me"
   "specialist.localtest.me"
   "mcp-ops.localtest.me"
-  "mcp-observability.localtest.me"
+  "mcp-inspect.localtest.me"
   "mcp-gateway.localtest.me"
 )
 

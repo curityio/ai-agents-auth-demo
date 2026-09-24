@@ -34,14 +34,14 @@ HOST_GRAFANA      ?= grafana.localtest.me
 HOST_COPILOT      ?= copilot.localtest.me
 HOST_SPECIALIST   ?= specialist.localtest.me
 HOST_MCP_OPS      ?= mcp-ops.localtest.me
-HOST_MCP_OBS      ?= mcp-observability.localtest.me
+HOST_MCP_INSPECT      ?= mcp-inspect.localtest.me
 HOST_MCP_GATEWAY  ?= mcp-gateway.localtest.me
 
 CERT_DIR ?= certs
 
 # App images, keyed by their apps/<name>/Dockerfile. Used by `make images`
 # (build + kind load) and `make clean` (removal).
-IMAGE_NAMES ?= mcp-observability mcp-ops ops-api obs-api agent-copilot agent-specialist web exchange-shim
+IMAGE_NAMES ?= mcp-inspect mcp-ops ops-api inspect-api agent-copilot agent-specialist web exchange-shim
 # The subset `make images` actually builds — defaults to everything. Override to
 # rebuild one or more: `make images IMAGES="web agent-copilot"`, or `make image-web`.
 IMAGES ?= $(IMAGE_NAMES)
@@ -345,7 +345,7 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	kubectl apply -f k8s/workloads/web.yaml
 	kubectl apply -f k8s/workloads/agent-copilot.yaml
 	kubectl apply -f k8s/workloads/agent-specialist.yaml
-	kubectl apply -f k8s/workloads/mcp-observability.yaml
+	kubectl apply -f k8s/workloads/mcp-inspect.yaml
 	kubectl apply -f k8s/workloads/mcp-ops.yaml
 	# agentgateway: render its config from k8s/workloads/agentgateway-config.yaml
 	# + the LLM provider fragment chosen in .demo.env (see the render-gateway-config
@@ -354,7 +354,7 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	  --from-file=config.yaml=.gen/agentgateway-config.yaml \
 	  --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/workloads/agentgateway.yaml
-	kubectl apply -f k8s/workloads/obs-api.yaml
+	kubectl apply -f k8s/workloads/inspect-api.yaml
 	kubectl apply -f k8s/workloads/ops-api.yaml
 	# Edge gateway routes (Gateway + VirtualServices + Curity DestinationRule).
 	kubectl apply -f k8s/istio/gateway-edge.yaml
@@ -391,7 +391,7 @@ jwks-check: ## Verify the apis-waypoint validates tokens with Curity's real JWKS
 	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check
 
 .PHONY: jwks-heal
-jwks-heal: ## Restart the apis-waypoint so istiod re-fetches Curity's JWKS (fixes "401 Jwt verification fails" at obs-api/ops-api)
+jwks-heal: ## Restart the apis-waypoint so istiod re-fetches Curity's JWKS (fixes "401 Jwt verification fails" at inspect-api/ops-api)
 	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh heal
 
 # ============================================================================
@@ -406,7 +406,7 @@ jwks-heal: ## Restart the apis-waypoint so istiod re-fetches Curity's JWKS (fixe
 # back to prompting if .demo.env is absent (standalone re-seed).
 # ============================================================================
 .PHONY: seed-secrets
-seed-secrets: seed-license seed-users seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-observability-secret seed-gateway-secret ## Seed the license + demo users + every workload secret + agent keys
+seed-secrets: seed-license seed-users seed-web-secret seed-llm-secret seed-agent-key seed-specialist-key seed-mcp-ops-secret seed-mcp-inspect-secret seed-gateway-secret ## Seed the license + demo users + every workload secret + agent keys
 	@echo "==> License + demo users + all workload secrets seeded."
 
 .PHONY: seed-users
@@ -502,13 +502,13 @@ seed-mcp-ops-secret: ## Seed the mcp-ops client secret (fixed demo value "Passwo
 	    --dry-run=client -o yaml | kubectl apply -f -; \
 	  $(call restart_if_exists,$(NS_MCP),mcp-ops)
 
-.PHONY: seed-mcp-observability-secret
-seed-mcp-observability-secret: ## Seed the mcp-observability client secret (fixed demo value "Password1")
+.PHONY: seed-mcp-inspect-secret
+seed-mcp-inspect-secret: ## Seed the mcp-inspect client secret (fixed demo value "Password1")
 	@kubectl create namespace $(NS_MCP) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
-	  kubectl -n $(NS_MCP) create secret generic mcp-observability-curity \
+	  kubectl -n $(NS_MCP) create secret generic mcp-inspect-curity \
 	    --from-literal=CURITY_CLIENT_SECRET=Password1 \
 	    --dry-run=client -o yaml | kubectl apply -f -; \
-	  $(call restart_if_exists,$(NS_MCP),mcp-observability)
+	  $(call restart_if_exists,$(NS_MCP),mcp-inspect)
 
 # The agentgateway is a confidential client_secret_basic client (fixed demo secret
 # "Password1"); its SHA-256 crypt is committed in k8s/curity/configmap.yaml.
@@ -544,7 +544,7 @@ smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RF
 	bash scripts/smoke-mcp-discovery.sh
 
 .PHONY: smoke-obo
-smoke-obo: ## Smoke: single OBO hop (user → copilot → mcp-observability). Needs SMOKE_SUBJECT_TOKEN.
+smoke-obo: ## Smoke: single OBO hop (user → copilot → mcp-inspect). Needs SMOKE_SUBJECT_TOKEN.
 	bash scripts/smoke-token-exchange.sh
 
 .PHONY: smoke-a2a
@@ -571,8 +571,8 @@ smoke-gateway-authz: ## Smoke: gateway-side per-tool role split + namespace conf
 # MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why
 # Inspector connects to the agentgateway rather than to an MCP server directly.
 # ============================================================================
-OBS_INSPECT_PORT ?= 8080
-OPS_INSPECT_PORT ?= 8081
+MCP_INSPECTOR_READ_PORT ?= 8080
+MCP_INSPECTOR_WRITE_PORT ?= 8081
 
 # Mint a token + port-forward, then print the Inspector connect details.
 # Forwards the AGENTGATEWAY, not the MCP server: the minted token is
@@ -583,7 +583,7 @@ OPS_INSPECT_PORT ?= 8081
 # `legacy: 'reject'` (2026-07-28 only), while Inspector defaults its era to
 # Legacy. Left on the default it sends a 2025 `initialize`, the gateway forwards
 # that upstream verbatim, and the server refuses — the connect just fails.
-# Args: $(1)=target (obs|ops) $(2)=gateway route path $(3)=local port
+# Args: $(1)=target (inspect|ops) $(2)=gateway route path $(3)=local port
 define inspect-tmpl
 	@token=$$(bash scripts/mint-mcp-token.sh $(1)) || exit $$?; \
 	printf '\n\033[36m=== MCP Inspector connect details ===\033[0m\n'; \
@@ -596,13 +596,13 @@ define inspect-tmpl
 	kubectl -n mcp port-forward svc/agentgateway $(3):8080
 endef
 
-.PHONY: inspect-obs
-inspect-obs: ## Inspect the read tier via the gateway (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,obs,/observability/mcp,$(OBS_INSPECT_PORT))
+.PHONY: mcp-inspector-read
+mcp-inspector-read: ## Inspect the read tier via the gateway (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,inspect,/inspect/mcp,$(MCP_INSPECTOR_READ_PORT))
 
-.PHONY: inspect-ops
-inspect-ops: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,ops,/ops/mcp,$(OPS_INSPECT_PORT))
+.PHONY: mcp-inspector-write
+mcp-inspector-write: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,ops,/ops/mcp,$(MCP_INSPECTOR_WRITE_PORT))
 
 # ============================================================================
 # End-to-end orchestration
@@ -646,8 +646,8 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '    %-41s https://$(HOST_COPILOT)/.well-known/oauth-client\n'              'Copilot ai-agent client metadata (CIMD)'
 	@printf '    %-41s https://$(HOST_SPECIALIST)/.well-known/oauth-client\n'           'Specialist ai-agent client metadata'
 	@printf '    %-41s https://$(HOST_MCP_OPS)/.well-known/oauth-protected-resource\n'  'mcp-ops resource metadata'
-	@printf '    %-41s https://$(HOST_MCP_OBS)/.well-known/oauth-protected-resource\n'  'mcp-observability resource metadata'
-	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/observability/mcp\n' 'agentgateway PRM (read tier)'
+	@printf '    %-41s https://$(HOST_MCP_INSPECT)/.well-known/oauth-protected-resource\n'  'mcp-inspect resource metadata'
+	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/inspect/mcp\n' 'agentgateway PRM (read tier)'
 	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/ops/mcp\n' 'agentgateway PRM (write tier)'
 	@printf '    %-41s https://$(HOST_CURITY)/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous\n' 'Curity RFC 8414 metadata'
 	@printf '\n'

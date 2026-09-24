@@ -18,13 +18,13 @@ describe('buildResourceMetadata', () => {
 
   it('omits acr_values_supported when acrValuesSupported is not provided', () => {
     const doc = buildResourceMetadata({
-      resource: 'https://mcp-observability.localtest.me',
+      resource: 'https://mcp-inspect.localtest.me',
       authorizationServer: 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
-      scopesSupported: ['obs:read'],
+      scopesSupported: ['inspect:read'],
     });
-    expect(doc.resource).toBe('https://mcp-observability.localtest.me');
+    expect(doc.resource).toBe('https://mcp-inspect.localtest.me');
     expect(doc.authorization_servers).toContain('https://curity.localtest.me/oauth/v2/oauth-anonymous');
-    expect(doc.scopes_supported).toContain('obs:read');
+    expect(doc.scopes_supported).toContain('inspect:read');
     expect('acr_values_supported' in doc).toBe(false);
   });
 });

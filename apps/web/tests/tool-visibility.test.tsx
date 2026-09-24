@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ToolVisibility, type TierResult } from '../src/components/tool-visibility';
 
 const READ: TierResult = {
-  tier: 'observability',
-  route: '/observability/mcp',
+  tier: 'inspect',
+  route: '/inspect/mcp',
   status: 'ok',
   tools: [
     { name: 'get_pod_logs', description: 'Fetch recent logs for a pod' },
@@ -55,7 +55,7 @@ describe('ToolVisibility', () => {
 
   it('separates the requirement from the verdict in the tier header', () => {
     const html = renderToStaticMarkup(<ToolVisibility tiers={[READ, WRITE_STEPUP]} />);
-    expect(html).toContain('requires obs:read');
+    expect(html).toContain('requires inspect:read');
     expect(html).toContain('2 tools listed for you');
     expect(html).toContain('requires ops:write');
     expect(html).toContain('not listed · step-up required');
@@ -99,7 +99,7 @@ describe('ToolVisibility', () => {
       /<[^>]+>/g,
       '',
     );
-    expect(text).toContain('obs:read is on the copilot');
+    expect(text).toContain('inspect:read is on the copilot');
     expect(text).toContain('acr=mfa');
   });
 });

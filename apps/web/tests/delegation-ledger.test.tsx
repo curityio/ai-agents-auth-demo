@@ -9,7 +9,7 @@ import { DelegationLedger } from '../src/components/delegation-ledger';
 
 const COPILOT = 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot';
 const GATEWAY = 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway';
-const OBS = 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability';
+const INSPECT = 'spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect';
 
 const chain = [
   {
@@ -18,7 +18,7 @@ const chain = [
     payload: {
       sub: 'alice',
       aud: 'agent-copilot',
-      scope: 'obs:read',
+      scope: 'inspect:read',
       roles: ['sre', 'oncall'],
       acr: 'html-form',
       may_act: { sub: COPILOT },
@@ -30,7 +30,7 @@ const chain = [
     payload: {
       sub: 'alice',
       aud: 'mcp-gateway',
-      scope: 'obs:read',
+      scope: 'inspect:read',
       roles: ['sre', 'oncall'],
       acr: 'html-form',
       act: { sub: COPILOT },
@@ -38,16 +38,16 @@ const chain = [
     },
   },
   {
-    hop: 'agentgateway → mcp-observability',
+    hop: 'agentgateway → mcp-inspect',
     header: {},
     payload: {
       sub: 'alice',
-      aud: 'mcp-observability',
-      scope: 'obs:read',
+      aud: 'mcp-inspect',
+      scope: 'inspect:read',
       roles: ['sre', 'oncall'],
       acr: 'html-form',
       act: { sub: GATEWAY, act: { sub: COPILOT } },
-      may_act: { sub: OBS },
+      may_act: { sub: INSPECT },
     },
   },
 ];
@@ -61,7 +61,7 @@ describe('DelegationLedger', () => {
   });
 
   it('puts the full SPIFFE ID on the may_act badge', () => {
-    expect(html).toContain(`title="${OBS}"`);
+    expect(html).toContain(`title="${INSPECT}"`);
   });
 
   it('still shows the short name as the badge text', () => {
@@ -126,7 +126,7 @@ describe('DelegationLedger', () => {
         payload: {
           sub: 'alice',
           aud: 'mcp-gateway',
-          scope: 'obs:read',
+          scope: 'inspect:read',
           act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-specialist' },
         },
       },

@@ -33,14 +33,14 @@ TARGETS=(
   "web web"
   "agents agent-copilot"
   "agents agent-specialist"
-  "mcp mcp-observability"
+  "mcp mcp-inspect"
   "mcp mcp-ops"
   # agentgateway: only the co-located exchange-shim (containers[0]) talks TLS to
   # https://curity.localtest.me, so it needs the hostAlias + mkcert CA. The routing
   # patch targets containers[0] — the shim is deliberately first in the pod spec.
   "mcp agentgateway"
   "apis ops-api"
-  "apis obs-api"
+  "apis inspect-api"
 )
 
 # CIMD: Curity itself must reach the two agents' client_id hosts to dereference
@@ -61,7 +61,7 @@ CIMD_HOSTS=("copilot.localtest.me" "specialist.localtest.me")
 # resource identifier (a spec-shaped client checks PRM.resource == the URL it
 # calls). Inside a pod those hosts resolve to 127.0.0.1 (the pod itself), so each
 # consumer needs the same ingress alias Curity gets.
-RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-observability.localtest.me" "mcp-gateway.localtest.me")
+RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-inspect.localtest.me" "mcp-gateway.localtest.me")
 # The agents call the MCP front door by its public name (MCP_*_URL in
 # k8s/workloads/agent-*.yaml) — see the RFC 9728 note above.
 AGENT_MCP_HOSTS=("mcp-gateway.localtest.me")

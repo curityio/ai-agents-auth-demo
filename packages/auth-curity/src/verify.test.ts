@@ -51,7 +51,7 @@ async function mintToken(
   } = {},
 ): Promise<string> {
   return new SignJWT({
-    scope: overrides.scope ?? 'openid profile obs:read',
+    scope: overrides.scope ?? 'openid profile inspect:read',
     ...overrides.extra,
   })
     .setProtectedHeader({ alg: 'RS256', kid: env.kid })
@@ -70,15 +70,15 @@ describe('verifyJwt', () => {
   });
 
   it('verifies a valid token and parses scopes', async () => {
-    const token = await mintToken(env, { scope: 'openid obs:read obs:write' });
+    const token = await mintToken(env, { scope: 'openid inspect:read inspect:write' });
     const verified = await verifyJwt(token, {
       issuer: env.issuer,
       audience: 'web-app',
       jwksUri: env.jwksUri,
     });
     expect(verified.payload.sub).toBe('alice');
-    expect(verified.scopes.has('obs:read')).toBe(true);
-    expect(verified.scopes.has('obs:write')).toBe(true);
+    expect(verified.scopes.has('inspect:read')).toBe(true);
+    expect(verified.scopes.has('inspect:write')).toBe(true);
     expect(verified.scopes.has('ops:write')).toBe(false);
   });
 

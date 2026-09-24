@@ -14,7 +14,7 @@ const PREVIEW: ChatPreview = {
       'There are 4 pods running in the prod namespace:\n\n• order-service-7d9c8f5b6-2xk4q     Running   1/1\n• order-service-7d9c8f5b6-9pm7r     Running   1/1\n• checkout-service-6b4f9c7d8-lk3wz   Running   1/1\n• inventory-service-5c8d6f4b9-qr8vn  Running   1/1\n\nAll pods are healthy. No restarts in the last 24h.',
     identity: {
       sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot',
-      scopes: ['obs:read'],
+      scopes: ['inspect:read'],
     },
     steps: [
       {
@@ -49,8 +49,8 @@ const PREVIEW: ChatPreview = {
       ttl_seconds: 280,
     },
     {
-      workload: 'mcp-observability',
-      sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability',
+      workload: 'mcp-inspect',
+      sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect',
       aud: ['https://curity.localtest.me/oauth/v2/oauth-token'],
       iss: 'https://oidc-discovery.demo.curity.local',
       iat: nowSec - 172,
@@ -60,7 +60,7 @@ const PREVIEW: ChatPreview = {
   ],
   obo: {
     // The real read path, as /api/obo-chain returns it today: the user token,
-    // then one exchanged token per hop through agentgateway to obs-api.
+    // then one exchanged token per hop through agentgateway to inspect-api.
     chain: [
       {
         hop: 'user → agent-copilot (inbound)',
@@ -68,7 +68,7 @@ const PREVIEW: ChatPreview = {
         payload: {
           sub: 'alice',
           aud: 'agent-copilot',
-          scope: 'openid obs:read ops:write llm:invoke',
+          scope: 'openid inspect:read ops:write llm:invoke',
           acr: 'mfa',
           roles: ['sre'],
           may_act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
@@ -94,12 +94,12 @@ const PREVIEW: ChatPreview = {
         note: 'Model call — a leaf, not a hop toward the cluster. The LLM provider sits outside the trust domain, so nothing exchanges this token onward.',
       },
       {
-        hop: 'agent-copilot → agentgateway (/observability/mcp)',
+        hop: 'agent-copilot → agentgateway (/inspect/mcp)',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
           aud: 'mcp-gateway',
-          scope: 'obs:read',
+          scope: 'inspect:read',
           acr: 'mfa',
           roles: ['sre'],
           act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
@@ -109,34 +109,34 @@ const PREVIEW: ChatPreview = {
         },
       },
       {
-        hop: 'agentgateway → mcp-observability',
+        hop: 'agentgateway → mcp-inspect',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
-          aud: 'mcp-observability',
-          scope: 'obs:read',
+          aud: 'mcp-inspect',
+          scope: 'inspect:read',
           acr: 'mfa',
           roles: ['sre'],
           act: {
             sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
             act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
           },
-          may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability' },
+          may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect' },
           iat: nowSec - 30,
           exp: nowSec + 570,
         },
       },
       {
-        hop: 'mcp-observability → obs-api',
+        hop: 'mcp-inspect → inspect-api',
         header: { alg: 'RS256', kid: 'curity-1' },
         payload: {
           sub: 'alice',
-          aud: 'obs-api',
-          scope: 'obs:read',
+          aud: 'inspect-api',
+          scope: 'inspect:read',
           acr: 'mfa',
           roles: ['sre'],
           act: {
-            sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-observability',
+            sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect',
             act: {
               sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
               act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
@@ -151,8 +151,8 @@ const PREVIEW: ChatPreview = {
   tools: {
     tiers: [
       {
-        tier: 'observability',
-        route: '/observability/mcp',
+        tier: 'inspect',
+        route: '/inspect/mcp',
         status: 'ok',
         tools: [
           { name: 'list_pods', description: 'List pods in a namespace' },

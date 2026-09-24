@@ -6,19 +6,19 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../src/mcp-ops-client.js', () => ({ obtainOpsToken: vi.fn(async () => 'OPS') }));
-vi.mock('../src/obs-token.js', () => ({ obtainObsToken: vi.fn(async () => 'OBS') }));
+vi.mock('../src/inspect-token.js', () => ({ obtainInspectToken: vi.fn(async () => 'INSPECT') }));
 const createMcpAuthProvider = vi.fn();
 vi.mock('@ai-agents-demo/agent-runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@ai-agents-demo/agent-runtime')>();
   return { ...actual, createMcpAuthProvider: (...a: unknown[]) => createMcpAuthProvider(...a) };
 });
 
-import { buildOpsAuthProvider, buildObsAuthProvider } from '../src/mcp-auth.js';
+import { buildOpsAuthProvider, buildInspectAuthProvider } from '../src/mcp-auth.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
   mcpOpsUrl: 'https://mcp-gateway.localtest.me/ops/mcp',
-  mcpObservabilityUrl: 'https://mcp-gateway.localtest.me/observability/mcp',
+  mcpInspectUrl: 'https://mcp-gateway.localtest.me/inspect/mcp',
   curityIssuer: 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
 } as unknown as Config;
 
@@ -26,19 +26,19 @@ describe('specialist auth providers', () => {
   it('pin the authorization server to CURITY_ISSUER on both tiers', () => {
     createMcpAuthProvider.mockImplementation((o: unknown) => o);
     const ops = buildOpsAuthProvider({ cfg, subjectToken: 'U', subjectSub: 'alice' }) as unknown as { serverUrl: string; allowedAuthorizationServers: string[] };
-    const obs = buildObsAuthProvider({ cfg, subjectToken: 'U' }) as unknown as { serverUrl: string; allowedAuthorizationServers: string[] };
+    const inspect = buildInspectAuthProvider({ cfg, subjectToken: 'U' }) as unknown as { serverUrl: string; allowedAuthorizationServers: string[] };
     expect(ops.serverUrl).toBe(cfg.mcpOpsUrl);
-    expect(obs.serverUrl).toBe(cfg.mcpObservabilityUrl);
+    expect(inspect.serverUrl).toBe(cfg.mcpInspectUrl);
     expect(ops.allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
-    expect(obs.allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
+    expect(inspect.allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
   });
 
   it('pass the configured discovery TTL through on both tiers', () => {
     createMcpAuthProvider.mockImplementation((o: unknown) => o);
     const c = { ...cfg, mcpDiscoveryTtlMs: 0 } as Config;
     const ops = buildOpsAuthProvider({ cfg: c, subjectToken: 'U', subjectSub: 'alice' }) as unknown as { discoveryTtlMs: number };
-    const obs = buildObsAuthProvider({ cfg: c, subjectToken: 'U' }) as unknown as { discoveryTtlMs: number };
+    const inspect = buildInspectAuthProvider({ cfg: c, subjectToken: 'U' }) as unknown as { discoveryTtlMs: number };
     expect(ops.discoveryTtlMs).toBe(0);
-    expect(obs.discoveryTtlMs).toBe(0);
+    expect(inspect.discoveryTtlMs).toBe(0);
   });
 });
