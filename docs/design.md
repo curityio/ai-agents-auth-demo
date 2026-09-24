@@ -829,7 +829,12 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   `/healthz` carve-out. `obs-api.yaml`/`ops-api.yaml` opt in via
   `istio.io/use-waypoint: apis-waypoint`. This is the only remaining consumer of
   the Gateway API CRDs (`make gateway-api-crds`), which is why `make platform`
-  still installs them. See `architecture.md` §6.
+  still installs them. See `architecture.md` §6. One ordering rule: istiod
+  fetches the `RequestAuthentication`'s JWKS exactly once, when it first builds
+  the waypoint's filter, and pins a placeholder key if Curity is not yet serving
+  it — so `make apply` runs `scripts/jwks-guard.sh wait` before applying this
+  file, and `make jwks-check` / `make jwks-heal` detect and repair the pinned
+  state (`CLAUDE.md` fact #38).
 - **Platform via Helm.** SPIRE (hardened chart, three namespaces), Istio Ambient
   (base/istiod/cni/ztunnel + gateway), Tempo, and Grafana — all driven
   by `make platform`.

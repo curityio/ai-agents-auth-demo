@@ -101,11 +101,12 @@ test: test-scripts ## Run all unit tests (vitest, via turbo) + the shell-script 
 	pnpm turbo run test
 
 .PHONY: test-scripts
-test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed, user seeding)
+test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed, user seeding, MCP discovery config, JWKS guard)
 	bash scripts/test-render-gateway-config.sh
 	bash scripts/test-embed-curity-theme.sh
 	bash scripts/test-seed-curity-users.sh
 	bash scripts/test-mcp-discovery-config.sh
+	bash scripts/test-jwks-guard.sh
 
 .PHONY: typecheck
 typecheck: ## Type-check all workspaces
@@ -361,9 +362,14 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
 	# was removed in favour of it.
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
-	# mTLS identity + the token's audience/scope. Plain apply — its
-	# RequestAuthentication points istiod at Curity's in-cluster JWKS URL, so no
-	# JWKS snapshot step is needed.
+	# mTLS identity + the token's audience/scope. Its RequestAuthentication points
+	# istiod at Curity's in-cluster JWKS URL, so no JWKS snapshot step is needed —
+	# BUT istiod fetches that key exactly once, when it first generates the
+	# waypoint's jwt_authn filter, and if Curity is still booting it inlines a
+	# placeholder key and never retries (fact #38). So wait for Curity to serve
+	# its JWKS through its Service BEFORE the policy exists. `make jwks-check`
+	# detects the broken state, `make jwks-heal` repairs it.
+	NS_CURITY=$(NS_CURITY) bash scripts/jwks-guard.sh wait
 	kubectl apply -f k8s/istio/apis-l7-authz.yaml
 	# Re-apply observability config so Collector/dashboard edits propagate without
 	# a full Helm reinstall (tolerate a fresh cluster where the ns doesn't exist).
@@ -379,6 +385,14 @@ routing: ## Patch app pods with hostAliases + mkcert CA so they can reach Curity
 .PHONY: routing-check
 routing-check: ## Verify every app pod is wired to reach Curity (read-only; no rollout)
 	bash scripts/cluster-routing.sh check
+
+.PHONY: jwks-check
+jwks-check: ## Verify the apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (read-only)
+	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check
+
+.PHONY: jwks-heal
+jwks-heal: ## Restart the apis-waypoint so istiod re-fetches Curity's JWKS (fixes "401 Jwt verification fails" at obs-api/ops-api)
+	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh heal
 
 # ============================================================================
 # Secret seeding (out-of-band — never committed). `make seed-secrets` seeds them
@@ -518,9 +532,11 @@ status: ## Show pod health across every demo namespace
 	done
 	@echo "=== routing ==="; \
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
+	@echo "=== apis-waypoint JWKS ==="; \
+	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check || echo "  (run 'make jwks-heal' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
+smoke: routing-check jwks-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
 
 .PHONY: smoke-mcp-discovery

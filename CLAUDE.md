@@ -1031,6 +1031,44 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       test and it fails with the mocked error's own message and a stack pointing at the
       `new Error(...)` line. Both MCP servers' middleware tests had it. Use braces.
 
+38. **istiod fetches the apis-waypoint's JWKS exactly ONCE, and if Curity is booting
+    at that moment every obs-api/ops-api call fails `401 Jwt verification fails`
+    until something regenerates the waypoint's filters.** Seen on a fresh
+    `make demo` (2026-09-24): alice's read flow passed agentgateway (200) and
+    mcp-observability logged `CALL → obs-api`, but obs-api never logged RECEIVE — the
+    Istio waypoint between them refused the token. Mechanics, from istio 1.30's
+    `pilot/pkg/model/jwks_resolver.go`: `k8s/istio/apis-l7-authz.yaml`'s
+    `RequestAuthentication` names Curity's in-cluster `jwksUri`; istiod fetches it
+    when it first generates the waypoint's `jwt_authn` filter (about 7 s of 1 s
+    retries). On failure the policy applier logs *"JWKS fetch failed … using
+    public-only JWKS with discarded private key - JWT requests will be rejected"*
+    and inlines a RANDOM public key (no `kid`) — so the proxy rejects every real
+    token with exactly that message. The one background retry that follows also
+    fails and, because no key was ever cached, DELETES the cache entry; the periodic
+    refresher then has nothing to refresh, so it never recovers on its own.
+    Recovery needs a regeneration of the waypoint's filters (waypoint or istiod
+    restart, or a change to the RA/AuthorizationPolicy). Guards, all in
+    `scripts/jwks-guard.sh` (pinned by `scripts/test-jwks-guard.sh`):
+    - **`make apply` runs `jwks-guard.sh wait` right BEFORE applying
+      `apis-l7-authz.yaml`**: `rollout status` on Curity, then the JWKS fetched
+      through the API server's service proxy
+      (`/api/v1/namespaces/curity/services/curity:8443/proxy/…/jwks`) — the same
+      Service endpoints istiod will hit — must return a key with a `kid`.
+    - **`make jwks-check`** (also in `make status` and first in `make smoke`) reads
+      the waypoint's `pilot-agent request GET config_dump`, extracts
+      `local_jwks.inline_string` and requires every `kid` Curity serves to be in
+      it; the placeholder shows as `<no-kid>`. **`make jwks-heal`** rollout-restarts
+      the waypoint and re-checks.
+    - Diagnose by hand: `pilot_jwks_resolver_network_fetch_success_total` absent on
+      istiod `:15014/metrics` while `…_fail_total` is non-zero = the fetch never
+      succeeded. agentgateway is NOT affected — it fetches Curity's JWKS itself
+      and retries — which is why the same token passed the gateway and failed
+      one hop later.
+    - Only the FIRST successful fetch is fragile: once a real key is cached, later
+      refresh failures (Curity rolling on `make apply`, `make routing`, `seed-*`)
+      keep the old key. That is why this never surfaced before the 2026-09-23
+      init container lengthened Curity's boot past the waypoint's first connect.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -1047,11 +1085,13 @@ make images          # build all 8 app images and `kind load` them; IMAGES="web 
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace
-make smoke           # routing-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
+make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (fact #38)
+make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
+make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
-make test-scripts    # shell-script contract tests (gateway-config render, theme embed)
+make test-scripts    # shell-script contract tests (gateway-config render, theme embed, user seeding, MCP discovery config, JWKS guard)
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit
 make clean           # full teardown
