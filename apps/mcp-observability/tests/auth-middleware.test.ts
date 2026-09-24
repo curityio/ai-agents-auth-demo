@@ -50,9 +50,24 @@ function mockRes() {
   return { res: inner as unknown as Response, headers, peek: () => inner };
 }
 
+/** Parse `Bearer k="v", k2="v2"` into a map. Values are unquoted; keys lowercased. */
+function parseChallenge(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header || !/^bearer\s/i.test(header)) return out;
+  for (const m of header.slice('bearer '.length).matchAll(/(\w+)="([^"]*)"/g)) {
+    out[m[1]!.toLowerCase()] = m[2]!;
+  }
+  return out;
+}
+
 const baseReq = { header: (n: string) => (n.toLowerCase() === 'authorization' ? 'Bearer fake.tok' : undefined) } as unknown as Request;
 
-beforeEach(() => verifyJwt.mockReset());
+// Braces matter: `mockReset()` returns the mock, and vitest treats a function
+// returned from a beforeEach hook as an after-test cleanup — it would then CALL
+// verifyJwt() after every test, which with a rejecting mock fails the test.
+beforeEach(() => {
+  verifyJwt.mockReset();
+});
 
 describe('mcp-observability authMiddleware', () => {
   it('passes when act.sub is the agentgateway and scope is satisfied', async () => {
@@ -157,5 +172,52 @@ describe('mcp-observability authMiddleware', () => {
     expect(challenge).toContain('error="insufficient_scope"');
     expect(challenge).toContain('scope="obs:read"');
     expect(challenge).toContain(`resource_metadata="${cfg.resourceMetadataUrl}"`);
+  });
+
+  it('401 without a bearer advertises resource_metadata and the required scope (MCP 2026-07-28 discovery)', async () => {
+    const req = { header: () => undefined } as unknown as Request;
+    const { res, headers, peek } = mockRes();
+    await authMiddleware(cfg)(req, res, vi.fn());
+    expect(peek()._status).toBe(401);
+    const c = parseChallenge(headers['www-authenticate']);
+    expect(c.realm).toBe('mcp-observability');
+    expect(c.scope).toBe('obs:read');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
+    expect(c.error).toBeUndefined();
+  });
+
+  it('401 on a verification failure uses RFC 6750 invalid_token, keeps the specific code in the description, and advertises resource_metadata', async () => {
+    verifyJwt.mockRejectedValue(
+      new (await import('@ai-agents-demo/auth-curity')).CurityAuthError('Token expired', 'expired_token'),
+    );
+    const { res, headers, peek } = mockRes();
+    await authMiddleware(cfg)(baseReq, res, vi.fn());
+    expect(peek()._status).toBe(401);
+    const c = parseChallenge(headers['www-authenticate']);
+    expect(c.error).toBe('invalid_token');
+    expect(c.error_description).toBe('expired_token: Token expired');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
+    // The body still carries the specific code for callers that read it.
+    expect(peek()._body).toMatchObject({ error: 'expired_token' });
+  });
+
+  it('escapes quotes in error_description so the challenge stays parseable', async () => {
+    verifyJwt.mockRejectedValue(
+      new (await import('@ai-agents-demo/auth-curity')).CurityAuthError('unknown "kid" in header', 'invalid_token'),
+    );
+    const { res, headers } = mockRes();
+    await authMiddleware(cfg)(baseReq, res, vi.fn());
+    const c = parseChallenge(headers['www-authenticate']);
+    expect(c.error_description).toBe("invalid_token: unknown 'kid' in header");
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
+  });
+
+  it('401 for a missing act.sub advertises resource_metadata', async () => {
+    verifyJwt.mockResolvedValue({ payload: { sub: 'alice' }, protectedHeader: {}, scopes: new Set(['obs:read']) });
+    const { res, headers } = mockRes();
+    await authMiddleware(cfg)(baseReq, res, vi.fn());
+    const c = parseChallenge(headers['www-authenticate']);
+    expect(c.error).toBe('invalid_token');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
   });
 });
