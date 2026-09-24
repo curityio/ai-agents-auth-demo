@@ -357,7 +357,11 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       9728 §3.3 has the client check `resource == the URL it calls`, so the
       in-cluster Service name cannot be used. Extra `resourceMetadata` keys are
       flattened + snake_cased into the document (`acrValuesSupported` →
-      `acr_values_supported`). `make smoke-mcp-discovery` walks the chain;
+      `acr_values_supported`), and a configured key overrides a computed one —
+      which is how both routes set `mcpProtocolVersion: "2026-07-28"`: the gateway
+      otherwise hard-codes an informational, non-RFC-9728 `mcp_protocol_version:
+      2025-06-18` (still in v1.5.0) that nothing reads but that misstates the
+      revision it negotiates. `make smoke-mcp-discovery` walks the chain;
       `make test-scripts` pins the config.
     - **The gateway inserts ONE position into every downstream `act` chain** — SPIFFE
       ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. So obs-api now expects

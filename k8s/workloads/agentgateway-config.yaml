@@ -93,6 +93,10 @@ binds:
             url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
           resourceMetadata:
             resource: https://mcp-gateway.localtest.me/observability/mcp
+            # agentgateway hard-codes an informational `mcp_protocol_version: 2025-06-18`
+            # into the document (not an RFC 9728 field); configured keys win, so state
+            # the revision this gateway actually negotiates (fact #26).
+            mcpProtocolVersion: "2026-07-28"
             scopesSupported:
             - obs:read
             bearerMethodsSupported:
@@ -173,6 +177,10 @@ binds:
             url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
           resourceMetadata:
             resource: https://mcp-gateway.localtest.me/ops/mcp
+            # agentgateway hard-codes an informational `mcp_protocol_version: 2025-06-18`
+            # into the document (not an RFC 9728 field); configured keys win, so state
+            # the revision this gateway actually negotiates (fact #26).
+            mcpProtocolVersion: "2026-07-28"
             scopesSupported:
             - ops:write
             bearerMethodsSupported:

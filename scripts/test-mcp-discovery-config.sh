@@ -16,6 +16,14 @@ CFG=k8s/workloads/agentgateway-config.yaml
 check "gateway routes the observability well-known path" "$CFG" "exact: /.well-known/oauth-protected-resource/observability/mcp"
 check "gateway routes the ops well-known path"           "$CFG" "exact: /.well-known/oauth-protected-resource/ops/mcp"
 check "ops PRM advertises acr_values_supported"          "$CFG" "acrValuesSupported:"
+# agentgateway (v1.4.1, still v1.5.0) hard-codes an informational, non-RFC-9728
+# `mcp_protocol_version: 2025-06-18` into the PRM; configured keys win, so both
+# routes state the revision the gateway actually negotiates (fact #26).
+if [ "$(grep -c 'mcpProtocolVersion: "2026-07-28"' "$REPO_ROOT/$CFG")" = 2 ]; then
+  green "OK   both PRMs override mcp_protocol_version to 2026-07-28"
+else
+  red "FAIL both resourceMetadata blocks must set mcpProtocolVersion: \"2026-07-28\""; fail=1
+fi
 check "edge Gateway serves mcp-gateway.localtest.me"     k8s/istio/gateway-edge.yaml "- mcp-gateway.localtest.me"
 check "edge routes the host to the gateway Service"      k8s/istio/gateway-edge.yaml "host: agentgateway.mcp.svc.cluster.local"
 check "mkcert issues the host's cert"                    scripts/mkcert-bootstrap.sh '"mcp-gateway.localtest.me"'
