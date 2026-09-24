@@ -19,3 +19,11 @@ export {
   AS_METADATA_TTL_MS,
   type ResolvedAuthorizationServer,
 } from './authorization-server.js';
+export {
+  discoverMcpAuthorization,
+  isDiscoveryFailure,
+  wellKnownPrmUrls,
+  DISCOVERY_TTL_MS,
+  type McpAuthDiscovery,
+  type ProtectedResourceMetadata,
+} from './mcp-oauth-client.js';
