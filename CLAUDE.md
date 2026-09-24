@@ -1026,8 +1026,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     within a minute produced a trace with NO agent exchange and, because the
     copilot re-sent the same token, no shim exchange either. The shim's own 60 s
     cache (fact #21) stays: a fresh copilot token per question makes it miss exactly
-    once per question, which is the one exchange the trace should show there. `createMcpAuthProvider` wraps it as the SDK's
-    `AuthProvider`: `acquire()` = discovery + the UNCHANGED `exchangeToken`,
+    once per question, which is the one exchange the trace should show there.
+    `createMcpAuthProvider` wraps it as the SDK's
+    `AuthProvider`: `acquire()` = discovery + the UNCHANGED `exchangeToken`
+    (reusing the discovery THIS provider already holds unless forced — the
+    specialist calls `discover()` for the step-up challenge and then `acquire()`,
+    and with the demo TTL of 0 that used to run the chain twice per restart),
     `onUnauthorized()` = forced re-discovery + one more exchange (the transport
     retries once), and an RFC 9470 challenge is never exchanged or retried. The
     non-MCP hops (LLM, A2A delegation) resolve the token endpoint from

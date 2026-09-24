@@ -221,7 +221,10 @@ default is ten minutes, a sane production value; **the demo manifests set `0`** 
 every question re-runs the chain (including the RFC 8414 fetch) and its trace and
 `DISCOVER` log block show it — with ten minutes, the identity panel's *Check
 tools* probe warmed the cache and the first question showed no discovery at all.
-The SDK transport then attaches
+Within one provider instance (one per request), `acquire()` reuses the result
+`discover()` already produced, so an agent that needs the PRM first (the
+specialist, for its step-up challenge) does not run the chain twice. The SDK
+transport then attaches
 `token()` to every request; on a 401 it calls `onUnauthorized()`, which re-runs
 steps 2–5 with the cache bypassed and the received challenge as step 1, and
 retries once. An `insufficient_user_authentication` challenge is never exchanged

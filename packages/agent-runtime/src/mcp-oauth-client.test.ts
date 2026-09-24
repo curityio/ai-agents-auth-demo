@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { _resetAuthorizationServerCache } from './authorization-server.js';
+type FetchLike = typeof fetch;
 import {
   createMcpAuthProvider,
   discoverMcpAuthorization,
   isDiscoveryFailure,
   _resetDiscoveryCache,
-} from './mcp-oauth-client.js';
+ } from './mcp-oauth-client.js';
 
 const SERVER = 'https://mcp-gateway.localtest.me/ops/mcp';
 const PRM_URL = 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp';
@@ -345,12 +346,38 @@ describe('createMcpAuthProvider', () => {
 });
 
 describe('createMcpAuthProvider discoveryTtlMs', () => {
-  it('passes discoveryTtlMs through, so two acquires with 0 probe twice', async () => {
+  const mk = (f: FetchLike) =>
+    createMcpAuthProvider({ serverUrl: SERVER, service: 't', exchange: async () => 'T', fetchImpl: f, discoveryTtlMs: 0 });
+
+  it('passes discoveryTtlMs through: two PROVIDERS (two questions) with 0 probe twice', async () => {
     const { f, calls } = fakeFetch(HAPPY);
-    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 't', exchange: async () => 'T', fetchImpl: f, discoveryTtlMs: 0 });
-    await p.acquire();
+    await mk(f).acquire();
+    const n = calls.length;
+    await mk(f).acquire();
+    expect(calls.length).toBe(2 * n);
+  });
+
+  it('within ONE provider, acquire() reuses the discovery discover() already ran — the specialist calls both', async () => {
+    // remediate(): discover() to build the step-up challenge from the PRM, then
+    // acquire(). With the demo TTL of 0 the second call re-ran the whole chain
+    // (probe → PRM → AS) — six requests per restart for nothing.
+    const { f, calls } = fakeFetch(HAPPY);
+    const p = mk(f);
+    await p.discover();
     const n = calls.length;
     await p.acquire();
-    expect(calls.length).toBe(2 * n);
+    expect(calls.length).toBe(n);
+    await p.acquire();
+    expect(calls.length).toBe(n);
+  });
+
+  it('a FORCED acquire (the transport saw a 401) still re-discovers', async () => {
+    const { f, calls } = fakeFetch(HAPPY);
+    const p = mk(f);
+    await p.acquire();
+    const n = calls.length;
+    const challenge = new Response(null, { status: 401, headers: { 'www-authenticate': `Bearer resource_metadata="${PRM_URL}"` } });
+    await p.onUnauthorized({ response: challenge } as never);
+    expect(calls.length).toBeGreaterThan(n);
   });
 });

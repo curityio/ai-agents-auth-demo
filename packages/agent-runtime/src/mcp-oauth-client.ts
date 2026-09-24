@@ -361,7 +361,12 @@ export function createMcpAuthProvider(opts: {
   };
 
   const acquire = async (o: { force?: boolean; challenge?: Response } = {}): Promise<string> => {
-    const d = await discover(o);
+    // Reuse what THIS provider already discovered unless the transport forced a
+    // re-discovery (401 → onUnauthorized). The specialist calls discover() (for the
+    // step-up challenge) and then acquire(); with the demo's discovery TTL of 0 the
+    // second call re-ran probe → PRM → AS metadata for nothing. A provider is
+    // per-request, so "once per provider" is still "once per question".
+    const d = discovery && !o.force && !o.challenge ? discovery : await discover(o);
     token = await opts.exchange({ tokenEndpoint: d.tokenEndpoint, scope: d.scope, discovery: d, forced: o.force === true });
     return token;
   };
