@@ -14,7 +14,7 @@ The repository is a pnpm + Turborepo monorepo. Two trees matter:
 apps/        web  agent-copilot  agent-specialist
              mcp-observability  mcp-ops  obs-api  ops-api  exchange-shim
 packages/    auth-curity  spiffe  otel-bootstrap  a2a-helpers  agent-runtime
-k8s/         curity  spire  istio  observability
+k8s/         curity  spire  istio  telemetry
              workloads (incl. agentgateway)  prod  kind
 scripts/     bootstrap + smoke-test shell scripts
 ```
@@ -863,7 +863,7 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   Service + ServiceAccount + a `spiffe-helper` sidecar + the SVID/CSI volumes.
   `make apply` applies Curity, the prod namespace, all workloads (including the
   agentgateway), the `ClusterSPIFFEID` CRs, the edge gateway routes, and the
-  observability config, then runs `make routing`.
+  telemetry config, then runs `make routing`.
 - **MCP front door (agentgateway).** `k8s/workloads/agentgateway-config.yaml`
   deploys the standalone **agentgateway** in the `mcp` namespace with its co-located
   `exchange-shim` sidecar — the MCP front door for both MCP servers (see §3.5).

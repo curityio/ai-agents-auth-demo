@@ -2,11 +2,11 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboard-identity-flow
-  namespace: observability
+  namespace: telemetry
   labels:
     grafana_dashboard: "1"
 data:
-  # Kept byte-identical to k8s/observability/dashboards/identity-flow.json,
+  # Kept byte-identical to k8s/telemetry/dashboards/identity-flow.json,
   # which is the editable copy. This inlined one is what `make apply` ships.
   identity-flow.json: |
     {

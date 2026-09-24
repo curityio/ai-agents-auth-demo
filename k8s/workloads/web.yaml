@@ -89,7 +89,7 @@ spec:
             # OTel: @vercel/otel exports OTLP/HTTP to the Collector. No
             # SPIFFE_SVID_PATH — the BFF sets no spiffe.id resource attribute.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: web
             - name: OTEL_RESOURCE_ATTRIBUTES

@@ -17,7 +17,7 @@ app.localtest.me|istio-ingress|web-tls
 curity.localtest.me|curity|curity-tls
 curity.localtest.me|istio-ingress|curity-tls
 curity-admin.localtest.me|istio-ingress|curity-admin-tls
-grafana.localtest.me|observability|grafana-tls
+grafana.localtest.me|telemetry|grafana-tls
 grafana.localtest.me|istio-ingress|grafana-tls
 copilot.localtest.me|istio-ingress|copilot-tls
 specialist.localtest.me|istio-ingress|specialist-tls

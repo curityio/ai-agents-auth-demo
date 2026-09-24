@@ -184,7 +184,7 @@ seed-spire-ca: gen-ca ## Seed SPIRE's disk UpstreamAuthority secret (spiffe-upst
 # in dependency order; the individual targets exist for granular re-installs.
 # ============================================================================
 .PHONY: platform
-platform: gen-ca seed-istio-ca istio-install gateway-api-crds istio-ingress-install tls-secrets seed-spire-ca spire-install observability-install ## Install the full in-cluster platform (mesh + ingress + SPIRE + observability)
+platform: gen-ca seed-istio-ca istio-install gateway-api-crds istio-ingress-install tls-secrets seed-spire-ca spire-install telemetry-install ## Install the full in-cluster platform (mesh + ingress + SPIRE + telemetry)
 	@echo "==> Platform installed. Next: seed Curity + secrets, then 'make images apply'."
 
 .PHONY: gateway-api-crds
@@ -256,17 +256,17 @@ spire-install: ## Install SPIRE (CRDs + server + agent + controller-manager + CS
 spire-uninstall: ## Remove the SPIRE Helm release (keeps the namespace + CRs)
 	-helm uninstall spire -n spire
 
-.PHONY: observability-install
-observability-install: ## Install the OTel Collector + Tempo + Grafana and the trace dashboard
+.PHONY: telemetry-install
+telemetry-install: ## Install the OTel Collector + Tempo + Grafana and the trace dashboard
 	helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
 	helm repo update grafana
-	kubectl apply -f k8s/observability/namespace.yaml
-	kubectl apply -f k8s/observability/collector.yaml
-	kubectl apply -f k8s/observability/grafana-dashboards-configmap.yaml
-	helm upgrade --install tempo grafana/tempo -n observability --version $(TEMPO_VERSION) \
-	  -f k8s/observability/values-tempo.yaml --wait --timeout 3m
-	helm upgrade --install grafana grafana/grafana -n observability --version $(GRAFANA_VERSION) \
-	  -f k8s/observability/values-grafana.yaml --wait --timeout 3m
+	kubectl apply -f k8s/telemetry/namespace.yaml
+	kubectl apply -f k8s/telemetry/collector.yaml
+	kubectl apply -f k8s/telemetry/grafana-dashboards-configmap.yaml
+	helm upgrade --install tempo grafana/tempo -n telemetry --version $(TEMPO_VERSION) \
+	  -f k8s/telemetry/values-tempo.yaml --wait --timeout 3m
+	helm upgrade --install grafana grafana/grafana -n telemetry --version $(GRAFANA_VERSION) \
+	  -f k8s/telemetry/values-grafana.yaml --wait --timeout 3m
 	@echo "==> Grafana: https://$(HOST_GRAFANA) (anonymous Viewer enabled)"
 
 .PHONY: kiali-install
@@ -371,11 +371,11 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	# detects the broken state, `make jwks-heal` repairs it.
 	NS_CURITY=$(NS_CURITY) bash scripts/jwks-guard.sh wait
 	kubectl apply -f k8s/istio/apis-l7-authz.yaml
-	# Re-apply observability config so Collector/dashboard edits propagate without
+	# Re-apply telemetry config so Collector/dashboard edits propagate without
 	# a full Helm reinstall (tolerate a fresh cluster where the ns doesn't exist).
-	-kubectl apply -f k8s/observability/namespace.yaml
-	-kubectl apply -f k8s/observability/collector.yaml
-	-kubectl apply -f k8s/observability/grafana-dashboards-configmap.yaml
+	-kubectl apply -f k8s/telemetry/namespace.yaml
+	-kubectl apply -f k8s/telemetry/collector.yaml
+	-kubectl apply -f k8s/telemetry/grafana-dashboards-configmap.yaml
 	$(MAKE) routing
 
 .PHONY: routing
@@ -525,7 +525,7 @@ seed-gateway-secret: ## Seed the agentgateway client secret (fixed demo value "P
 # ============================================================================
 .PHONY: status
 status: ## Show pod health across every demo namespace
-	@for ns in $(NS_CURITY) $(NS_WEB) $(NS_AGENTS) $(NS_MCP) $(NS_APIS) prod spire spire-server spire-system istio-system $(NS_INGRESS) observability; do \
+	@for ns in $(NS_CURITY) $(NS_WEB) $(NS_AGENTS) $(NS_MCP) $(NS_APIS) prod spire spire-server spire-system istio-system $(NS_INGRESS) telemetry; do \
 	  echo "=== $$ns ==="; \
 	  kubectl -n $$ns get pods --no-headers 2>/dev/null || echo "  (namespace not present)"; \
 	  echo; \

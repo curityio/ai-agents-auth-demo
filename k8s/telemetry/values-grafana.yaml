@@ -28,7 +28,7 @@ datasources:
         # serves this on :3200 (the "prom-metrics" service port), NOT the
         # conventional :3100 — there is no 3100 on the Service. Pointing at
         # 3100 silently yields an empty dashboard (ingestion still works).
-        url: http://tempo.observability.svc.cluster.local:3200
+        url: http://tempo.telemetry.svc.cluster.local:3200
         isDefault: true
 
 sidecar:

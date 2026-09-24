@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: otel-collector-config
-  namespace: observability
+  namespace: telemetry
 data:
   config.yaml: |
     receivers:
@@ -35,7 +35,7 @@ data:
       # omitted — this demo shows real alice/bob identity on purpose.
     exporters:
       otlp/tempo:
-        endpoint: tempo.observability.svc.cluster.local:4317
+        endpoint: tempo.telemetry.svc.cluster.local:4317
         tls:
           insecure: true
     extensions:
@@ -53,7 +53,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: otel-collector
-  namespace: observability
+  namespace: telemetry
   labels:
     app: otel-collector
 spec:
@@ -107,7 +107,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: otel-collector
-  namespace: observability
+  namespace: telemetry
 spec:
   selector:
     app: otel-collector

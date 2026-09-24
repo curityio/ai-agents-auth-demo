@@ -188,7 +188,7 @@ spec:
           mode: SIMPLE
           insecureSkipVerify: true
 ---
-# Grafana terminates plain HTTP on :80 inside the observability namespace, so
+# Grafana terminates plain HTTP on :80 inside the telemetry namespace, so
 # the gateway just SIMPLE-terminates TLS and proxies plaintext upstream — no
 # DestinationRule / re-encryption needed (unlike Curity above).
 apiVersion: networking.istio.io/v1
@@ -204,7 +204,7 @@ spec:
   http:
     - route:
         - destination:
-            host: grafana.observability.svc.cluster.local
+            host: grafana.telemetry.svc.cluster.local
             port:
               number: 80
 ---

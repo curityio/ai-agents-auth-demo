@@ -45,7 +45,7 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **Istio Ambient** (ztunnel/cni/istiod) | `istio-system` | — | Transparent ztunnel L4 mTLS for all in-mesh traffic. |
 | **Istio edge gateway** | `istio-ingress` | 80/443 | Terminates TLS for `app`/`curity`/`grafana`, the two agents' CIMD hosts (`copilot`/`specialist`), the two MCP hosts (`mcp-ops`/`mcp-observability`, so their RFC 9728 metadata is browsable) and `mcp-gateway` (the MCP front door, which the agents call by that public name); the single ingress into the cluster. |
 | **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers, **and** the LLM egress gateway. Three path-scoped routes on one listener: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops, `/llm` → the configured LLM provider. For MCP: answers unauthenticated calls with a 401 naming its per-route RFC 9728 document (`resource`, `scopes_supported`; the ops route adds `acr_values_supported`) — the document the agents discover the authorization server from — validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope. Its MCP-layer policy does *not* split ops tools by role (that would hide the tool from `tools/list`); two HTTP-layer `authorization` rules instead deny `set_deployment_image` without the `sre` role (keyed on `Mcp-Name`) and any explicit namespace other than `prod` (`Mcp-Param-Namespace`), with mcp-ops remaining the authoritative role check. For each tool-call it drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). For `/llm`: validates a separate `aud=llm-gateway` JWT, requires `llm:invoke`, and injects the **only** upstream LLM provider API key in the system (`backendAuth.key`) — no shim, no `act`-chain (the provider is outside the trust domain, so there is no downstream workload to nest). The provider block is generated from `.demo.env`; see `llm-providers.md`. |
-| **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
+| **OTel Collector → Tempo → Grafana** | `telemetry` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | Two sample deployments, `order-service` and `checkout-service` (busybox), that the copilot observes and the specialist restarts, scales or re-images. |
 
 > **Naming: one workload, two OAuth roles.** The gateway appears under two names on
@@ -171,10 +171,10 @@ swap, not a delegation chain. `agent-copilot` uses it for the read/observe path;
 `agent-specialist` for the privileged inspect→act→verify loop.
 
 **Mesh membership.** `web`, `agents`, `mcp`, and `apis` are enrolled in the Istio
-Ambient dataplane (ztunnel L4 mTLS). `curity`, `spire*`, and `observability`
+Ambient dataplane (ztunnel L4 mTLS). `curity`, `spire*`, and `telemetry`
 stay **out of mesh** by design: Curity
 terminates external TLS and must keep a stable discovery URL; SPIRE and the
-observability stack are infrastructure, not demo workloads.
+telemetry stack are infrastructure, not demo workloads.
 
 **Trust domain.** All workload identities live under
 `spiffe://demo.curity.local`, with IDs of the form
@@ -493,7 +493,7 @@ flowchart LR
     GW["agentgateway (native OTLP)"]
     SH["exchange-shim (OBO sidecar)"]
   end
-  subgraph obs_ns["observability namespace (out of mesh)"]
+  subgraph tel_ns["telemetry namespace (out of mesh)"]
     COL["OTel Collector"]
     T["Tempo"]
     G["Grafana"]

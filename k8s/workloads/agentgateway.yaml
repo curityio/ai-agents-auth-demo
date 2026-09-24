@@ -127,7 +127,7 @@ spec:
             # `auth.token_exchange` span shows that narrowing like every other
             # hop. Needs the express server in app.ts to actually produce spans.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: exchange-shim
             - name: OTEL_RESOURCE_ATTRIBUTES

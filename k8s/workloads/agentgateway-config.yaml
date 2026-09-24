@@ -43,7 +43,7 @@ config:
   # grpc/4317 (the collector exposes 4317 gRPC and 4318 HTTP; the Node services
   # use the latter).
   tracing:
-    otlpEndpoint: http://otel-collector.observability.svc.cluster.local:4317
+    otlpEndpoint: http://otel-collector.telemetry.svc.cluster.local:4317
     otlpProtocol: grpc
     # The gateway span already carries `http.path`, `route` and `http.host`, plus
     # `endpoint` (upstream host:port) for plain HTTP backends like /llm. It does
