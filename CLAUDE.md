@@ -1006,8 +1006,11 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     the URL called, trailing slash aside) → `authorization_servers[0]` → RFC 8414 /
     OIDC metadata (issuer-echo checked by the SDK; `client_id_metadata_document_supported`
     MUST be true; HTTPS `token_endpoint`) → scope = the challenge's `scope`, else
-    `scopes_supported`, else refuse. Cached 10 min per server URL; one `DISCOVER`
-    OBO-log block per cold run. `createMcpAuthProvider` wraps it as the SDK's
+    `scopes_supported`, else refuse. Cached per server URL for `ttlMs` — the code
+    default is 10 min, but **the demo manifests set `MCP_DISCOVERY_TTL_SECONDS=0`** so
+    every question re-runs the chain and its trace + `DISCOVER` OBO-log block show it
+    (with 10 min, the *Check tools* probe warmed the cache and the first question
+    showed nothing). One `DISCOVER` block per run. `createMcpAuthProvider` wraps it as the SDK's
     `AuthProvider`: `acquire()` = discovery + the UNCHANGED `exchangeToken`,
     `onUnauthorized()` = forced re-discovery + one more exchange (the transport
     retries once), and an RFC 9470 challenge is never exchanged or retried. The

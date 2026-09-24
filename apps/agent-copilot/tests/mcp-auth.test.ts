@@ -41,6 +41,12 @@ describe('buildObservabilityAuthProvider', () => {
     );
   });
 
+  it('passes the configured discovery TTL through (the demo sets 0 so every question shows the chain)', () => {
+    createMcpAuthProvider.mockImplementation((o: unknown) => o);
+    const p = buildObservabilityAuthProvider({ cfg: { ...cfg, mcpDiscoveryTtlMs: 0 } as Config, subjectToken: 'U', subjectSub: 'alice', subjectAcr: 'mfa' }) as unknown as { discoveryTtlMs: number };
+    expect(p.discoveryTtlMs).toBe(0);
+  });
+
   it('passes recordLastExchange through so a probe is not recorded as a flow', async () => {
     createMcpAuthProvider.mockImplementation((o: { exchange: (i: unknown) => Promise<string> }) => o);
     const p = buildObservabilityAuthProvider({

@@ -34,6 +34,7 @@ check "Makefile knows the host"                          Makefile "HOST_MCP_GATE
 # The agents must call the SAME URL the PRM advertises (RFC 9728 §3.3).
 for f in k8s/workloads/agent-copilot.yaml k8s/workloads/agent-specialist.yaml; do
   check "$f calls the gateway by its public name" "$f" "value: https://mcp-gateway.localtest.me/"
+  check "$f runs discovery on every question (MCP_DISCOVERY_TTL_SECONDS=0)" "$f" 'name: MCP_DISCOVERY_TTL_SECONDS'
   if grep -qE 'CURITY_TOKEN_ENDPOINT|MCP_(OPS|OBSERVABILITY)_SCOPE|MCP_OPS_(RESOURCE_)?METADATA_URL' "$REPO_ROOT/$f"; then
     red "FAIL $f still carries static discovery config"; fail=1
   else

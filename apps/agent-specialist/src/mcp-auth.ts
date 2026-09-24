@@ -21,6 +21,7 @@ export function buildOpsAuthProvider(opts: {
     // Trust boundary: only the issuer this agent already trusts may receive the
     // user's delegated token, whatever the PRM says.
     allowedAuthorizationServers: [opts.cfg.curityIssuer],
+    discoveryTtlMs: opts.cfg.mcpDiscoveryTtlMs,
     exchange: ({ tokenEndpoint, scope }) =>
       obtainOpsToken({
         cfg: opts.cfg,
@@ -38,6 +39,7 @@ export function buildObsAuthProvider(opts: { cfg: Config; subjectToken: string }
     serverUrl: opts.cfg.mcpObservabilityUrl,
     service: 'agent-specialist',
     allowedAuthorizationServers: [opts.cfg.curityIssuer],
+    discoveryTtlMs: opts.cfg.mcpDiscoveryTtlMs,
     exchange: ({ tokenEndpoint, scope }) =>
       obtainObsToken({ cfg: opts.cfg, subjectToken: opts.subjectToken, tokenEndpoint, scope }),
   });

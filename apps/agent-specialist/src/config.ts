@@ -1,6 +1,12 @@
 export interface Config {
   port: number;
   curityIssuer: string;
+  /**
+   * MCP authorization discovery reuse window (ms). From MCP_DISCOVERY_TTL_SECONDS;
+   * the code default is 10 min, the demo manifests set 0 so EVERY question runs
+   * 401 → RFC 9728 → RFC 8414 and the trace/OBO log show it (fact #37).
+   */
+  mcpDiscoveryTtlMs: number;
   curityJwksUri: string;
   expectedAudience: string;
   /** CIMD client_id — the HTTPS URL Curity dereferences to fetch this agent's metadata. */
@@ -45,6 +51,13 @@ function required(name: string): string {
   return v;
 }
 
+function discoveryTtlMs(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 10 * 60_000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`MCP_DISCOVERY_TTL_SECONDS must be a non-negative integer, got ${raw}`);
+  return n * 1000;
+}
+
 export function loadConfig(): Config {
   const cfg: Config = {
     port: Number(process.env.PORT ?? 8082),
@@ -55,6 +68,7 @@ export function loadConfig(): Config {
       process.env.AGENT_CLIENT_ID ?? 'https://specialist.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpOpsUrl: required('MCP_OPS_URL'),
+    mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
     mcpOpsAudience: process.env.MCP_OPS_AUDIENCE ?? 'mcp-ops',
     publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'https://specialist.localtest.me',
     llmGatewayUrl:

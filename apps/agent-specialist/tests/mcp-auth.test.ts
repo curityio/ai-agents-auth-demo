@@ -32,4 +32,13 @@ describe('specialist auth providers', () => {
     expect(ops.allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
     expect(obs.allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
   });
+
+  it('pass the configured discovery TTL through on both tiers', () => {
+    createMcpAuthProvider.mockImplementation((o: unknown) => o);
+    const c = { ...cfg, mcpDiscoveryTtlMs: 0 } as Config;
+    const ops = buildOpsAuthProvider({ cfg: c, subjectToken: 'U', subjectSub: 'alice' }) as unknown as { discoveryTtlMs: number };
+    const obs = buildObsAuthProvider({ cfg: c, subjectToken: 'U' }) as unknown as { discoveryTtlMs: number };
+    expect(ops.discoveryTtlMs).toBe(0);
+    expect(obs.discoveryTtlMs).toBe(0);
+  });
 });

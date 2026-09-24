@@ -26,7 +26,7 @@ export interface ResolvedAuthorizationServer {
 
 export const AS_METADATA_TTL_MS = 10 * 60_000;
 
-const cache = new Map<string, { value: ResolvedAuthorizationServer; expiresAt: number }>();
+const cache = new Map<string, { value: ResolvedAuthorizationServer; fetchedAt: number }>();
 
 /** Test-only. */
 export function _resetAuthorizationServerCache(): void {
@@ -68,7 +68,12 @@ export function validateAuthorizationServerMetadata(
 
 export async function resolveAuthorizationServer(
   issuer: string,
-  opts: { fetchImpl?: FetchLike; force?: boolean } = {},
+  opts: {
+    fetchImpl?: FetchLike;
+    force?: boolean;
+    /** Reuse window; defaults to AS_METADATA_TTL_MS (10 min). 0 = always re-fetch. */
+    ttlMs?: number;
+  } = {},
 ): Promise<ResolvedAuthorizationServer> {
   const key = issuer.replace(/\/+$/, '');
   if (!key.startsWith('https://')) {
@@ -76,7 +81,8 @@ export async function resolveAuthorizationServer(
     throw new CurityAuthError(`authorization server ${key} is not https`, 'discovery_failed');
   }
   const hit = cache.get(key);
-  if (hit && !opts.force && hit.expiresAt > Date.now()) return hit.value;
+  const ttlMs = opts.ttlMs ?? AS_METADATA_TTL_MS;
+  if (hit && !opts.force && ttlMs > 0 && Date.now() - hit.fetchedAt < ttlMs) return hit.value;
 
   let metadata: AuthorizationServerMetadata | undefined;
   try {
@@ -95,6 +101,8 @@ export async function resolveAuthorizationServer(
     );
   }
   const value = validateAuthorizationServerMetadata(metadata);
-  cache.set(key, { value, expiresAt: Date.now() + AS_METADATA_TTL_MS });
+  // Store WHEN it was fetched; each caller applies its own ttlMs on read, so a
+  // discovery run with ttlMs 0 and an LLM hop with the 10-min default share one entry.
+  cache.set(key, { value, fetchedAt: Date.now() });
   return value;
 }

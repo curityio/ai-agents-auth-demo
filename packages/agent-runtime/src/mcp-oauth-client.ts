@@ -140,6 +140,13 @@ export async function discoverMcpAuthorization(
     force?: boolean;
     service?: string;
     /**
+     * How long a discovery result is reused for this server URL. Defaults to
+     * `DISCOVERY_TTL_MS` (10 min), a sane production value. `0` re-runs the whole
+     * chain (probe → PRM → AS metadata) on every call — what the demo deploys, so
+     * every question's trace and OBO log show the spec's sequence.
+     */
+    ttlMs?: number;
+    /**
      * Trust boundary. The PRM names the AS, but the CLIENT decides which AS it is
      * willing to send the user's delegated token to. When set, `authorization_servers[0]`
      * must be one of these (trailing slash ignored) or discovery fails closed — a
@@ -151,7 +158,8 @@ export async function discoverMcpAuthorization(
 ): Promise<McpAuthDiscovery> {
   const key = normalizeUrl(serverUrl);
   const hit = discoveryCache.get(key);
-  if (hit && !opts.force && Date.now() - hit.discoveredAt < DISCOVERY_TTL_MS) return hit;
+  const ttlMs = opts.ttlMs ?? DISCOVERY_TTL_MS;
+  if (hit && !opts.force && ttlMs > 0 && Date.now() - hit.discoveredAt < ttlMs) return hit;
 
   const fetchFn: FetchLike = opts.fetchImpl ?? fetch;
   const service = opts.service ?? 'mcp-client';
@@ -220,7 +228,9 @@ export async function discoverMcpAuthorization(
   }
 
   // 3. AS metadata (issuer echo, CIMD flag, HTTPS token endpoint).
-  const as = await resolveAuthorizationServer(authorizationServer, { fetchImpl: fetchFn, force: opts.force });
+  // The AS metadata has its own cache; the discovery TTL governs it here too, so a
+  // demo TTL of 0 re-fetches the RFC 8414 document as well (it is part of the chain).
+  const as = await resolveAuthorizationServer(authorizationServer, { fetchImpl: fetchFn, force: opts.force, ttlMs });
 
   // 4. Scope selection: challenge first, then scopes_supported, never a default.
   let scope: string | undefined;
@@ -316,6 +326,8 @@ export function createMcpAuthProvider(opts: {
   fetchImpl?: FetchLike;
   /** See `discoverMcpAuthorization`: the ASes this client will exchange with. */
   allowedAuthorizationServers?: string[];
+  /** See `discoverMcpAuthorization.ttlMs`. */
+  discoveryTtlMs?: number;
 }): McpAuthProvider {
   let token: string | undefined;
   let discovery: McpAuthDiscovery | undefined;
@@ -327,6 +339,7 @@ export function createMcpAuthProvider(opts: {
         ...(opts.allowedAuthorizationServers
           ? { allowedAuthorizationServers: opts.allowedAuthorizationServers }
           : {}),
+        ...(opts.discoveryTtlMs === undefined ? {} : { ttlMs: opts.discoveryTtlMs }),
         service: opts.service,
         ...o,
       });

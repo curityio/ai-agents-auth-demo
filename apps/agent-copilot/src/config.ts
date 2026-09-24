@@ -1,6 +1,12 @@
 export interface Config {
   port: number;
   curityIssuer: string;
+  /**
+   * MCP authorization discovery reuse window (ms). From MCP_DISCOVERY_TTL_SECONDS;
+   * the code default is 10 min, the demo manifests set 0 so EVERY question runs
+   * 401 → RFC 9728 → RFC 8414 and the trace/OBO log show it (fact #37).
+   */
+  mcpDiscoveryTtlMs: number;
   curityJwksUri: string;
   expectedAudience: string;
   mcpObservabilityUrl: string;
@@ -35,6 +41,13 @@ function required(name: string): string {
   return v;
 }
 
+function discoveryTtlMs(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 10 * 60_000;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`MCP_DISCOVERY_TTL_SECONDS must be a non-negative integer, got ${raw}`);
+  return n * 1000;
+}
+
 export function loadConfig(): Config {
   const cfg: Config = {
     port: Number(process.env.PORT ?? 8081),
@@ -42,6 +55,7 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-copilot',
     mcpObservabilityUrl: required('MCP_OBSERVABILITY_URL'),
+    mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
     agentClientId:
       process.env.AGENT_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),

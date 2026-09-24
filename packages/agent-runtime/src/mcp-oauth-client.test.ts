@@ -173,6 +173,32 @@ describe('discoverMcpAuthorization', () => {
     expect(calls.length).toBeGreaterThan(n);
   });
 
+  it('ttlMs: 0 re-runs the whole chain on every call (the demo setting, so each question shows discovery)', async () => {
+    const { f, calls } = fakeFetch(HAPPY);
+    await discoverMcpAuthorization(SERVER, { fetchImpl: f, ttlMs: 0 });
+    const n = calls.length;
+    await discoverMcpAuthorization(SERVER, { fetchImpl: f, ttlMs: 0 });
+    expect(calls.length).toBe(2 * n);
+    expect(calls.slice(n)).toEqual(calls.slice(0, n)); // probe → PRM → AS, again
+  });
+
+  it('a positive ttlMs overrides the 10-minute default', async () => {
+    vi.useFakeTimers();
+    try {
+      const { f, calls } = fakeFetch(HAPPY);
+      await discoverMcpAuthorization(SERVER, { fetchImpl: f, ttlMs: 5_000 });
+      const n = calls.length;
+      vi.advanceTimersByTime(4_000);
+      await discoverMcpAuthorization(SERVER, { fetchImpl: f, ttlMs: 5_000 });
+      expect(calls.length).toBe(n);
+      vi.advanceTimersByTime(1_001);
+      await discoverMcpAuthorization(SERVER, { fetchImpl: f, ttlMs: 5_000 });
+      expect(calls.length).toBe(2 * n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uses a supplied 401 response as the challenge instead of probing', async () => {
     const { f, calls } = fakeFetch(HAPPY);
     const challenge = new Response(null, {
@@ -315,5 +341,16 @@ describe('createMcpAuthProvider', () => {
       allowedAuthorizationServers: [`${ISSUER}/`],
     });
     expect(await p.acquire()).toBe('TOKEN-1');
+  });
+});
+
+describe('createMcpAuthProvider discoveryTtlMs', () => {
+  it('passes discoveryTtlMs through, so two acquires with 0 probe twice', async () => {
+    const { f, calls } = fakeFetch(HAPPY);
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 't', exchange: async () => 'T', fetchImpl: f, discoveryTtlMs: 0 });
+    await p.acquire();
+    const n = calls.length;
+    await p.acquire();
+    expect(calls.length).toBe(2 * n);
   });
 });

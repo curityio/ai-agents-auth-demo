@@ -83,6 +83,11 @@ spec:
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
             - name: AGENT_AUDIENCE
               value: agent-copilot
+            # Re-run MCP authorization discovery (401 → RFC 9728 → RFC 8414) on EVERY
+            # question instead of caching it 10 min: this demo exists to show that chain
+            # in the trace and the OBO log. Costs ~3 small requests per question.
+            - name: MCP_DISCOVERY_TTL_SECONDS
+              value: "0"
             - name: MCP_OBSERVABILITY_URL
               # The agentgateway MCP front door, by its PUBLIC name. The agent is a
               # spec-shaped MCP client: it learns the authorization server from this

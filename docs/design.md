@@ -80,7 +80,7 @@ from this package); `agent-specialist` depends on it directly.
 |---|---|---|
 | `llm.ts` | `buildLlm(cfg, opts?)` | Builds a single OpenAI-compatible Vercel AI SDK model pointed at agentgateway's `/llm` route; requires a per-request `opts.accessToken`. There is exactly ONE path — no per-agent provider choice and no direct-to-vendor mode. Which vendor answers `/llm` is a gateway-side config choice (§3.6, [`docs/llm-providers.md`](llm-providers.md)), not something the agent selects. |
 | `mcp-toolset.ts` | `openMcpToolset({url, authProvider, …})` → `McpToolset`, `mcpInputSchema`, `requiredRolesOf`, `MCP_TOOL_META_REQUIRED_ROLES` | Connects to an MCP server over Streamable HTTP through the SDK's `authProvider` seam (per-request bearer from `token()`, one re-acquire via `onUnauthorized()` on 401; revision pinned to 2026-07-28, `cachePartition` = token `sub`), passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. Also exposes the raw `tools/list` entries as `listed` (name, description, `_meta`) — the AI SDK tool object has nowhere to carry `_meta`, which is where mcp-ops publishes a tool's required roles (`io.curity.demo/required-roles`, read by `requiredRolesOf`). A gateway HTTP 403 on `tools/call` is converted into a factual `{error:'forbidden', tool}` result rather than a thrown transport error (§3.7.1). `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
-| `mcp-oauth-client.ts` | `discoverMcpAuthorization(serverUrl, opts?)` → `McpAuthDiscovery`, `createMcpAuthProvider({serverUrl, service, exchange})` → `McpAuthProvider`, `isDiscoveryFailure`, `wellKnownPrmUrls` | The MCP 2026-07-28 client side of authorization: unauthenticated probe → `WWW-Authenticate` → RFC 9728 PRM (resource must equal the server URL) → RFC 8414/OIDC AS metadata (issuer echo, CIMD flag, HTTPS token endpoint) → scope selection (challenge, else `scopes_supported`, else refuse). Fail-closed with typed `CurityAuthError` codes; 10-min cache per server; one `DISCOVER` log per cold run. The provider's `acquire()` calls the agent-supplied `exchange` (the unchanged RFC 8693 helper); `onUnauthorized()` forces re-discovery and exchanges once more; an RFC 9470 challenge is never retried. |
+| `mcp-oauth-client.ts` | `discoverMcpAuthorization(serverUrl, opts?)` → `McpAuthDiscovery`, `createMcpAuthProvider({serverUrl, service, exchange})` → `McpAuthProvider`, `isDiscoveryFailure`, `wellKnownPrmUrls` | The MCP 2026-07-28 client side of authorization: unauthenticated probe → `WWW-Authenticate` → RFC 9728 PRM (resource must equal the server URL) → RFC 8414/OIDC AS metadata (issuer echo, CIMD flag, HTTPS token endpoint) → scope selection (challenge, else `scopes_supported`, else refuse). Fail-closed with typed `CurityAuthError` codes; cached per server for `ttlMs` (default 10 min, demo 0 via `MCP_DISCOVERY_TTL_SECONDS`); one `DISCOVER` log per run. The provider's `acquire()` calls the agent-supplied `exchange` (the unchanged RFC 8693 helper); `onUnauthorized()` forces re-discovery and exchanges once more; an RFC 9470 challenge is never retried. |
 | `authorization-server.ts` | `resolveAuthorizationServer(issuer, opts?)` → `{issuer, tokenEndpoint, metadata}` | RFC 8414/OIDC discovery for hops with no MCP server to discover from (LLM egress, A2A delegation): the issuer is configured, the token endpoint is read from metadata. Same validations and cache as the MCP path. |
 
 ---
@@ -214,7 +214,12 @@ from the server. `createMcpAuthProvider` runs, per toolset open:
 5. `exchange({tokenEndpoint, scope})` — the agent's unchanged `obtainXToken`, i.e.
    `exchangeToken` with the configured `audience` and the SVID as actor.
 
-The result is cached ten minutes per server URL. The SDK transport then attaches
+The result is cached per server URL for `MCP_DISCOVERY_TTL_SECONDS`. The code
+default is ten minutes, a sane production value; **the demo manifests set `0`** so
+every question re-runs the chain (including the RFC 8414 fetch) and its trace and
+`DISCOVER` log block show it — with ten minutes, the identity panel's *Check
+tools* probe warmed the cache and the first question showed no discovery at all.
+The SDK transport then attaches
 `token()` to every request; on a 401 it calls `onUnauthorized()`, which re-runs
 steps 2–5 with the cache bypassed and the received challenge as step 1, and
 retries once. An `insufficient_user_authentication` challenge is never exchanged
@@ -792,6 +797,7 @@ Representative variables (see `k8s/workloads/*.yaml` for the authoritative set):
 | `REQUIRED_SCOPES` | resource servers | scope gate |
 | `REQUIRED_ACR` | `mcp-ops`, `ops-api` | step-up requirement (`mfa`) |
 | `<DOWNSTREAM>_URL` / `_AUDIENCE` | exchange clients | the next hop's address and RFC 8693 exchange audience. **For MCP hops that is all:** the authorization server, token endpoint and scope are discovered (`mcp-oauth-client.ts`), and the MCP servers' URL is the agentgateway's PUBLIC name (`https://mcp-gateway.localtest.me/<tier>/mcp`) because RFC 9728 requires the PRM `resource` to equal the URL the client calls. `_SCOPE` survives only on the non-MCP hops (`SPECIALIST_SCOPE`, `LLM_GATEWAY_SCOPE`). |
+| `MCP_DISCOVERY_TTL_SECONDS` | the two agents | reuse window for MCP authorization discovery (401 → RFC 9728 → RFC 8414). Code default 600; the manifests set `0` so every question shows the chain in the trace and OBO log. |
 | `AGENT_CLIENT_ID` + `CURITY_AGENT_PRIVATE_KEY_PEM` | the two agents | CIMD client_id URL + RSA key for `private_key_jwt` |
 | `*_CLIENT_ID` + secret | MCP exchange clients | `client_secret_basic` credentials |
 | `LLM_GATEWAY_URL` / `_AUDIENCE` / `_SCOPE` | the two agents | agentgateway's `/llm` route + the `aud=llm-gateway`/`scope=llm:invoke` exchange. The agents have no `LLM_PROVIDER`/`LLM_MODEL` — the gateway pins the model and the vendor is a gateway-side choice ([`docs/llm-providers.md`](llm-providers.md)) — and hold no vendor credential. |

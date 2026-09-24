@@ -20,6 +20,7 @@ export function buildObservabilityAuthProvider(opts: {
     // The MCP server names an AS; this agent only ever exchanges with the issuer it
     // already trusts for inbound tokens. Anything else fails closed at discovery.
     allowedAuthorizationServers: [opts.cfg.curityIssuer],
+    discoveryTtlMs: opts.cfg.mcpDiscoveryTtlMs,
     exchange: ({ tokenEndpoint, scope, forced }) =>
       obtainMcpToken({
         cfg: opts.cfg,
