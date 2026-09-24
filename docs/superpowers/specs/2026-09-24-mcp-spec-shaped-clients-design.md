@@ -130,6 +130,12 @@ export function createMcpAuthProvider(opts: {
 4. Validate the PRM: `resource`, after stripping one trailing slash, must equal
    `serverUrl` after the same normalization. Mismatch → `resource_mismatch`.
    `authorization_servers` must be a non-empty array; the first entry is used.
+   **Trust boundary (added in review):** the entry must be `https` and, when the
+   caller supplies `allowedAuthorizationServers`, must be one of them (trailing
+   slash ignored) → else `discovery_failed`. Both agents pass
+   `[cfg.curityIssuer]`: the MCP server may *name* an AS, but only the issuer the
+   agent already trusts for inbound tokens may receive the user's delegated token.
+   The `resource_metadata` URL taken from the challenge must be `https` too.
 5. Call `discoverAuthorizationServerMetadata(authorizationServer)`. The SDK
    tries the RFC 8414 path-insertion form first, then OIDC discovery, and
    rejects a document whose `issuer` does not echo the URL. `undefined` (no
@@ -224,7 +230,10 @@ at the same point in the flow (so the specialist's ops exchange still runs
 before the `acr` pre-check and before any toolset opens), then
 `openMcpToolset({ authProvider: provider, ... })`. The copilot's existing
 "invalidate cache and retry once on MCP 401" logic is removed; the provider's
-`onUnauthorized` covers it.
+`onUnauthorized` covers it — `McpExchangeInput.forced` is `true` on that path and
+`obtainMcpToken` maps it to `bypassCache`, which invalidates its 60 s cache entry
+before exchanging (added in review: without it the retry re-sent the cached,
+failing token).
 
 **Specialist step-up.** `stepUpFromMetadata` takes the discovery for the ops
 server (`provider.discovery()`, or a fresh `discoverMcpAuthorization` if the

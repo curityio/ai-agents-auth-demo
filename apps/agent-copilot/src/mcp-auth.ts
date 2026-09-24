@@ -17,7 +17,10 @@ export function buildObservabilityAuthProvider(opts: {
   return createMcpAuthProvider({
     serverUrl: opts.cfg.mcpObservabilityUrl,
     service: 'agent-copilot',
-    exchange: ({ tokenEndpoint, scope }) =>
+    // The MCP server names an AS; this agent only ever exchanges with the issuer it
+    // already trusts for inbound tokens. Anything else fails closed at discovery.
+    allowedAuthorizationServers: [opts.cfg.curityIssuer],
+    exchange: ({ tokenEndpoint, scope, forced }) =>
       obtainMcpToken({
         cfg: opts.cfg,
         subjectToken: opts.subjectToken,
@@ -25,6 +28,8 @@ export function buildObservabilityAuthProvider(opts: {
         subjectAcr: opts.subjectAcr,
         tokenEndpoint,
         scope,
+        // A 401 seen by the transport means the cached token is bad: re-mint.
+        bypassCache: forced,
         ...(opts.recordLastExchange === undefined ? {} : { recordLastExchange: opts.recordLastExchange }),
       }),
   });

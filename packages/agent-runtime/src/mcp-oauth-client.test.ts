@@ -112,6 +112,18 @@ describe('discoverMcpAuthorization', () => {
     expect(calls[1]).toBe(`GET ${PRM_URL}`);
   });
 
+  it('refuses a plain-http resource_metadata URL from the challenge without fetching it (RFC 9728 §3 requires https)', async () => {
+    const HTTP_PRM = 'http://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp';
+    const { f, calls } = fakeFetch({
+      ...HAPPY,
+      [`POST ${SERVER}`]: { status: 401, headers: { 'www-authenticate': `Bearer resource_metadata="${HTTP_PRM}"` } },
+      [`GET ${HTTP_PRM}`]: { body: PRM },
+    });
+    await expect(discoverMcpAuthorization(SERVER, { fetchImpl: f }))
+      .rejects.toThrowError(expect.objectContaining({ code: 'discovery_failed' }));
+    expect(calls).not.toContain(`GET ${HTTP_PRM}`);
+  });
+
   it('refuses when the probe is not 401 (a server that does not require auth is not one we hand a token to)', async () => {
     const { f } = fakeFetch({ ...HAPPY, [`POST ${SERVER}`]: { status: 200, body: {} } });
     await expect(discoverMcpAuthorization(SERVER, { fetchImpl: f }))
@@ -268,5 +280,40 @@ describe('createMcpAuthProvider', () => {
       spy.mockRestore();
     }
     expect(logs.some((l) => l.includes('DENY'))).toBe(false);
+  });
+
+  it('tells the exchange when it is FORCED (onUnauthorized) so a caller-side token cache is bypassed; acquire() is not forced', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const exchange = vi.fn().mockResolvedValueOnce('TOKEN-1').mockResolvedValueOnce('TOKEN-2');
+    const p = createMcpAuthProvider({ serverUrl: SERVER, service: 's', exchange, fetchImpl: f });
+    await p.acquire();
+    expect(exchange).toHaveBeenLastCalledWith(expect.objectContaining({ forced: false }));
+    const response = new Response(null, {
+      status: 401,
+      headers: { 'www-authenticate': `Bearer error="invalid_token", resource_metadata="${PRM_URL}"` },
+    });
+    await p.onUnauthorized({ response, serverUrl: new URL(SERVER), fetchFn: f });
+    expect(exchange).toHaveBeenLastCalledWith(expect.objectContaining({ forced: true }));
+  });
+
+  it('refuses an authorization server outside allowedAuthorizationServers (the MCP server must not choose where the user token goes)', async () => {
+    const { f, calls } = fakeFetch(HAPPY);
+    const exchange = vi.fn(async () => 'x');
+    const p = createMcpAuthProvider({
+      serverUrl: SERVER, service: 's', exchange, fetchImpl: f,
+      allowedAuthorizationServers: ['https://honest.example/oauth'],
+    });
+    await expect(p.acquire()).rejects.toThrowError(expect.objectContaining({ code: 'discovery_failed' }));
+    expect(calls).not.toContain(`GET ${AS_URL}`);
+    expect(exchange).not.toHaveBeenCalled();
+  });
+
+  it('accepts an allowed authorization server that differs only by a trailing slash', async () => {
+    const { f } = fakeFetch(HAPPY);
+    const p = createMcpAuthProvider({
+      serverUrl: SERVER, service: 's', exchange: async () => 'TOKEN-1', fetchImpl: f,
+      allowedAuthorizationServers: [`${ISSUER}/`],
+    });
+    expect(await p.acquire()).toBe('TOKEN-1');
   });
 });

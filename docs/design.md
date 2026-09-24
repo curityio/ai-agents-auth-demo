@@ -220,6 +220,18 @@ steps 2–5 with the cache bypassed and the received challenge as step 1, and
 retries once. An `insufficient_user_authentication` challenge is never exchanged
 or retried (the specialist's intercepting fetch normally converts it first).
 
+Trust boundary. The PRM names the authorization server, but the client decides
+which AS it will send the user's delegated token to: both agents pass
+`allowedAuthorizationServers: [cfg.curityIssuer]`, and a PRM naming anything else
+(or a non-https AS, or a non-https `resource_metadata` URL in the challenge) fails
+closed as `discovery_failed`. Without this a compromised or misconfigured MCP
+server could redirect the RFC 8693 exchange — subject token included — to a
+foreign AS that merely advertises CIMD support. The MCP spec explicitly allows a
+client to hold pre-configured AS knowledge; this is that knowledge, enforced.
+A forced re-acquire (the transport saw a 401) also carries `forced: true` into the
+agent's exchange helper, which the copilot maps to `bypassCache` so the retry
+mints a fresh token rather than re-sending the cached one that just failed.
+
 What is not discovered, and why: the RFC 8693 `audience` (RFC 8707 `resource` is
 not yet accepted by Curity; the logical name is its stand-in), and the grant (the
 agents hold a delegated user token; the spec's authorization-code flow needs a

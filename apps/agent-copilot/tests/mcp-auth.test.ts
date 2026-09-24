@@ -18,7 +18,10 @@ vi.mock('@ai-agents-demo/agent-runtime', async (importOriginal) => {
 import { buildObservabilityAuthProvider } from '../src/mcp-auth.js';
 import type { Config } from '../src/config.js';
 
-const cfg = { mcpObservabilityUrl: 'https://mcp-gateway.localtest.me/observability/mcp' } as unknown as Config;
+const cfg = {
+  mcpObservabilityUrl: 'https://mcp-gateway.localtest.me/observability/mcp',
+  curityIssuer: 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
+} as unknown as Config;
 
 describe('buildObservabilityAuthProvider', () => {
   it('targets the configured server URL and exchanges with the DISCOVERED endpoint and scope', async () => {
@@ -30,6 +33,8 @@ describe('buildObservabilityAuthProvider', () => {
     };
     expect(p.serverUrl).toBe(cfg.mcpObservabilityUrl);
     expect(p.service).toBe('agent-copilot');
+    // The discovered AS must be the one this agent already trusts for inbound tokens.
+    expect((p as unknown as { allowedAuthorizationServers: string[] }).allowedAuthorizationServers).toEqual([cfg.curityIssuer]);
     await p.exchange({ tokenEndpoint: 'https://as/token', scope: 'obs:read' });
     expect(obtainMcpToken).toHaveBeenCalledWith(
       expect.objectContaining({ tokenEndpoint: 'https://as/token', scope: 'obs:read', subjectSub: 'alice', subjectAcr: 'mfa' }),
@@ -43,5 +48,16 @@ describe('buildObservabilityAuthProvider', () => {
     }) as unknown as { exchange: (i: { tokenEndpoint: string; scope: string }) => Promise<string> };
     await p.exchange({ tokenEndpoint: 'https://as/token', scope: 'obs:read' });
     expect(obtainMcpToken).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+  });
+
+  it('a FORCED exchange (the transport saw a 401) bypasses the 60 s token cache; a normal one does not', async () => {
+    createMcpAuthProvider.mockImplementation((o: { exchange: (i: unknown) => Promise<string> }) => o);
+    const p = buildObservabilityAuthProvider({ cfg, subjectToken: 'U', subjectSub: 'alice', subjectAcr: 'mfa' }) as unknown as {
+      exchange: (i: { tokenEndpoint: string; scope: string; forced: boolean }) => Promise<string>;
+    };
+    await p.exchange({ tokenEndpoint: 'https://as/token', scope: 'obs:read', forced: false });
+    expect(obtainMcpToken).toHaveBeenLastCalledWith(expect.objectContaining({ bypassCache: false }));
+    await p.exchange({ tokenEndpoint: 'https://as/token', scope: 'obs:read', forced: true });
+    expect(obtainMcpToken).toHaveBeenLastCalledWith(expect.objectContaining({ bypassCache: true }));
   });
 });

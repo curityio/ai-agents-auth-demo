@@ -71,6 +71,10 @@ export async function resolveAuthorizationServer(
   opts: { fetchImpl?: FetchLike; force?: boolean } = {},
 ): Promise<ResolvedAuthorizationServer> {
   const key = issuer.replace(/\/+$/, '');
+  if (!key.startsWith('https://')) {
+    // RFC 8414 §3 / OAuth 2.1: metadata is fetched over TLS or not at all.
+    throw new CurityAuthError(`authorization server ${key} is not https`, 'discovery_failed');
+  }
   const hit = cache.get(key);
   if (hit && !opts.force && hit.expiresAt > Date.now()) return hit.value;
 

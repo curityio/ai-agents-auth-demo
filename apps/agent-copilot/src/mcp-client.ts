@@ -71,10 +71,18 @@ export async function obtainMcpToken(opts: {
    * user never exercised.
    */
   recordLastExchange?: boolean;
+  /**
+   * Drop the cached token for this key and exchange afresh. Set by the auth
+   * provider when the transport reported a 401 (`McpExchangeInput.forced`): the
+   * cached token is what just failed, so serving it again would make the SDK's
+   * single retry fail identically.
+   */
+  bypassCache?: boolean;
 }): Promise<string> {
   const { cfg, subjectToken, subjectSub, subjectAcr, tokenEndpoint, scope } = opts;
   const record = opts.recordLastExchange !== false;
   const key = { sub: subjectSub, scope, audience: cfg.mcpObservabilityAudience, acr: subjectAcr };
+  if (opts.bypassCache) exchangeCache.invalidate(key);
   const cached = exchangeCache.get(key);
   if (cached) {
     // Refresh the "last used" marker even on a cache hit so the OBO-chain

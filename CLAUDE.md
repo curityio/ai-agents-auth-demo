@@ -1010,6 +1010,17 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       the configured `audience` is the placeholder for it. Switching audiences to
       resource URIs touches the Curity policy, the gateway `audiences`, the shim and
       every smoke script — a separate change.
+    - **The AS is discovered but NOT trusted blindly.** Both agents pass
+      `allowedAuthorizationServers: [cfg.curityIssuer]`; a PRM naming any other AS, a
+      non-https AS, or a non-https `resource_metadata` URL fails closed
+      (`discovery_failed`). Otherwise a compromised gateway could redirect the exchange —
+      user token included — to a foreign AS. Found in review; pinned in
+      `mcp-oauth-client.test.ts` and both agents' `mcp-auth.test.ts`.
+    - **A forced re-acquire must bypass caller-side token caches.** `McpExchangeInput.forced`
+      is true on the `onUnauthorized` path; the copilot maps it to `obtainMcpToken({bypassCache})`,
+      which invalidates its 60 s cache entry first. Without that the SDK's single retry
+      re-sent the cached token that had just failed (found in review; pinned by
+      `apps/agent-copilot/tests/mcp-client.test.ts`).
     - **The gateway probe expects exactly 401.** A route that answers 200 unauthenticated
       is refused (`discovery_failed`), on purpose: a server that does not require a
       token is not one to hand a token to.

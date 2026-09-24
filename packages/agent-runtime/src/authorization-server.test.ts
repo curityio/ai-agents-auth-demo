@@ -91,6 +91,13 @@ describe('resolveAuthorizationServer', () => {
       .rejects.toThrowError(expect.objectContaining({ code: 'discovery_failed' }));
   });
 
+  it('refuses a plain-http issuer without fetching anything', async () => {
+    const { f, calls } = fakeFetch({});
+    await expect(resolveAuthorizationServer('http://curity.curity.svc:8443/oauth/v2/oauth-anonymous', { fetchImpl: f }))
+      .rejects.toThrowError(expect.objectContaining({ code: 'discovery_failed' }));
+    expect(calls).toHaveLength(0);
+  });
+
   it('fails discovery_failed when no well-known document exists', async () => {
     const { f } = fakeFetch({});
     const err = await resolveAuthorizationServer(ISSUER, { fetchImpl: f }).catch((e) => e);

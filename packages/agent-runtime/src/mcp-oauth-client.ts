@@ -134,7 +134,20 @@ export function wellKnownPrmUrls(serverUrl: string): string[] {
 
 export async function discoverMcpAuthorization(
   serverUrl: string,
-  opts: { fetchImpl?: FetchLike; challenge?: Response; force?: boolean; service?: string } = {},
+  opts: {
+    fetchImpl?: FetchLike;
+    challenge?: Response;
+    force?: boolean;
+    service?: string;
+    /**
+     * Trust boundary. The PRM names the AS, but the CLIENT decides which AS it is
+     * willing to send the user's delegated token to. When set, `authorization_servers[0]`
+     * must be one of these (trailing slash ignored) or discovery fails closed — a
+     * compromised or misconfigured MCP server must not be able to redirect the
+     * exchange. The MCP spec allows pre-configured AS knowledge; this is that.
+     */
+    allowedAuthorizationServers?: string[];
+  } = {},
 ): Promise<McpAuthDiscovery> {
   const key = normalizeUrl(serverUrl);
   const hit = discoveryCache.get(key);
@@ -148,7 +161,15 @@ export async function discoverMcpAuthorization(
   const { resourceMetadataUrl: fromHeader, scope: challengeScope } = extractWWWAuthenticateParams(challenge);
   await challenge.body?.cancel().catch(() => undefined);
 
-  // 2b. The PRM: header URL, else well-known candidates in order.
+  // 2b. The PRM: header URL, else well-known candidates in order. RFC 9728 §3
+  // requires the metadata URL to be https; a plain-http pointer is refused
+  // before it is fetched (it is exactly where a substitution would happen).
+  if (fromHeader && fromHeader.protocol !== 'https:') {
+    throw new CurityAuthError(
+      `resource_metadata in the challenge from ${key} is not https: ${fromHeader.href}`,
+      'discovery_failed',
+    );
+  }
   const candidates = fromHeader ? [fromHeader.href] : wellKnownPrmUrls(key);
   let prm: ProtectedResourceMetadata | undefined;
   let prmUrl = '';
@@ -180,6 +201,22 @@ export async function discoverMcpAuthorization(
   const authorizationServer = prm.authorization_servers?.[0];
   if (!authorizationServer) {
     throw new CurityAuthError(`protected resource metadata at ${prmUrl} lists no authorization_servers`, 'discovery_failed');
+  }
+  if (!authorizationServer.startsWith('https://')) {
+    throw new CurityAuthError(
+      `protected resource metadata at ${prmUrl} names a non-https authorization server: ${authorizationServer}`,
+      'discovery_failed',
+    );
+  }
+  if (opts.allowedAuthorizationServers) {
+    const allowed = opts.allowedAuthorizationServers.map(normalizeUrl);
+    if (!allowed.includes(normalizeUrl(authorizationServer))) {
+      throw new CurityAuthError(
+        `protected resource metadata at ${prmUrl} names authorization server ${authorizationServer}, ` +
+          `which this client does not trust (allowed: ${allowed.join(', ')})`,
+        'discovery_failed',
+      );
+    }
   }
 
   // 3. AS metadata (issuer echo, CIMD flag, HTTPS token endpoint).
@@ -242,6 +279,13 @@ export interface McpExchangeInput {
   tokenEndpoint: string;
   scope: string;
   discovery: McpAuthDiscovery;
+  /**
+   * True when the transport reported a 401 and the provider is re-acquiring. An
+   * exchange helper with its own token cache MUST bypass (and invalidate) it on
+   * a forced call — otherwise the SDK's single retry re-sends the token that just
+   * failed and the 401 seam is a no-op.
+   */
+  forced: boolean;
 }
 
 /**
@@ -270,6 +314,8 @@ export function createMcpAuthProvider(opts: {
   service: string;
   exchange: (input: McpExchangeInput) => Promise<string>;
   fetchImpl?: FetchLike;
+  /** See `discoverMcpAuthorization`: the ASes this client will exchange with. */
+  allowedAuthorizationServers?: string[];
 }): McpAuthProvider {
   let token: string | undefined;
   let discovery: McpAuthDiscovery | undefined;
@@ -278,6 +324,9 @@ export function createMcpAuthProvider(opts: {
     try {
       discovery = await discoverMcpAuthorization(opts.serverUrl, {
         ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        ...(opts.allowedAuthorizationServers
+          ? { allowedAuthorizationServers: opts.allowedAuthorizationServers }
+          : {}),
         service: opts.service,
         ...o,
       });
@@ -300,7 +349,7 @@ export function createMcpAuthProvider(opts: {
 
   const acquire = async (o: { force?: boolean; challenge?: Response } = {}): Promise<string> => {
     const d = await discover(o);
-    token = await opts.exchange({ tokenEndpoint: d.tokenEndpoint, scope: d.scope, discovery: d });
+    token = await opts.exchange({ tokenEndpoint: d.tokenEndpoint, scope: d.scope, discovery: d, forced: o.force === true });
     return token;
   };
 
