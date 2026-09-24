@@ -102,16 +102,6 @@ data:
                     <transformation-procedure>add-roles</transformation-procedure>
                   </script-transformer>
                 </authentication-action>
-                <authentication-action>
-                  <id>mfa-totp</id>
-                  <multi-factor-condition xmlns="https://curity.se/ns/ext-conf/multi-factor-condition">
-                    <attribute-enable-condition>
-                      <second-factor>
-                        <id>totp-authn</id>
-                      </second-factor>
-                    </attribute-enable-condition>
-                  </multi-factor-condition>
-                </authentication-action>
               </authentication-actions>
               <authenticators>
                 <authenticator>
@@ -119,7 +109,6 @@ data:
                   <authentication-context-class-reference>html-form</authentication-context-class-reference>
                   <authentication-actions>
                     <login>add-roles</login>
-                    <login>mfa-totp</login>
                   </authentication-actions>
                   <html-form xmlns="https://curity.se/ns/conf/authenticators/html-form">
                     <account-manager>default-account-manager</account-manager>

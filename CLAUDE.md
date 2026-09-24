@@ -997,8 +997,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       every privileged action asks for a code even seconds after the last one. The profile
       default (3600 s) stays on html-auth so the previous-authenticator can be satisfied for
       an hour after login; after that the step-up shows password then TOTP.
-    - The pre-existing `mfa-totp` multi-factor-condition action on `html-auth` is inert: its
-      `attribute-enable-condition` keys on a `requireSecondFactor` attribute nothing sets.
+    - **`html-auth` carries no second-factor authentication action** (a `multi-factor-condition`
+      action `mfa-totp` used to sit there, inert, and was removed 2026-09-24). Don't add one
+      to "force MFA for some users": an action-driven second factor leaves `acr=html-form`
+      on the token, so the `ops:write` TIA strips the scope and the step-up fires anyway.
     - Apply config changes to a running Curity with `idsh` (fact #33). In `configure` mode the
       profile list needs its TYPE key too: `delete profiles profile token-service oauth-service
       settings …` — `show` accepts the id alone, `delete` does not (`"settings" is not a valid

@@ -33,8 +33,9 @@ describe('PERSONAS', () => {
     for (const p of PERSONAS) expect(p.roles, p.username).toEqual(fromCurity[p.username]);
   });
   it('nobody is forced through a second factor at login — MFA is the RFC 9470 step-up, once', () => {
-    // A forced second factor via the mfa-totp ACTION leaves acr=html-form on the
-    // token, so the step-up fires anyway and the user types a TOTP twice.
+    // A second factor forced by an authentication ACTION (html-auth carries none)
+    // leaves acr=html-form on the token, so the step-up fires anyway and the user
+    // types a TOTP twice.
     const src = readFileSync(
       resolve(__dirname, '../../../k8s/curity/procedures/add-roles.js'),
       'utf8',
