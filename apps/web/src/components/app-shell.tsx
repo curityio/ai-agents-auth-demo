@@ -143,15 +143,10 @@ export function AppShell({
             <div className="relative">
               {/* On wide screens the copy sits in the stage's empty top-left quadrant. */}
               <div className="lg:absolute lg:left-0 lg:top-0 lg:z-10 lg:max-w-[580px]">
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/15 px-3 py-1 text-xs font-medium text-white backdrop-blur">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-success shadow-[0_0_8px_2px_hsl(var(--success)/0.7)]" />
-                  </span>
-                  Live demo
-                </span>
-
-                <h1 className="mt-5 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl lg:mt-3 lg:text-[2rem]">
+                {/* No status pill above the headline: a pulsing green dot reads as
+                    "service up", which this page never checks. The headline says
+                    what this is. */}
+                <h1 className="max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-[2rem]">
                   Secure AI agent
                   <br />
                   authorization,{' '}

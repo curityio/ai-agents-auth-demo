@@ -99,6 +99,10 @@ describe('AppShell hero', () => {
       <div />
     </AppShell>,
   );
+  it('carries no status pill: nothing here checks liveness, so nothing claims it', () => {
+    expect(html).not.toMatch(/Live demo/);
+    expect(html).not.toMatch(/animate-ping/);
+  });
   it('overlays the copy on the stage on wide screens and hides the stage below', () => {
     expect(html).toMatch(/hidden lg:block[^>]*>\s*<div[^>]*data-hero-stage/);
     expect(html).toMatch(/lg:absolute[^"]*lg:max-w-/);
