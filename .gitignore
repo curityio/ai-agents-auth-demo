@@ -34,3 +34,6 @@ pnpm-debug.log*
 .gen/
 
 docs/explainers/
+
+# presenter runbook — kept locally, not published
+docs/demo.md

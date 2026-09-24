@@ -1,7 +1,7 @@
 /**
  * Deep link from a trace id to Grafana Explore on the Tempo datasource — the
  * one-click proof of the hero's "OpenTelemetry tracing" claim. Tempo keeps
- * traces for 30 minutes (docs/demo.md), so the link goes stale after that.
+ * traces for 30 minutes, so the link goes stale after that.
  */
 export const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL ?? 'https://grafana.localtest.me';
 

@@ -813,7 +813,7 @@ Representative variables (see `k8s/workloads/*.yaml` for the authoritative set):
 **Secrets are never inline in workload manifests.** `kubectl apply` is idempotent
 by desired state, so re-applying a Deployment that embeds a Secret would clobber
 real values. All credentials are seeded out-of-band via `make seed-*`
-(see [`demo.md`](demo.md)) — including the configured LLM provider's API key,
+(see the [README](../README.md)) — including the configured LLM provider's API key,
 which lives solely in the `agentgateway-llm` Secret (`make seed-llm-secret`,
 folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)).
 
@@ -970,4 +970,4 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
 ## See also
 
 - [`architecture.md`](architecture.md) — system overview, topology, trust model.
-- [`demo.md`](demo.md) — runbook + presenter script.
+- [`README.md`](../README.md) — prerequisites, quick start, troubleshooting.

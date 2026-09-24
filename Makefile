@@ -3,13 +3,13 @@
 # Single authoritative entry point for the whole environment lifecycle:
 #
 #   make demo        # stand up the full platform on a fresh KIND cluster
-#   <seed Curity + secrets — see docs/demo.md>
+#                    # (seeds the license, demo users and every workload secret)
 #   make images apply
 #   make status      # health-check everything
 #   make smoke       # run the auth/authz smoke tests
 #   make clean       # tear it all down
 #
-# See docs/demo.md for the end-to-end runbook and docs/architecture.md for the
+# See README.md for setup and troubleshooting and docs/architecture.md for the
 # system design. `make help` lists every target.
 
 SHELL := /bin/bash
@@ -626,7 +626,7 @@ demo: tools-check demo-inputs kind-up certs platform seed-secrets images apply #
 	@echo "    (Optional) To trust the CA and remove the warnings: make trust-ca  (undo: mkcert -uninstall)"
 	@$(MAKE) --no-print-directory urls
 	@$(MAKE) --no-print-directory users
-	@echo "    Full runbook: docs/demo.md"
+	@echo "    Setup + troubleshooting: README.md · system design: docs/architecture.md"
 	@echo ""
 
 .PHONY: urls

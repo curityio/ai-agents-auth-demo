@@ -3,8 +3,8 @@
 This document describes the **as-built** system: an end-to-end demonstration of
 authentication and authorization for AI agents running on Kubernetes. It is the
 canonical reference for *what exists and how the pieces fit together*. For
-module-level implementation detail see [`design.md`](design.md); to run and
-present the system see [`demo.md`](demo.md).
+module-level implementation detail see [`design.md`](design.md); to run the
+system see the [README](../README.md).
 
 > The system was built up across pedagogical phases (1 → 6). Those phase notes
 > live in [`archive/phases/`](archive/phases/) as a historical build-log; this
@@ -576,5 +576,5 @@ produced no output.
 ## See also
 
 - [`design.md`](design.md) — module-level implementation reference.
-- [`demo.md`](demo.md) — the end-to-end runbook and presenter script.
+- [`README.md`](../README.md) — prerequisites, quick start, troubleshooting.
 - [`curity-seed.md`](curity-seed.md) — offline Curity setup checklist.

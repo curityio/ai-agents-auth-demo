@@ -33,7 +33,7 @@
 #      - For `ops` you MUST complete the MFA step-up (the token needs acr=mfa,
 #        and Alice must have role=sre). For `obs`, any login works.
 #   2. With AUTH_DEBUG=true on the web pod, the access token is logged by
-#      /api/whoami (see docs/demo.md). Copy it.
+#      /api/whoami. Copy it.
 #   3. export SMOKE_SUBJECT_TOKEN='eyJ...'
 #
 # Pre-reqs: kubectl context on the demo cluster; the agent Deployments Ready;

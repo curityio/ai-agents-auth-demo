@@ -124,8 +124,6 @@ make users
 open https://app.localtest.me
 ```
 
-The complete runbook and presenter script is in [`docs/demo.md`](docs/demo.md).
-
 Once signed in, the app makes the identity plumbing visible on screen: the
 header pill shows the current token's `acr` and counts down its 10-minute
 lifetime; the Result card links each answer to its OpenTelemetry trace in
@@ -189,14 +187,13 @@ Makefile
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System overview, topology, the two OBO chains, trust model, security boundaries. |
 | [`docs/design.md`](docs/design.md) | Module breakdown, interfaces, workflows, configuration & deployment model, decisions. |
-| [`docs/demo.md`](docs/demo.md) | storyline, step-by-step execution, observability walkthrough, troubleshooting. |
 | [`docs/curity-seed.md`](docs/curity-seed.md) | Offline Curity setup checklist (clients, scopes, users, procedure). |
 | [`docs/llm-providers.md`](docs/llm-providers.md) | Switching the LLM vendor behind agentgateway's `/llm` route (OpenAI, Anthropic, Gemini, Azure OpenAI). |
 
 ## Troubleshooting
 
-See the table in [`docs/demo.md`](docs/demo.md#8-troubleshooting). The two most
-common gotchas: re-run `make routing` after recreating the cluster, and if the
+The two most common gotchas: re-run `make routing` after recreating the cluster
+(`make routing-check`, also part of `make status`, reports drift), and if the
 first read on a fresh cluster fails with `401 Jwt verification fails`, run
 `make jwks-heal` (the apis-tier waypoint cached a placeholder JWKS while Curity
 was still booting; `make jwks-check` confirms it). Curity users survive a

@@ -48,7 +48,7 @@ describe('detectIntent — privileged verbs', () => {
     expect(detectIntent('roll out v1.3 to api-gateway').kind).toBe('restart');
   });
   it('routes the image-change phrasings a presenter is likely to use', () => {
-    // demo.md Act 4 has carol ask to "change its image"; a phrasing the router
+    // The carol storyline has her ask to "change its image"; a phrasing the router
     // does not recognise silently takes the READ path and the copilot just says
     // it cannot — so the presenter's vocabulary is pinned here.
     for (const msg of [

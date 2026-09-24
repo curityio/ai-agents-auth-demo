@@ -2,8 +2,8 @@
 
 Condensed guidance for this repository. `CLAUDE.md` at the repo root is the full,
 authoritative version (architecture + 34 hard-won facts); read it before proposing
-structural changes, together with `docs/architecture.md`, `docs/design.md` and
-`docs/demo.md`. The "Phase N" build-log framing is historical and archived under
+structural changes, together with `docs/architecture.md` and `docs/design.md`.
+The "Phase N" build-log framing is historical and archived under
 `docs/archive/` — don't reintroduce it into code or current docs.
 
 ## Project overview
@@ -97,7 +97,7 @@ make help            # everything else
 
 **First-time setup:** `./license.json` → `make demo` → create the alice/carol/bob
 accounts (+ TOTP) through the login flow per `docs/curity-seed.md` → open
-`https://app.localtest.me`. Runbook: `docs/demo.md`.
+`https://app.localtest.me`. Setup + troubleshooting: `README.md`.
 
 ## Key conventions
 
@@ -153,6 +153,6 @@ accounts (+ TOTP) through the login flow per `docs/curity-seed.md` → open
 ## Key docs
 
 - `CLAUDE.md` — architecture + all hard-won facts (authoritative)
-- `docs/architecture.md` · `docs/design.md` · `docs/demo.md` — the canonical trio
+- `docs/architecture.md` · `docs/design.md` — the canonical docs; `README.md` — setup
 - `docs/curity-seed.md` — offline Curity checklist; `docs/llm-providers.md` — LLM vendor switch
 - `docs/archive/` — historical phase notes and the original implementation plan
