@@ -132,8 +132,13 @@ done
 grep -q "create secret generic curity-demo-users" "$TMP/kubectl.log" || fail "Secret curity-demo-users not created"
 grep -q -- "--from-env-file=$ENVF" "$TMP/kubectl.log" || fail "Secret must be built from the env file"
 grep -q -- "-n curity " "$TMP/kubectl.log" || fail "Secret must land in the curity namespace"
+# The seed path must NOT print the persona cards: `make demo` runs it inside
+# seed-secrets and then ends with `make users`, so printing here showed the QR codes
+# twice — once mid-install where they scroll away. It points at `make users` instead.
 alice_secret="$(sed -n 's/^ALICE_TOTP_SECRET=//p' "$ENVF")"
-grep -q "otpauth://totp/.*alice.*secret=$alice_secret" "$TMP/host.out" || fail "must print alice's otpauth URI for the authenticator app"
+! grep -q "otpauth://" "$TMP/host.out" || fail "the seed path must not print otpauth URIs (cards belong to 'make users' at the end of 'make demo')"
+! grep -q "$alice_secret" "$TMP/host.out" || fail "the seed path must not print TOTP secrets"
+grep -q "make users" "$TMP/host.out" || fail "the seed path must tell the presenter that 'make users' prints the cards"
 
 cp "$ENVF" "$TMP/first.env"
 printf 'CAROL_PASSWORD=Custom9\n' >> "$ENVF"; sed -i.bak '/^CAROL_PASSWORD=Password1$/d' "$ENVF"; rm -f "$ENVF.bak"
@@ -143,9 +148,9 @@ PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl2.log" DEMO_USERS_ENV_FILE="$
 diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "an existing .demo-users.env must be reused verbatim (secrets must survive rebuilds)"
 
 # ── 5. --print re-shows the personas for the presenter WITHOUT seeding anything ──
-# `make demo` ends with it (via `make users`): the URIs printed during seed-secrets
-# have long scrolled away by then, and the presenter needs username + password +
-# otpauth (QR) in one place to enrol the authenticator app.
+# `make demo` ends with it (via `make users`) — the ONLY place the cards are printed:
+# the presenter needs username + password + otpauth (QR) in one place, once, to enrol
+# the authenticator app.
 : > "$TMP/kubectl3.log"
 PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl3.log" DEMO_USERS_ENV_FILE="$ENVF" \
   bash "$HOST" --print > "$TMP/print.out" || fail "--print exited non-zero"

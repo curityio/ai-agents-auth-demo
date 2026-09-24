@@ -6,14 +6,14 @@
 # The inputs live in a gitignored .demo-users.env. It is generated ONCE — the passwords
 # default to the demo value Password1 (edit the file to change them) and each persona
 # gets a random TOTP secret — and then reused verbatim on every later run. That is the
-# point: add the three otpauth URIs printed below to your authenticator app once, and
+# point: add the three otpauth URIs (`make users`) to your authenticator app once, and
 # they stay valid across `make clean`, `make demo` and every Curity restart, because the
 # seed re-inserts the same secrets.
 #
-#   --print   Only re-print the persona cards (username, role, password, otpauth URI +
-#             QR) from the existing env file — no kubectl, no file writes. `make users`
-#             wraps it and `make demo` ends with it, because the URIs printed while
-#             seeding have scrolled off the screen by the time the URLs appear.
+#   --print   Print the persona cards (username, role, password, otpauth URI + QR) from
+#             the existing env file — no kubectl, no file writes. `make users` wraps it
+#             and `make demo` ends with it. The seed path itself prints only a pointer
+#             to it: printing the cards from both places showed them twice per install.
 set -euo pipefail
 
 ENV_FILE="${DEMO_USERS_ENV_FILE:-.demo-users.env}"
@@ -113,7 +113,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
       echo "${U}_TOTP_SECRET=$(new_totp_secret)"
     done
   } > "$ENV_FILE"
-  echo "==> Wrote $ENV_FILE (new TOTP secrets — enrol them in your authenticator once, see below)"
+  echo "==> Wrote $ENV_FILE (new TOTP secrets — enrol them in your authenticator once via 'make users')"
 else
   echo "==> Reusing $ENV_FILE"
 fi
@@ -123,4 +123,8 @@ kubectl -n "$NS" create secret generic curity-demo-users \
   --from-env-file="$ENV_FILE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-print_personas
+# Deliberately NOT print_personas: `make demo` runs this inside seed-secrets and
+# ends with `make users`, so printing here showed the cards twice — the first copy
+# mid-install, where it scrolls away. One line, pointing at the one place they print.
+echo "==> Seeded ${USERS[*]} into the curity-demo-users Secret (source: $ENV_FILE)."
+echo "    Credentials + TOTP QR codes: 'make users' (printed automatically at the end of 'make demo')."

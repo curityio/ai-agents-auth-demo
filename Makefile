@@ -410,7 +410,7 @@ seed-secrets: seed-license seed-users seed-web-secret seed-llm-secret seed-agent
 	@echo "==> License + demo users + all workload secrets seeded."
 
 .PHONY: seed-users
-seed-users: ## Seed alice/bob/carol (+ stable TOTP secrets) — writes .demo-users.env once, creates the curity-demo-users Secret, prints the otpauth URIs
+seed-users: ## Seed alice/bob/carol (+ stable TOTP secrets) — writes .demo-users.env once, creates the curity-demo-users Secret ('make users' prints the cards)
 	@NS_CURITY=$(NS_CURITY) bash scripts/seed-curity-users.sh; \
 	  $(call restart_if_exists,$(NS_CURITY),curity)
 

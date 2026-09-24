@@ -181,7 +181,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     from the `curity-demo-users` Secret, written by `make seed-users` (part of
     `seed-secrets`) from the gitignored `.demo-users.env`: passwords default to
     `Password1`, TOTP secrets are generated ONCE and then reused verbatim, so the
-    presenter adds the three printed otpauth URIs to an authenticator app once and
+    presenter adds the three otpauth URIs (`make users`, which ends `make demo`) to an authenticator app once and
     they survive `rollout restart`, `make clean` and `make demo` (verified: login +
     `acr=mfa` step-up after a restart with the same secret). Gotchas: an emptyDir is
     root-owned, so the pod sets `securityContext.fsGroup: 10000` (idsvr's gid) or
@@ -1077,7 +1077,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3 (host-side embed/render/smoke scripts)
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
-make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret; prints the otpauth URIs (fact #15)
+make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret (fact #15); the cards print via `make users` only
 make users           # re-print the persona cards (username/role/password/otpauth + QR) from .demo-users.env; `make demo` ends with it
 make configure-llm   # switch LLM provider after editing .demo.env
 make validate-llm    # validate all provider fragments against the pinned gateway image
