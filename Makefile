@@ -520,8 +520,12 @@ status: ## Show pod health across every demo namespace
 	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
 
 .PHONY: smoke
-smoke: routing-check smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
+smoke: routing-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
 	@echo "==> All smoke tests passed."
+
+.PHONY: smoke-mcp-discovery
+smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway + origin 401 challenges. Needs no token.
+	bash scripts/smoke-mcp-discovery.sh
 
 .PHONY: smoke-obo
 smoke-obo: ## Smoke: single OBO hop (user → copilot → mcp-observability). Needs SMOKE_SUBJECT_TOKEN.
