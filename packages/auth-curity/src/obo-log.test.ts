@@ -86,6 +86,20 @@ describe('formatOboLog', () => {
     expect(out).not.toContain('acr');
     expect(out).not.toContain('note');
   });
+  it('renders a DISCOVER block for an OAuth discovery run', () => {
+    const out = formatOboLog({
+      service: 'agent-specialist',
+      kind: 'DISCOVER',
+      headline: '→ https://mcp-gateway.localtest.me/ops/mcp',
+      fields: {
+        resource_metadata: 'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp',
+        'authorization srv': 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
+        'scope selected': 'ops:write (from scopes_supported)',
+      },
+    });
+    expect(out).toContain('┌─ INFO [agent-specialist] DISCOVER → https://mcp-gateway.localtest.me/ops/mcp');
+    expect(out).toContain('│  authorization srv : https://curity.localtest.me/oauth/v2/oauth-anonymous');
+  });
 });
 
 describe('traceFields', () => {

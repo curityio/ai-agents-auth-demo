@@ -14,12 +14,14 @@ const DISABLED = process.env.OBO_LOG === 'off';
 
 /**
  * RECEIVE (inbound), EXCHANGE (token exchange), CALL (next hop), DENY (an
- * authorization refusal). DENY exists because the success paths were logged and
+ * authorization refusal), DISCOVER (an OAuth discovery run: 401 challenge →
+ * RFC 9728 → RFC 8414). DENY exists because the success paths were logged and
  * the refusals were not — which is backwards for a demo about authorization:
  * a denied hop would simply stop appearing in the logs, indistinguishable from
- * a crash.
+ * a crash. DISCOVER is emitted once per cold discovery so the log shows where a
+ * client learned its authorization server from; cache hits are silent.
  */
-export type OboKind = 'RECEIVE' | 'EXCHANGE' | 'CALL' | 'DENY';
+export type OboKind = 'RECEIVE' | 'EXCHANGE' | 'CALL' | 'DENY' | 'DISCOVER';
 
 /** W3C trace-context ids used to join this line to the rest of the request. */
 export interface OboTrace {
