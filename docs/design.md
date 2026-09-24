@@ -270,7 +270,8 @@ truthful, each learned from a bug:
   request, so they take `recordLastExchange: false`; otherwise pressing *Check
   tools* made the chain show a specialist branch that never ran.
 - **MCP rows come from the tool call, not the walk.** The `/last-token` request
-  itself travels through agentgateway and the shim mints a fresh token for it. The
+  itself travels through agentgateway and the shim mints a fresh token for it
+  (unless its 60 s exchange cache still holds the tool call's, see §3.5). The
   MCP servers therefore build their two rows (inbound token, downstream token) from
   the slot captured during the last real tool call, and contribute nothing before
   one has run.
@@ -507,8 +508,14 @@ MCP servers, replacing the former Istio ambient waypoint.
   allow-list (never caller-supplied) — reusing `@ai-agents-demo/auth-curity`
   `exchangeToken` + `@ai-agents-demo/spiffe`. It returns a token-endpoint-shaped JSON
   body; the gateway swaps the returned narrowed token onto the request and forwards
-  to the origin MCP server. **The shim exists because agentgateway's CEL cannot read
-  the rotating SVID file**, so the exchange is done in a co-located sidecar. It is
+  to the origin MCP server. The shim remembers a granted exchange for 60 s per
+  (SHA-256 of the caller token, audience) — `exchange-cache.ts`,
+  `EXCHANGE_CACHE_TTL_SECONDS` — because Streamable HTTP turns one question into
+  three gateway requests (`server/discover`, `tools/list`, `tools/call`) and extAuthz
+  runs on each; the exchanged token is a pure function of those inputs, so reuse is
+  the same decision, and a refused exchange is never cached. **The shim exists
+  because agentgateway's CEL cannot read the rotating SVID file**, so the exchange
+  is done in a co-located sidecar. It is
   also the reason there is an open upstream request to let `oauthTokenExchange`
   source an actor token from a file
   ([agentgateway#2905](https://github.com/agentgateway/agentgateway/issues/2905));

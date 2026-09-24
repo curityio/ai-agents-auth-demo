@@ -12,6 +12,23 @@ export interface Config {
   svidFile: string;
   svidAudience: string;
   audienceScopes: Record<string, string>;
+  /**
+   * Reuse window for an exchanged token per (caller token, audience), in seconds.
+   * 60 mirrors the copilot's own exchange cache: one Curity exchange per question
+   * (the three extAuthz callouts of discover/list/call share it) while the exchange
+   * still shows up in every question's trace. 0 disables the cache.
+   */
+  cacheTtlSeconds: number;
+  /** LRU bound on distinct (caller token, audience) entries. */
+  cacheMaxEntries: number;
+}
+
+function nonNegativeInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer, got ${raw}`);
+  return n;
 }
 
 export function loadConfig(): Config {
@@ -23,5 +40,7 @@ export function loadConfig(): Config {
     svidFile: process.env.SPIFFE_SVID_PATH ?? '/run/spiffe/curity-actor.jwt',
     svidAudience: process.env.SVID_AUDIENCE ?? 'https://curity.localtest.me/oauth/v2/oauth-token',
     audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
+    cacheTtlSeconds: nonNegativeInt('EXCHANGE_CACHE_TTL_SECONDS', 60),
+    cacheMaxEntries: Math.max(1, nonNegativeInt('EXCHANGE_CACHE_MAX_ENTRIES', 1000)),
   };
 }

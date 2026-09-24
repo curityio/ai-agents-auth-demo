@@ -342,7 +342,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       returns a token-endpoint-shaped JSON body, and the gateway swaps the narrowed
       token onto the request before forwarding to the origin MCP server. **The shim
       exists because agentgateway's CEL cannot read the rotating SVID file** — the
-      exchange must run in a co-located sidecar.
+      exchange must run in a co-located sidecar. **It caches the exchanged token for
+      60 s per (caller token, audience)** (`exchange-cache.ts`, `EXCHANGE_CACHE_TTL_SECONDS`,
+      `0` disables): Streamable HTTP makes one question THREE gateway requests
+      (`server/discover`, `tools/list`, `tools/call`) and extAuthz runs on each, so a
+      question used to cost three Curity exchanges, three `auth.token_exchange` spans
+      and three `jti`s. The key is a SHA-256 of the whole caller token, so a re-issued
+      token (new login, step-up) misses by construction; the window is the shorter of
+      the TTL and the issued lifetime minus 30 s; refusals are never cached (the DENY
+      exit of fact #31 still fires every time). Expect ONE shim exchange per question
+      in traces, on the first request that carries a given token.
     - **The gateway's RFC 9728 document is served ONLY for requests that match a
       route, and agents reach the gateway by its PUBLIC name.** `mcpAuthentication`
       makes the 401 advertise `resource_metadata="https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/<route>"`,
@@ -880,10 +889,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `recordLastExchange: false`. Forgetting it makes *Check tools* conjure a
       specialist branch that never ran. Pinned by contract tests on both tools routes.
     - **The MCP servers build their rows from the last tool call's slot, not from the
-      `/last-token` request** — that request also travels through agentgateway, so the
-      shim mints a fresh token just for the walk (a different `jti` and a full 10-minute
-      TTL next to neighbours with seconds left). Before any tool has run they
-      contribute no rows.
+      `/last-token` request** — that request also travels through agentgateway, and
+      until the shim's 60 s exchange cache (fact #21) it always minted a fresh token
+      just for the walk (a different `jti` and a full 10-minute TTL next to neighbours
+      with seconds left). Within the cache window the walk now reuses the tool call's
+      token, but the rule stands: outside it, or after a new login, the walk still
+      mints. Before any tool has run they contribute no rows.
     - **The downstream walk authenticates with the exchanged token, so expiry used to
       truncate the chain to the copilot's own hops.** `createDownstreamChainFetcher`
       remembers the last successful result per exact bearer (bounded to 8) and serves it

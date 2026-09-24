@@ -2,6 +2,7 @@ import express from 'express';
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import type { JwtSvid } from '@ai-agents-demo/spiffe';
 import { handleExchange } from './exchange-handler.js';
+import { ExchangeCache } from './exchange-cache.js';
 import type { Config } from './config.js';
 
 export interface AppDeps {
@@ -28,6 +29,13 @@ export interface AppDeps {
 export function createApp(deps: AppDeps): express.Express {
   const { cfg } = deps;
   const app = express();
+  // One process-wide cache: extAuthz calls this shim once per gateway request, and
+  // one MCP question is three requests (server/discover, tools/list, tools/call)
+  // carrying the same caller token. See exchange-cache.ts for why reuse is safe.
+  const cache =
+    cfg.cacheTtlSeconds > 0
+      ? new ExchangeCache({ ttlSeconds: cfg.cacheTtlSeconds, maxEntries: cfg.cacheMaxEntries })
+      : undefined;
 
   // No body parser on purpose: the exchange reads headers only, and the
   // extAuthz callout may arrive as a GET with no body at all.
@@ -94,6 +102,7 @@ export function createApp(deps: AppDeps): express.Express {
         clientId: cfg.clientId,
         clientSecret: cfg.clientSecret,
         audienceScopes: cfg.audienceScopes,
+        cache,
       },
     )
       .then((body) => {

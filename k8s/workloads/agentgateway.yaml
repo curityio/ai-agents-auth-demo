@@ -109,6 +109,13 @@ spec:
               value: mcp-gateway
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
+            # Reuse window for an exchanged token per (caller token, audience). One MCP
+            # question is three gateway requests (server/discover, tools/list, tools/call)
+            # and extAuthz calls the shim on each, so without it one question cost three
+            # Curity exchanges. 60 s mirrors the copilot's own cache: one exchange per
+            # question, still visible in every trace. "0" disables. (CLAUDE.md #21)
+            - name: EXCHANGE_CACHE_TTL_SECONDS
+              value: "60"
             # OTel: the shim performs the RFC 8693 exchange on every extAuthz
             # call — the hop that inserts `spiffe://…/sa/agentgateway` into the
             # downstream `act` chain. Without this it is invisible, and the

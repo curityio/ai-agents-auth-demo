@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleExchange } from '../src/exchange-handler.js';
+import { ExchangeCache } from '../src/exchange-cache.js';
 
 const deps = {
   getSvidJwt: vi.fn(async () => 'svid.jwt.compact'),
@@ -65,5 +66,62 @@ describe('handleExchange', () => {
     expect(deps.exchange).toHaveBeenCalledWith(
       expect.objectContaining({ serviceLabel: 'exchange-shim' }),
     );
+  });
+});
+
+describe('handleExchange with a cache', () => {
+  // Streamable HTTP makes one question three gateway requests (server/discover,
+  // tools/list, tools/call) and extAuthz calls the shim on every one, so without a
+  // cache each question cost three Curity exchanges. The exchanged token is a pure
+  // function of (caller token, audience); remembering it for a short window is the
+  // same authorization decision, reused.
+  const freshDeps = () => ({
+    ...deps,
+    exchange: vi.fn(async () => ({
+      accessToken: `narrowed.${Math.random()}`,
+      tokenType: 'Bearer',
+      expiresInSec: 600,
+      scope: 'obs:read',
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+    })),
+    cache: new ExchangeCache({ ttlSeconds: 60, maxEntries: 100 }),
+  });
+
+  it('exchanges once for the same caller token + audience and reuses the token', async () => {
+    const d = freshDeps();
+    const a = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    const b = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    const c = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    expect(d.exchange).toHaveBeenCalledTimes(1);
+    expect(b.access_token).toBe(a.access_token);
+    expect(c.access_token).toBe(a.access_token);
+  });
+
+  it('exchanges again for a different caller token (new login / step-up)', async () => {
+    const d = freshDeps();
+    await handleExchange({ callerToken: 'caller.token.1', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token.2', targetAudience: 'mcp-observability' }, d);
+    expect(d.exchange).toHaveBeenCalledTimes(2);
+  });
+
+  it('exchanges again for a different audience (other tier)', async () => {
+    const d = freshDeps();
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-ops' }, d);
+    expect(d.exchange).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a refused exchange', async () => {
+    const d = { ...freshDeps(), exchange: vi.fn(async () => { throw new Error('invalid_scope'); }) };
+    await expect(handleExchange({ callerToken: 'c', targetAudience: 'mcp-ops' }, d)).rejects.toThrow();
+    await expect(handleExchange({ callerToken: 'c', targetAudience: 'mcp-ops' }, d)).rejects.toThrow();
+    expect(d.exchange).toHaveBeenCalledTimes(2);
+  });
+
+  it('exchanges every time when no cache is configured', async () => {
+    const d = { ...freshDeps(), cache: undefined };
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    expect(d.exchange).toHaveBeenCalledTimes(2);
   });
 });

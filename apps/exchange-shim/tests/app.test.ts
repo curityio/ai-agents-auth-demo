@@ -34,6 +34,8 @@ const cfg = {
   svidAudience: 'https://curity.localtest.me/oauth/v2/oauth-token',
   svidFile: '/run/spiffe/curity-actor.jwt',
   audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
+  cacheTtlSeconds: 60,
+  cacheMaxEntries: 100,
 } as never;
 
 const exchanged: Array<{ audience: string; scope: string }> = [];
@@ -48,7 +50,7 @@ beforeAll(async () => {
     exchange: (async (p: { audience: string; scope: string }) => {
       exchanged.push({ audience: p.audience, scope: p.scope });
       return {
-        accessToken: `narrowed-for-${p.audience}`,
+        accessToken: `narrowed-for-${p.audience}-${exchanged.length}`,
         tokenType: 'Bearer',
         expiresInSec: 300,
         scope: p.scope,
@@ -91,7 +93,7 @@ describe('exchange-shim app', () => {
     });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({
-      access_token: 'narrowed-for-mcp-ops',
+      access_token: 'narrowed-for-mcp-ops-1',
       token_type: 'Bearer',
       expires_in: 300,
     });
@@ -130,6 +132,26 @@ describe('exchange-shim app', () => {
       },
     });
     expect(r.status).toBe(403);
+  });
+
+  it('reuses one exchanged token across the three extAuthz callouts one question costs', async () => {
+    // server/discover, tools/list, tools/call arrive as three callouts carrying the
+    // SAME caller token and audience. cfg.cacheTtlSeconds=60 → one Curity exchange.
+    const before = exchanged.length;
+    const bodies: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await fetch(`${baseUrl}/exchange`, {
+        method: 'POST',
+        headers: {
+          'x-caller-authorization': 'Bearer same-question-token',
+          'x-target-audience': 'mcp-observability',
+        },
+      });
+      expect(r.status).toBe(200);
+      bodies.push(((await r.json()) as { access_token: string }).access_token);
+    }
+    expect(exchanged.length - before).toBe(1);
+    expect(new Set(bodies).size).toBe(1);
   });
 
   it('404s an unknown path', async () => {
