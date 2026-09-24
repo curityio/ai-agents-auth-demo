@@ -78,9 +78,9 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8082),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-specialist',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'agent-specialist',
     agentClientId:
-      process.env.AGENT_CLIENT_ID ?? 'https://specialist.localtest.me/.well-known/oauth-client',
+      process.env.CURITY_CLIENT_ID ?? 'https://specialist.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpOpsUrl: required('MCP_OPS_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),

@@ -56,7 +56,7 @@ async function mintToken(
   })
     .setProtectedHeader({ alg: 'RS256', kid: env.kid })
     .setIssuer(overrides.iss ?? env.issuer)
-    .setAudience(overrides.aud ?? 'web-app')
+    .setAudience(overrides.aud ?? 'web')
     .setSubject(overrides.sub ?? 'alice')
     .setIssuedAt()
     .setExpirationTime(overrides.exp ?? Math.floor(Date.now() / 1000) + 60)
@@ -73,7 +73,7 @@ describe('verifyJwt', () => {
     const token = await mintToken(env, { scope: 'openid inspect:read inspect:write' });
     const verified = await verifyJwt(token, {
       issuer: env.issuer,
-      audience: 'web-app',
+      audience: 'web',
       jwksUri: env.jwksUri,
     });
     expect(verified.payload.sub).toBe('alice');
@@ -85,21 +85,21 @@ describe('verifyJwt', () => {
   it('rejects a token with the wrong audience', async () => {
     const token = await mintToken(env, { aud: 'other-app' });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toBeInstanceOf(CurityAuthError);
   });
 
   it('rejects a token with the wrong issuer', async () => {
     const token = await mintToken(env, { iss: 'https://attacker.example' });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toMatchObject({ code: 'invalid_issuer' });
   });
 
   it('rejects an expired token', async () => {
     const token = await mintToken(env, { exp: Math.floor(Date.now() / 1000) - 3600 });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toMatchObject({ code: 'expired_token' });
   });
 
@@ -107,7 +107,7 @@ describe('verifyJwt', () => {
     await expect(
       verifyJwt('not-a-real-token', {
         issuer: env.issuer,
-        audience: 'web-app',
+        audience: 'web',
       }),
     ).rejects.toMatchObject({ code: 'jwks_failed' });
   });

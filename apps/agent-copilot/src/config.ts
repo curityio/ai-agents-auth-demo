@@ -68,12 +68,12 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8081),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-copilot',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'agent-copilot',
     mcpInspectUrl: required('MCP_INSPECT_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
     exchangeCacheTtlMs: secondsEnvToMs('TOKEN_EXCHANGE_CACHE_TTL_SECONDS', 60),
     agentClientId:
-      process.env.AGENT_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
+      process.env.CURITY_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpInspectAudience: process.env.MCP_INSPECT_AUDIENCE ?? 'mcp-inspect',
     specialistA2aUrl:

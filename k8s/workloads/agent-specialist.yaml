@@ -71,11 +71,11 @@ spec:
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_JWKS_URI
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
-            - name: AGENT_AUDIENCE
+            - name: EXPECTED_AUDIENCE
               value: agent-specialist
             # CIMD client_id — the HTTPS URL Curity dereferences for this agent's
             # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
-            - name: AGENT_CLIENT_ID
+            - name: CURITY_CLIENT_ID
               value: https://specialist.localtest.me/.well-known/oauth-client
             # Both MCP paths route through the agentgateway MCP front door, by its
             # PUBLIC name. The agent is a spec-shaped MCP client: it learns the

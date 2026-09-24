@@ -28,7 +28,7 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8084),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.API_AUDIENCE ?? 'inspect-api',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'inspect-api',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'inspect:read').split(/\s+/).filter(Boolean),
     expectedActorChains: [
       // Read path A: [mcp-inspect, agentgateway, agent-copilot]

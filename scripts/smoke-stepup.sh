@@ -12,7 +12,7 @@
 #   [1/4] alice-mfa (acr=mfa, role sre) → full chain to aud=mcp-gateway,
 #         acr=mfa propagated; restart_deployment through the gateway → 200.
 #   [2/4] ISSUANCE INVARIANT — a password-only login that ASKS for ops:write does
-#         not get it. Hand-drives /authorize as the web-app client with NO
+#         not get it. Hand-drives /authorize as the web client with NO
 #         acr_values, logs alice in with a password, and asserts the issued token
 #         carries inspect:read + llm:invoke but NOT ops:write: the ACR Token Issuance
 #         Authorizer withheld the privileged scope at issuance.
@@ -35,7 +35,7 @@
 #         .demo-users.env (written by `make seed-users`); unset + no file → skips [2/4]. NOT a
 #         token: [2/4] drives the login itself, because the thing under test is what
 #         Curity will ISSUE, and no pre-existing token can demonstrate a refusal to
-#         mint one. The web-app client secret is read from the `web-secrets` Secret
+#         mint one. The web client secret is read from the `web-secrets` Secret
 #         in the `web` namespace.
 #   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
 #   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
@@ -187,7 +187,7 @@ print(f.action + "\t" + urllib.parse.urlencode(f.fields))
 '
 }
 
-# web_login_access_token: hand-drive the authorization_code flow as the web-app
+# web_login_access_token: hand-drive the authorization_code flow as the web
 # client with a PASSWORD-ONLY login, and echo the resulting access token.
 #   $1 username  $2 password  $3 requested scope
 #
@@ -207,11 +207,11 @@ web_login_access_token() {
   local jar loc nloc code resp tok page hdr form action body hops=0
   jar=$(mktemp)
 
-  # 1. Start the code flow. <force-authn>true</force-authn> on web-app means this
+  # 1. Start the code flow. <force-authn>true</force-authn> on web means this
   #    always reaches the authenticator chooser rather than reusing a session.
   curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -L -o /dev/null \
     -G "$CURITY_AUTHORIZE_URL" \
-    --data-urlencode "client_id=web-app" \
+    --data-urlencode "client_id=web" \
     --data-urlencode "response_type=code" \
     --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \
     --data-urlencode "scope=$scope" \
@@ -268,8 +268,8 @@ web_login_access_token() {
     return 1
   fi
 
-  # 4. Redeem it. web-app is a client_secret_basic client.
-  resp=$(curl -sS --cacert "$CACERT" -u "web-app:$WEB_CLIENT_SECRET" \
+  # 4. Redeem it. web is a client_secret_basic client.
+  resp=$(curl -sS --cacert "$CACERT" -u "web:$WEB_CLIENT_SECRET" \
     -d "grant_type=authorization_code" \
     -d "code=$code" \
     --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \

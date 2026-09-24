@@ -70,7 +70,7 @@ spec:
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_JWKS_URI
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
-            - name: MCP_AUDIENCE
+            - name: EXPECTED_AUDIENCE
               value: mcp-ops
             - name: REQUIRED_SCOPES
               value: ops:write
@@ -88,7 +88,7 @@ spec:
               value: /run/spiffe/curity-actor.jwt
             - name: CURITY_TOKEN_ENDPOINT
               value: https://curity.localtest.me/oauth/v2/oauth-token
-            - name: MCP_CLIENT_ID
+            - name: CURITY_CLIENT_ID
               value: mcp-ops
             - name: OPS_API_URL
               value: http://ops-api.apis.svc.cluster.local:8083/restart

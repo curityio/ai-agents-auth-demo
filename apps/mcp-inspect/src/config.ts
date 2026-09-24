@@ -29,7 +29,7 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8080),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.MCP_AUDIENCE ?? 'mcp-inspect',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'mcp-inspect',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'inspect:read').split(/\s+/).filter(Boolean),
     resourceMetadataUrl:
       process.env.RESOURCE_METADATA_URL ??
@@ -42,7 +42,7 @@ export function loadConfig(): Config {
       process.env.ACTOR_PATTERN ?? '^spiffe://demo\\.curity\\.local/ns/mcp/sa/agentgateway$',
     ),
     curityTokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
-    clientId: process.env.MCP_CLIENT_ID ?? 'mcp-inspect',
+    clientId: process.env.CURITY_CLIENT_ID ?? 'mcp-inspect',
     clientSecret: required('CURITY_CLIENT_SECRET'),
     inspectApiBaseUrl: required('INSPECT_API_URL'),
     inspectApiAudience: process.env.INSPECT_API_AUDIENCE ?? 'inspect-api',

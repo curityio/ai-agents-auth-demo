@@ -4,7 +4,7 @@ import type { NextAuthConfig } from 'next-auth';
 import { identityFromAccessToken, type Asking } from '@/lib/asking';
 
 const issuer = process.env.CURITY_ISSUER;
-const clientId = process.env.CURITY_CLIENT_ID ?? 'web-app';
+const clientId = process.env.CURITY_CLIENT_ID ?? 'web';
 const clientSecret = process.env.CURITY_CLIENT_SECRET;
 
 if (!issuer) {

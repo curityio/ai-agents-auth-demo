@@ -228,7 +228,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     feature: the `client_id` IS an HTTPS URL Curity dereferences for a metadata doc
     + JWKS, and the client authenticates with a signed assertion. Hard-won details:
     - **`client_id` is byte-for-byte identical** across the metadata doc, the
-      `AGENT_CLIENT_ID` env in `k8s/workloads/agent-*.yaml`, and the `CLIENT_POLICY`
+      `CURITY_CLIENT_ID` env in `k8s/workloads/agent-*.yaml`, and the `CLIENT_POLICY`
       key in `token-exchange.js` (the procedure keys policy by `getClient().getId()`,
       which returns the URL). Any drift → `invalid_client`.
     - **The `<ephemeral-client>` block needs a mandatory `<client-id-restrictions>`**
@@ -439,7 +439,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     and you get `invalid_scope: no scope intersects subject + policy` (or, if a
     client may not request it, `No valid scope was requested`). Grant it in: (1) the
     global `<scopes>` def; (2) each agent's `perAudience llm-gateway→llm:invoke`;
-    (3) the **web-app** client `<scope>`; (4) the **`<ephemeral-client>`** `<scope>`
+    (3) the **web** client `<scope>`; (4) the **`<ephemeral-client>`** `<scope>`
     (agents are CIMD ephemeral clients — this is what lets them *request* it); (5)
     the web login scope (`auth.ts`); (6) the **step-up re-auth scope** (`chat.tsx` —
     it *overrides* the login default, so the post-MFA/restart token silently loses
@@ -989,7 +989,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `prompt=consent`). `prompt=login` ⇒ `forceAuthN`, and `SsoManager.getFreshSsoSessions`
       then keeps only sessions created in the current transaction — the password session is
       invisible and the user gets password + TOTP, worse than before.
-    - **The web-app client must NOT have `<force-authn>true</force-authn>`** (removed
+    - **The web client must NOT have `<force-authn>true</force-authn>`** (removed
       2026-09-23; it had been there since the initial commit, undocumented). A client-level
       force has the same effect as `prompt=login` on EVERY request, regardless of `prompt`.
       This one cost an hour: config and request looked right and Curity still redirected to

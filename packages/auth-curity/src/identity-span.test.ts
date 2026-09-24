@@ -24,9 +24,9 @@ describe('buildIdentityAttributes', () => {
 
   it('maps audience as array', () => {
     const attrs = buildIdentityAttributes(
-      vj({ sub: 'alice', aud: ['web-app', 'agent-copilot'] }),
+      vj({ sub: 'alice', aud: ['web', 'agent-copilot'] }),
     );
-    expect(attrs['auth.aud']).toEqual(['web-app', 'agent-copilot']);
+    expect(attrs['auth.aud']).toEqual(['web', 'agent-copilot']);
   });
 
   it('maps single audience string as array', () => {

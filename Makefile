@@ -433,7 +433,7 @@ define restart_if_exists
 endef
 
 .PHONY: seed-web-secret
-seed-web-secret: ## Create web-secrets (autogen AUTH_SECRET + web-app client secret = Password1)
+seed-web-secret: ## Create web-secrets (autogen AUTH_SECRET + web client secret = Password1)
 	@kubectl create namespace $(NS_WEB) --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	  kubectl -n $(NS_WEB) create secret generic web-secrets \
 	    --from-literal=AUTH_SECRET=$$(openssl rand -hex 32) \

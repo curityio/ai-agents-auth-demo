@@ -76,7 +76,7 @@ spec:
             - name: CURITY_ISSUER
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_CLIENT_ID
-              value: web-app
+              value: web
             - name: AGENT_COPILOT_URL
               value: http://agent-copilot.agents.svc.cluster.local:8081
             # Demo FEATURE gate, not logging verbosity: enables the /tokens

@@ -53,7 +53,7 @@ change-ticket beat ([`design.md`](design.md) §7 *Descoped*).
 ### Clients
 | Client ID | Type | Auth method | Grants | Redirect URIs | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `web-app` | OIDC confidential | client_secret_basic | authorization_code | `https://app.localtest.me/api/auth/callback/curity` | Auth.js uses PKCE + `state` (`checks` in `auth.ts`; not enforced by the client config). Allowed scopes `openid inspect:read ops:write llm:invoke`: login asks for the first three, the RFC 9470 step-up re-auth adds `ops:write` with `acr_values=mfa`. Allowed authenticators `html-auth` + `totp-authn`; **no** `<force-authn>` (it would hide the password SSO session the TOTP step-up relies on). Audiences `web-app` (id_token) + `agent-copilot`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
+| `web` | OIDC confidential | client_secret_basic | authorization_code | `https://app.localtest.me/api/auth/callback/curity` | Auth.js uses PKCE + `state` (`checks` in `auth.ts`; not enforced by the client config). Allowed scopes `openid inspect:read ops:write llm:invoke`: login asks for the first three, the RFC 9470 step-up re-auth adds `ops:write` with `acr_values=mfa`. Allowed authenticators `html-auth` + `totp-authn`; **no** `<force-authn>` (it would hide the password SSO session the TOTP step-up relies on). Audiences `web` (id_token) + `agent-copilot`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
 | `https://copilot.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | `client_id` is the self-hosted metadata URL; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-copilot`. Not a config-backed client — the `<ephemeral-client>` block admits any `client_id` under `*.localtest.me` (`<client-id-restrictions>`), fetches its metadata + JWKS with the `cimd-fetch` http-client (which trusts the mkcert CA embedded by `make curity-truststore`), and allows `inspect:read ops:write llm:invoke`. |
 | `https://specialist.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | as above; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-specialist` |
 | `agentgateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`; named after the workload, not the `mcp-gateway` audience it fronts. Audiences `mcp-inspect` + `mcp-ops`, scopes `inspect:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
@@ -131,7 +131,7 @@ button passes the username as `login_hint`, so Curity's form opens pre-filled.
 - The `acr` claim is stamped procedurally at login (`authorization-code.js`,
   `acr-passthrough`) and re-emitted on every exchange — see [`design.md`](design.md) §7.
 - The user access token is narrowed to `aud=agent-copilot` by `authorization-code.js`
-  (the configured `web-app` audience shapes only the id_token, which OIDC requires
+  (the configured `web` audience shapes only the id_token, which OIDC requires
   to include the client_id); each exchanged token names exactly one downstream
   audience (`mcp-gateway` / `agent-specialist` / `llm-gateway` / `mcp-inspect`
   / `mcp-ops` / `inspect-api` / `ops-api`).
