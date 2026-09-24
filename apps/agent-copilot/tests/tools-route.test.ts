@@ -18,9 +18,20 @@ const cfg = {
 
 const subject = { bearer: 'USER_TOKEN', sub: 'alice', acr: 'mfa' };
 
+/** A provider whose acquire() resolves (or rejects) like the real one would. */
+function fakeProvider(token: string, acquireError?: Error) {
+  return {
+    discover: vi.fn(async () => ({ scope: 'obs:read' })),
+    acquire: vi.fn(async () => { if (acquireError) throw acquireError; return token; }),
+    current: () => ({ token }),
+    token: async () => token,
+    onUnauthorized: async () => {},
+  } as unknown as ReturnType<ToolTiersDeps['buildObservabilityAuthProvider']>;
+}
+
 function deps(overrides: Partial<ToolTiersDeps> = {}): ToolTiersDeps {
   return {
-    obtainMcpToken: vi.fn(async () => 'OBS_TOKEN'),
+    buildObservabilityAuthProvider: vi.fn(() => fakeProvider('OBS_TOKEN')),
     openMcpToolset: vi.fn(async () => ({
       tools: {},
       listed: [
@@ -124,9 +135,9 @@ describe('collectToolTiers', () => {
 
   it('reports the read tier as an error (not a throw) when its exchange fails', async () => {
     const d = deps({
-      obtainMcpToken: vi.fn(async () => {
-        throw new CurityAuthError('no scope intersects', 'invalid_scope');
-      }),
+      buildObservabilityAuthProvider: vi.fn(() =>
+        fakeProvider('', new CurityAuthError('no scope intersects', 'invalid_scope')),
+      ),
     });
     const out = await collectToolTiers({ cfg, subject, deps: d });
     expect(out.tiers[0]).toEqual({
@@ -145,7 +156,7 @@ describe('collectToolTiers', () => {
     // than the real read flow's. The probe must opt out of that recording.
     const d = deps();
     await collectToolTiers({ cfg, subject, deps: d });
-    expect(d.obtainMcpToken).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.buildObservabilityAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
     expect(d.obtainSpecialistToken).toHaveBeenCalledWith(
       expect.objectContaining({ recordLastExchange: false }),
     );
@@ -162,5 +173,14 @@ describe('collectToolTiers', () => {
     });
     await collectToolTiers({ cfg, subject, deps: d });
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('acquires the read-tier token through the provider with recordLastExchange:false and opens the toolset with it', async () => {
+    const d = deps();
+    await collectToolTiers({ cfg, subject, deps: d });
+    expect(d.buildObservabilityAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.openMcpToolset).toHaveBeenCalledWith(
+      expect.objectContaining({ url: cfg.mcpObservabilityUrl, authProvider: expect.objectContaining({ acquire: expect.any(Function) }) }),
+    );
   });
 });

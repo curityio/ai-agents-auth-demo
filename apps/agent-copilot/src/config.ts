@@ -4,13 +4,18 @@ export interface Config {
   curityJwksUri: string;
   expectedAudience: string;
   mcpObservabilityUrl: string;
-  curityTokenEndpoint: string;
   /** CIMD client_id — the HTTPS URL Curity dereferences to fetch this agent's metadata. */
   agentClientId: string;
   /** PKCS8 PEM private key used to sign the private_key_jwt client assertion. */
   agentPrivateKeyPem: string;
+  /**
+   * RFC 8693 `audience` for the MCP hop. The ONE per-server value that stays
+   * configured: everything else about the hop (authorization server, token
+   * endpoint, scope) is discovered from the server's 401 → RFC 9728 → RFC 8414
+   * chain (packages/agent-runtime mcp-oauth-client.ts). It would be replaced by
+   * the RFC 8707 `resource` parameter once Curity accepts it.
+   */
   mcpObservabilityAudience: string;
-  mcpObservabilityScope: string;
   // A2A path to agent-specialist for privileged actions.
   // The intent router in server.ts decides when to use this.
   specialistA2aUrl: string;
@@ -37,12 +42,10 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-copilot',
     mcpObservabilityUrl: required('MCP_OBSERVABILITY_URL'),
-    curityTokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
     agentClientId:
       process.env.AGENT_CLIENT_ID ?? 'https://copilot.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpObservabilityAudience: process.env.MCP_OBSERVABILITY_AUDIENCE ?? 'mcp-observability',
-    mcpObservabilityScope: process.env.MCP_OBSERVABILITY_SCOPE ?? 'obs:read',
     specialistA2aUrl:
       process.env.SPECIALIST_A2A_URL ??
       'http://agent-specialist.agents.svc.cluster.local:8082/a2a',

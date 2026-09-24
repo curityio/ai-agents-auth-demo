@@ -3,7 +3,9 @@ import { generateText, isStepCount } from 'ai';
 import { loadConfig } from './config.js';
 import { authMiddleware, type AuthedRequest } from './auth-middleware.js';
 import { buildLlm } from './llm.js';
-import { obtainMcpToken, invalidateMcpTokenCache, openMcpToolset } from './mcp-client.js';
+import { openMcpToolset } from './mcp-client.js';
+import { buildObservabilityAuthProvider } from './mcp-auth.js';
+import { isDiscoveryFailure } from '@ai-agents-demo/agent-runtime';
 import { obtainLlmToken } from './llm-token.js';
 import {
   obtainSpecialistToken,
@@ -194,15 +196,23 @@ async function main(): Promise<void> {
       }
     }
 
-    let mcpToken: string;
+    // Spec-shaped MCP client: discover the server's authorization server from its
+    // own 401 → RFC 9728 → RFC 8414 chain, then exchange. A failure to LEARN the
+    // AS is an availability problem (502); a refusal BY it is authorization (403).
+    const mcpAuth = buildObservabilityAuthProvider({
+      cfg,
+      subjectToken: authed.bearerToken!,
+      subjectSub: userSub,
+      subjectAcr: userAcr,
+    });
     try {
-      mcpToken = await obtainMcpToken({
-        cfg,
-        subjectToken: authed.bearerToken!,
-        subjectSub: userSub,
-        subjectAcr: userAcr,
-      });
+      await mcpAuth.acquire();
     } catch (e) {
+      if (isDiscoveryFailure(e)) {
+        console.error('[agent-copilot] MCP authorization discovery failed', e);
+        res.status(502).json({ error: 'mcp_unavailable', error_description: (e as Error).message });
+        return;
+      }
       console.error('[agent-copilot] token-exchange failed', e);
       const code = e instanceof CurityAuthError ? e.code : 'exchange_failed';
       res.status(403).json({ error: code, error_description: (e as Error).message });
@@ -228,15 +238,15 @@ async function main(): Promise<void> {
     try {
       toolset = await openMcpToolset({
         url: cfg.mcpObservabilityUrl,
-        bearerToken: mcpToken,
+        authProvider: mcpAuth,
         clientName: 'agent-copilot',
         label: 'mcp-observability',
       });
     } catch (e) {
+      // A 401 mid-connect already went through the provider's onUnauthorized
+      // (forced re-discovery + one more exchange) inside the SDK; what reaches
+      // here is a second refusal or an unreachable server.
       console.error('[agent-copilot] failed to open MCP toolset', e);
-      // Invalidate the cached token so the next request forces a fresh exchange
-      // (defence against a cached-token-vs-key-rotation race).
-      invalidateMcpTokenCache({ cfg, subjectSub: userSub, subjectAcr: userAcr });
       res.status(502).json({ error: 'mcp_unavailable' });
       return;
     }

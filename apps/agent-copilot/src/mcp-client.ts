@@ -50,14 +50,19 @@ export function peekLastExchange():
 
 /**
  * Perform RFC 8693 token exchange to obtain an MCP-bound token, with a 60 s
- * TTL cache keyed on (sub, scope, audience). On a 401 from MCP the caller
- * is expected to invalidate the cache entry and retry once.
+ * TTL cache keyed on (sub, scope, audience). A 401 from MCP is handled by the
+ * auth provider's `onUnauthorized` (forced re-discovery + one more exchange),
+ * see mcp-auth.ts.
  */
 export async function obtainMcpToken(opts: {
   cfg: Config;
   subjectToken: string;
   subjectSub: string;
   subjectAcr: string;
+  /** Discovered from the MCP server's authorization-server metadata (never configured). */
+  tokenEndpoint: string;
+  /** Discovered: the 401 challenge's `scope`, else the PRM's `scopes_supported`. */
+  scope: string;
   /**
    * Whether this call should be recorded as the process's "most recent
    * exchange" for the debug /last-token route. Defaults to true. The tools/list
@@ -67,14 +72,9 @@ export async function obtainMcpToken(opts: {
    */
   recordLastExchange?: boolean;
 }): Promise<string> {
-  const { cfg, subjectToken, subjectSub, subjectAcr } = opts;
+  const { cfg, subjectToken, subjectSub, subjectAcr, tokenEndpoint, scope } = opts;
   const record = opts.recordLastExchange !== false;
-  const key = {
-    sub: subjectSub,
-    scope: cfg.mcpObservabilityScope,
-    audience: cfg.mcpObservabilityAudience,
-    acr: subjectAcr,
-  };
+  const key = { sub: subjectSub, scope, audience: cfg.mcpObservabilityAudience, acr: subjectAcr };
   const cached = exchangeCache.get(key);
   if (cached) {
     // Refresh the "last used" marker even on a cache hit so the OBO-chain
@@ -98,18 +98,18 @@ export async function obtainMcpToken(opts: {
 
   const identity = await getCimdIdentity(cfg);
   const result = await exchangeToken({
-    tokenEndpoint: cfg.curityTokenEndpoint,
+    tokenEndpoint,
     clientId: cfg.agentClientId,
     clientAuth: {
       method: 'private_key_jwt',
       privateKeyPkcs8Pem: cfg.agentPrivateKeyPem,
       kid: identity.kid,
-      assertionAudience: cfg.curityTokenEndpoint,
+      assertionAudience: tokenEndpoint,
     },
     subjectToken,
     actorToken: svid.jwt,
     audience: cfg.mcpObservabilityAudience,
-    scope: cfg.mcpObservabilityScope,
+    scope,
   });
 
   exchangeCache.set(key, {
@@ -124,17 +124,4 @@ export async function obtainMcpToken(opts: {
     subjectJti: jtiOf(subjectToken),
   };
   return result.accessToken;
-}
-
-export function invalidateMcpTokenCache(opts: {
-  cfg: Config;
-  subjectSub: string;
-  subjectAcr: string;
-}): void {
-  exchangeCache.invalidate({
-    sub: opts.subjectSub,
-    scope: opts.cfg.mcpObservabilityScope,
-    audience: opts.cfg.mcpObservabilityAudience,
-    acr: opts.subjectAcr,
-  });
 }
