@@ -80,7 +80,7 @@ help: ## Show available targets
 # Preflight + TypeScript workspace
 # ============================================================================
 .PHONY: tools-check
-tools-check: ## Verify required CLIs (node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3)
+tools-check: ## Verify required CLIs (node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3); warns if optional qrencode is missing
 	@bash scripts/tools-check.sh
 
 .PHONY: install

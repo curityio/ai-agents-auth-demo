@@ -273,6 +273,7 @@ Ambient.
 ## 4. Prerequisites
 
 - Docker, `kind`, `kubectl`, `helm`, `mkcert`, `pnpm`, Node ≥ 22, `python3` (used only by the host-side embed/render/smoke scripts, not by any service). `make tools-check` verifies all of them.
+- Optional: `qrencode` (`brew install qrencode`) — `make users` then prints each persona's TOTP enrolment as a scannable QR code instead of an otpauth URI. `make tools-check` warns when it is missing but does not fail.
   Run `make tools-check` to verify.
 - A **Curity developer license** — copy it to the repo root as `license.json`
   (gitignored). `make demo` will prompt and wait if it's missing.

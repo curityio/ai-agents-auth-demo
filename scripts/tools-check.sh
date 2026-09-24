@@ -46,6 +46,13 @@ if command -v pnpm >/dev/null 2>&1; then
   fi
 fi
 
+# Optional: `make users` (and the end of `make demo`) prints each persona's TOTP
+# enrolment as a scannable QR code when qrencode is present; without it the
+# otpauth URI and secret are printed instead. Nothing fails, so this is a warning.
+if ! command -v qrencode >/dev/null 2>&1; then
+  warnings+=("qrencode not found — persona TOTP enrolment prints as otpauth URIs instead of QR codes (optional: brew install qrencode)")
+fi
+
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "Missing required tools:"
   for m in "${missing[@]}"; do
