@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { asSchema } from 'ai';
 import { mcpInputSchema, toListedTool, requiredRolesOf } from './mcp-toolset.js';
 
@@ -116,5 +116,41 @@ describe('toListedTool / requiredRolesOf', () => {
     expect(requiredRolesOf({ name: 'x', meta: { 'io.curity.demo/required-roles': ['sre', 'oncall'] } })).toEqual(['sre', 'oncall']);
     expect(requiredRolesOf({ name: 'x' })).toBeUndefined();
     expect(requiredRolesOf({ name: 'x', meta: { 'io.curity.demo/required-roles': 'sre' } })).toBeUndefined();
+  });
+});
+
+const transportCtor = vi.fn();
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@modelcontextprotocol/client')>();
+  class FakeTransport {
+    constructor(url: URL, opts: unknown) {
+      transportCtor(url.href, opts);
+    }
+  }
+  class FakeClient {
+    async connect() {}
+    async listTools() {
+      return { tools: [] };
+    }
+    async close() {}
+  }
+  return { ...actual, StreamableHTTPClientTransport: FakeTransport, Client: FakeClient };
+});
+
+describe('openMcpToolset', () => {
+  beforeEach(() => transportCtor.mockReset());
+
+  it('hands the SDK transport the authProvider and sets no static Authorization header', async () => {
+    const { openMcpToolset } = await import('./mcp-toolset.js');
+    const authProvider = {
+      token: async () => 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJhbGljZSJ9.',
+      onUnauthorized: async () => {},
+    };
+    const ts = await openMcpToolset({ url: 'https://gw/ops/mcp', authProvider, clientName: 'c', label: 'l' });
+    await ts.close();
+    expect(transportCtor).toHaveBeenCalledTimes(1);
+    const [, opts] = transportCtor.mock.calls[0] as [string, { authProvider?: unknown; requestInit?: { headers?: Record<string, string> } }];
+    expect(opts.authProvider).toBe(authProvider);
+    expect(opts.requestInit?.headers?.authorization).toBeUndefined();
   });
 });

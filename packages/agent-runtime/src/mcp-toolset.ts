@@ -1,4 +1,4 @@
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Client, StreamableHTTPClientTransport, type AuthProvider } from '@modelcontextprotocol/client';
 import { jsonSchema, tool, type FlexibleSchema, type ToolSet } from 'ai';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 
@@ -45,28 +45,33 @@ export function requiredRolesOf(t: ListedTool): string[] | undefined {
 }
 
 /**
- * Connect to an MCP Streamable HTTP server using the caller's bearer token,
- * discover its tools, and expose them as AI-SDK tools.
+ * Connect to an MCP Streamable HTTP server, discover its tools, and expose them
+ * as AI-SDK tools.
+ *
+ * Authentication goes through the SDK's `authProvider` seam: the transport calls
+ * `authProvider.token()` before every request and `onUnauthorized()` on a 401,
+ * then retries once. The agents pass a `createMcpAuthProvider(...)` (see
+ * mcp-oauth-client.ts) that has already run `acquire()`, so the first request
+ * carries a bearer; a mid-session 401 (expiry, key rotation) re-runs discovery +
+ * exchange without the agent code being involved.
  *
  * `clientName` names the MCP client + the oboLog `service`. `label` is used in
  * the call log headline (e.g. the target server name). `fetchImpl` lets a
  * caller intercept the raw HTTP response — used by agent-specialist to turn an
- * RFC 9470 401 into a typed StepUpRequiredError before the SDK discards headers.
+ * RFC 9470 401 into a typed StepUpRequiredError before the SDK's 401 seam runs.
  */
 export async function openMcpToolset(opts: {
   url: string;
-  bearerToken: string;
+  authProvider: AuthProvider;
   clientName: string;
   label: string;
   fetchImpl?: typeof fetch;
 }): Promise<McpToolset> {
   const transport = new StreamableHTTPClientTransport(new URL(opts.url), {
-    requestInit: {
-      headers: { authorization: `Bearer ${opts.bearerToken}` },
-    },
+    authProvider: opts.authProvider,
     ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
   });
-  const tok = summarizeJwt(opts.bearerToken);
+  const tok = summarizeJwt((await opts.authProvider.token()) ?? '');
   const client = new Client(
     { name: opts.clientName, version: '0.0.1' },
     {
