@@ -29,6 +29,11 @@ describe('HeroStage', () => {
     expect(html).toMatch(/sole token issuer · consulted at every hop/);
     expect(html).not.toMatch(/never in the request path/);
   });
+  it('puts the Curity mark in the Curity bar, decorative beside the wordmark', () => {
+    const bar = html.match(/<g[^>]*data-curity[^]*?<\/g>/)?.[0] ?? '';
+    expect(bar).toMatch(/<svg[^>]*data-curity-mark[^>]*aria-hidden="true"/);
+    expect(bar).toMatch(/data-curity-mark[^]*CURITY/);
+  });
   it('draws the LLM provider dashed, outside the trust domain, jumping to the chain panel', () => {
     const node = html.match(/<g[^>]*data-node="llm-provider"[^]*?<\/g>/)?.[0] ?? '';
     expect(html).toMatch(/<a[^>]*href="#chain"[^>]*>\s*<g[^>]*data-node="llm-provider"/);
@@ -46,7 +51,7 @@ describe('HeroStage', () => {
     expect(html).toMatch(/token exchange · RFC 8693/);
     expect(html).toMatch(/carrying the token it was issued/);
   });
-  it('names the tier each right-hand row is, in that tier\'s colour', () => {
+  it("names the tier each right-hand row is, in that tier's colour", () => {
     expect(html).toMatch(/data-tier-label="read"[^>]*>read tier · obs:read</);
     expect(html).toMatch(/data-tier-label="privileged"[^>]*>write tier · ops:write · acr=mfa</);
     // Above the top row and below the bottom one — never on the request path.
@@ -57,7 +62,7 @@ describe('HeroStage', () => {
     expect(html).toMatch(/read · obs:read/);
     expect(html).toMatch(/privileged · ops:write, acr=mfa/);
   });
-  it('keeps the exchange legend swatch neutral — an exchange takes its request\'s tier colour', () => {
+  it("keeps the exchange legend swatch neutral — an exchange takes its request's tier colour", () => {
     const swatch = html.match(/<i[^>]*data-legend-exchange[^>]*>/)?.[0] ?? '';
     expect(swatch).toMatch(/border-dashed/);
     expect(swatch).toMatch(/border-white/);

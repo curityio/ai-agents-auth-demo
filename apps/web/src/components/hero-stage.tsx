@@ -35,6 +35,43 @@ const LILAC = 'hsl(263 100% 83%)';
 const AMBER = 'hsl(32 90% 59%)';
 const toneColor = (t: Tone) => (t === 'privileged' ? AMBER : LILAC);
 
+/**
+ * The Curity bar is a stacked lockup: the mark and the wordmark on one centred
+ * row, the subtitle centred beneath. The row is centred by estimate — the
+ * wordmark's width depends on the font — but the gap between mark and word is
+ * exact, which is what the eye checks. The mark is the glyph from
+ * `public/curity-logo-landscape-white.svg` with its wordmark stripped (the bar
+ * sets "CURITY" itself), inlined because an `<image>` cannot crop an external SVG.
+ */
+const MARK = { w: 56, h: 36.33 } as const;
+const LOCKUP = { markH: 15, gap: 8, wordW: 60, baseline: 18, capH: 8.6 } as const;
+const LOCKUP_MARK_W = (LOCKUP.markH * MARK.w) / MARK.h;
+const LOCKUP_X = CURITY.x + (CURITY.w - (LOCKUP_MARK_W + LOCKUP.gap + LOCKUP.wordW)) / 2;
+const LOCKUP_WORD_X = LOCKUP_X + LOCKUP_MARK_W + LOCKUP.gap;
+// Centre the mark on the wordmark's cap height, not on the bar.
+const LOCKUP_MARK_Y = CURITY.y + LOCKUP.baseline - LOCKUP.capH / 2 - LOCKUP.markH / 2;
+
+function CurityMark({ x, y, height }: { x: number; y: number; height: number }) {
+  return (
+    <svg
+      data-curity-mark
+      aria-hidden="true"
+      x={x}
+      y={y}
+      width={(height * MARK.w) / MARK.h}
+      height={height}
+      viewBox={`0 0 ${MARK.w} ${MARK.h}`}
+    >
+      <path
+        fill="white"
+        transform="translate(-3.16 -3.75)"
+        d="m53.06 26.79-.56.57a15.93 15.93 0 0 1-10.93 5 10 10 0 0 1-10.34-10.4c0-6 4.24-10.39 10.09-10.39a16.67 16.67 0 0 1 10.22 4l.56.49 5.61-5.86-.63-.54a25.78 25.78 0 0 0-16.36-5.91 18.44 18.44 0 0 0-15.37 7.68H15l-.6 5.09h8.5a17.9 17.9 0 0 0-.59 2.86H9.61L9 24.46h13.31a18.56 18.56 0 0 0 .57 2.86H3.77l-.61 5.09H25.3c3.29 4.74 8.9 7.68 15.67 7.68a25.41 25.41 0 0 0 17.19-6.93l.59-.56Z"
+      />
+      <path fill="white" d="M5.01 15.62H1.26l-.6 5.09H4.4l.61-5.09z" />
+    </svg>
+  );
+}
+
 type Pos = Point & { ms: number; ease: Step['ease'] };
 
 function usePlayer(steps: Step[], paused: boolean) {
@@ -231,10 +268,10 @@ export function HeroStage({
               strokeWidth={step.glow ? 1.8 : 1.2}
               style={{ transition: 'fill .3s, stroke-width .3s' }}
             />
+            <CurityMark x={LOCKUP_X} y={LOCKUP_MARK_Y} height={LOCKUP.markH} />
             <text
-              x={CURITY.x + CURITY.w / 2}
-              y={CURITY.y + 18}
-              textAnchor="middle"
+              x={LOCKUP_WORD_X}
+              y={CURITY.y + LOCKUP.baseline}
               fill="white"
               fontSize={12}
               fontWeight={700}
