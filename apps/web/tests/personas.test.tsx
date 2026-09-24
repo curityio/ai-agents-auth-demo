@@ -47,12 +47,25 @@ describe('PersonaCards', () => {
   const html = renderToStaticMarkup(<PersonaCards />);
   it('renders one card per persona with name, roles and a sign-in button naming the user', () => {
     for (const p of PERSONAS) {
-      const card = html.match(new RegExp(`<li[^>]*data-persona="${p.username}"[\\s\\S]*?</li>`))?.[0] ?? '';
+      const card =
+        html.match(new RegExp(`<li[^>]*data-persona="${p.username}"[\\s\\S]*?</li>`))?.[0] ?? '';
       expect(card, p.username).toContain(p.displayName);
       expect(card).toContain(p.roles.join(', '));
       expect(card).not.toMatch(/at login|forced/);
       expect(card).toContain(`Sign in as ${p.username}`);
       expect(card).toMatch(/<button[^>]*type="button"/);
+    }
+  });
+  it('leads each card with the initials avatar the header shows after login', () => {
+    for (const p of PERSONAS) {
+      const card =
+        html.match(new RegExp(`<li[^>]*data-persona="${p.username}"[\\s\\S]*?</li>`))?.[0] ?? '';
+      const [first, last] = p.displayName.split(' ');
+      const want = `${first![0]}${last![0]}`.toUpperCase();
+      expect(card, p.username).toMatch(new RegExp(`data-avatar="${p.outcome}"[\\s\\S]*?>${want}<`));
+      // the avatar precedes the name, which precedes the job title
+      expect(card.indexOf('data-avatar')).toBeLessThan(card.indexOf(p.displayName));
+      expect(card.indexOf(p.displayName)).toBeLessThan(card.indexOf(p.job));
     }
   });
   it('wears the outcome as a tinted badge, not a loud one', () => {

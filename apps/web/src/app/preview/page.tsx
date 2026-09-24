@@ -1,7 +1,9 @@
 // Dev-only visual preview of the authenticated UI — no Curity, no backend.
 // Renders the real AppShell + Chat with seeded mock data so the redesign can be
 // reviewed at http://localhost:3000/preview without standing up the cluster.
+// `?signedOut` shows the landing page (the persona cards) instead.
 import { AppShell } from '@/components/app-shell';
+import { PersonaCards } from '@/components/persona-cards';
 import { Chat, type ChatPreview } from '../chat';
 
 const nowSec = Math.floor(Date.now() / 1000);
@@ -177,7 +179,19 @@ const PREVIEW: ChatPreview = {
   },
 };
 
-export default function PreviewPage() {
+export default async function PreviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const signedOut = 'signedOut' in (await searchParams);
+  if (signedOut) {
+    return (
+      <AppShell signedIn={false} displayName="">
+        <PersonaCards />
+      </AppShell>
+    );
+  }
   return (
     <AppShell signedIn displayName="alice" email="alice@demo.curity.local">
       <Chat preview={PREVIEW} />

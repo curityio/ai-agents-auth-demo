@@ -7,6 +7,7 @@ import { Clock, LogOut, User2, ChevronsUpDown, KeyRound } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { initials } from '@/lib/initials';
 import { cn } from '@/lib/utils';
 import { tokenLifetime } from '@/lib/session-view';
 import { useNow } from '@/lib/use-now';
@@ -18,16 +19,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
-function initials(label: string): string {
-  const parts = label
-    .replace(/@.*/, '')
-    .split(/[\s._-]+/)
-    .filter(Boolean);
-  if (parts.length === 0) return 'U';
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
-}
 
 /**
  * How long the Curity access token has left. The 10-minute token is what

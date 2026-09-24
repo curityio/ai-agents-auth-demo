@@ -3,9 +3,11 @@
 import { signIn } from 'next-auth/react';
 import { LogIn } from 'lucide-react';
 
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { PERSONAS, type Persona } from '@/lib/personas';
+import { initials } from '@/lib/initials';
+import { PERSONAS, type Persona, type PersonaOutcome } from '@/lib/personas';
 
 /**
  * Signed-out landing: the three people you can become, and what will happen
@@ -21,14 +23,29 @@ function signInAs(p: Persona) {
   void signIn('curity', { callbackUrl: '/' }, { login_hint: p.username, prompt: 'login' });
 }
 
+// The avatar takes the verdict's tint, so the card's colour story starts at the
+// person and the badge below merely repeats it. Full class strings on purpose:
+// Tailwind only emits classes it can read verbatim.
+const AVATAR_TINT: Record<PersonaOutcome, string> = {
+  success: 'bg-success/15 text-success ring-1 ring-success/40',
+  warning: 'bg-warn/15 text-warn ring-1 ring-warn/40',
+  destructive: 'bg-destructive/15 text-destructive ring-1 ring-destructive/40',
+};
+
 function PersonaCard({ p }: { p: Persona }) {
   return (
-    <li
-      data-persona={p.username}
-      className="glass flex flex-col rounded-2xl p-5"
-    >
-      <h3 className="text-base font-bold tracking-tight">{p.displayName}</h3>
-      <p className="mt-0.5 text-sm text-muted-foreground">{p.job}</p>
+    <li data-persona={p.username} className="glass flex flex-col rounded-2xl p-5">
+      <div className="flex items-center gap-3">
+        <Avatar data-avatar={p.outcome} className="h-11 w-11">
+          <AvatarFallback className={`text-sm font-bold ${AVATAR_TINT[p.outcome]}`}>
+            {initials(p.displayName)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <h3 className="text-base font-bold tracking-tight">{p.displayName}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{p.job}</p>
+        </div>
+      </div>
 
       <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">username</dt>
@@ -45,12 +62,7 @@ function PersonaCard({ p }: { p: Persona }) {
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{p.story}</p>
       </div>
 
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-5 w-full"
-        onClick={() => signInAs(p)}
-      >
+      <Button type="button" variant="outline" className="mt-5 w-full" onClick={() => signInAs(p)}>
         <LogIn />
         Sign in as {p.username}
       </Button>
@@ -67,8 +79,8 @@ export function PersonaCards() {
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           Same copilot, same cluster. Everyone signs in with a password and the first privileged
-          action requires a TOTP code. What each person may do after that is decided by Curity,
-          the gateway and the tool servers, with every decision displayed on this page in real time.
+          action requires a TOTP code. What each person may do after that is decided by Curity, the
+          gateway and the tool servers, with every decision displayed on this page in real time.
         </p>
       </div>
       <ul className="mt-6 grid gap-4 md:grid-cols-3">
