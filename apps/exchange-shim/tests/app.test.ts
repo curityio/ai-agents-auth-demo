@@ -29,7 +29,7 @@ const svid = {
 const cfg = {
   port: 0,
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  clientId: 'mcp-gateway',
+  clientId: 'agentgateway',
   clientSecret: 'secret',
   svidAudience: 'https://curity.localtest.me/oauth/v2/oauth-token',
   svidFile: '/run/spiffe/curity-actor.jwt',

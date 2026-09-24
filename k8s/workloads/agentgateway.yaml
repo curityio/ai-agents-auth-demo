@@ -105,8 +105,11 @@ spec:
               value: "8090"
             - name: CURITY_TOKEN_ENDPOINT
               value: https://curity.localtest.me/oauth/v2/oauth-token
+            # Named after the workload that authenticates with it, like every other
+            # static client, so the OBO log label, the client_id claim and the SPIFFE
+            # ID in the downstream `act` chain all read `agentgateway`.
             - name: GATEWAY_CLIENT_ID
-              value: mcp-gateway
+              value: agentgateway
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
             # Reuse window for an exchanged token per (caller token, audience). One MCP

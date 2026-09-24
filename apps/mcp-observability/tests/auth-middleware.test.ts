@@ -89,7 +89,7 @@ describe('mcp-observability authMiddleware', () => {
     verifyJwt.mockResolvedValue({
       payload: {
         sub: 'alice',
-        client_id: 'mcp-gateway',
+        client_id: 'agentgateway',
         act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
       },
       protectedHeader: {},
@@ -100,7 +100,7 @@ describe('mcp-observability authMiddleware', () => {
     await authMiddleware(cfg)(req, res, vi.fn());
     expect(req.auth).toEqual({
       token: 'fake.tok',
-      clientId: 'mcp-gateway',
+      clientId: 'agentgateway',
       scopes: ['obs:read'],
       extra: { sub: 'alice' },
     });

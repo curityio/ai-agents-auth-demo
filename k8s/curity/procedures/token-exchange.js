@@ -68,8 +68,8 @@ var SPIFFE_MCP_OBS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-observability';
 //   - agent-specialist   ─exch→ audience=mcp-gateway         scope=obs:read ops:write
 //     (subject is the just-received Bearer, so act nests automatically)
 //   - agent-specialist   ─exch→ audience=llm-gateway         scope=llm:invoke
-//   - mcp-gateway        ─exch→ audience=mcp-observability   scope=obs:read
-//   - mcp-gateway        ─exch→ audience=mcp-ops             scope=ops:write
+//   - agentgateway       ─exch→ audience=mcp-observability   scope=obs:read
+//   - agentgateway       ─exch→ audience=mcp-ops             scope=ops:write
 //     (the agentgateway's exchange-shim narrowing the aud=mcp-gateway caller
 //     token per tool-target; act gains the gateway's SPIFFE ID)
 //   - mcp-observability  ─exch→ audience=obs-api             scope=obs:read
@@ -101,9 +101,10 @@ var CLIENT_POLICY = {
     },
     allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
   },
-  // agentgateway: confidential client fanning out to the two MCP backends,
+  // agentgateway: confidential client (named after the workload, NOT the
+  // `mcp-gateway` audience it fronts) fanning out to the two MCP backends,
   // narrowing the broad aud=mcp-gateway caller token per tool-target.
-  'mcp-gateway': {
+  'agentgateway': {
     perAudience: {
       'mcp-observability': { scopes: ['obs:read'], mayAct: SPIFFE_MCP_OBS },
       'mcp-ops': { scopes: ['ops:write'], mayAct: SPIFFE_MCP_OPS }

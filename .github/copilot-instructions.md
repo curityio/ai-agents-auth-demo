@@ -35,7 +35,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   `packages/auth-curity` owns *every* "what Curity expects" rule — don't duplicate it.
 - **Client auth is split by tier.** The two agents are **CIMD ephemeral clients**
   (`client_id` = a self-hosted HTTPS metadata URL, `private_key_jwt`); the MCP
-  servers and `mcp-gateway` are static `client_secret_basic` clients.
+  servers and `agentgateway` are static `client_secret_basic` clients.
 - **Both agents are LLM agents (Vercel AI SDK v7).** The copilot is front-line; the
   specialist is a privileged cross-tier agent holding **two** `aud=mcp-gateway`
   tokens (`ops:write` first — role gate + ACR TIA — then `obs:read`) and running an

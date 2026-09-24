@@ -411,7 +411,7 @@ The per-client policy as configured:
 |---|---|---|
 | `https://copilot.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read`; `agent-specialist`→`obs:read ops:write llm:invoke`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-copilot` |
 | `https://specialist.localtest.me/.well-known/oauth-client` | `mcp-gateway`→`obs:read ops:write`; `llm-gateway`→`llm:invoke` | `…/ns/agents/sa/agent-specialist` |
-| `mcp-gateway` | `mcp-observability`→`obs:read`; `mcp-ops`→`ops:write` | `…/ns/mcp/sa/agentgateway` |
+| `agentgateway` | `mcp-observability`→`obs:read`; `mcp-ops`→`ops:write` | `…/ns/mcp/sa/agentgateway` |
 | `mcp-ops` | `ops-api`→`ops:write` | `…/ns/mcp/sa/mcp-ops` |
 | `mcp-observability` | `obs-api`→`obs:read` | `…/ns/mcp/sa/mcp-observability` |
 
@@ -495,8 +495,9 @@ MCP servers, and the protected resource the agents discover their authorization
 server from.
 
 - **One audience, one gateway.** Both agents target a single Curity audience,
-  **`mcp-gateway`** (confidential `client_secret_basic` client), rather than the MCP
-  servers directly. The gateway validates that JWT (issuer
+  **`mcp-gateway`**, rather than the MCP servers directly. (The gateway's own Curity
+  client is `agentgateway`, confidential `client_secret_basic`, named after the
+  workload; `mcp-gateway` names the resource it fronts.) The gateway validates that JWT (issuer
   `https://curity.localtest.me/oauth/v2/oauth-anonymous`; JWKS fetched from the
   in-cluster plain-HTTP URL `http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks`).
 - **Path-routed, not federated.** ONE listener (`:8080`) exposes TWO path-scoped

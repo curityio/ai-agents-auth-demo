@@ -201,21 +201,19 @@ describe('exchangeToken OBO log labelling', () => {
     expect(spy.mock.calls[0]![0]).toContain('INFO [agent-specialist] EXCHANGE');
   });
 
-  it('prefers an explicit serviceLabel so a workload can log under its own name', async () => {
+  it('logs a static client under its client id, which names the pod (agentgateway)', async () => {
     fetchMock.mockResolvedValue(okResponse());
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // exchange-shim authenticates as the `mcp-gateway` client but is its own
-    // workload; logging the client id would name a pod that does not exist.
-    await exchangeToken({
-      ...baseParams,
-      clientId: 'mcp-gateway',
-      serviceLabel: 'exchange-shim',
-    });
+    // Every static client is named after the workload that authenticates with it,
+    // so the derived label matches the SPIFFE ID in the `act` chain. The gateway's
+    // shim used to authenticate as `mcp-gateway` and needed a label override to
+    // avoid logging under a name no pod had; the client was renamed instead.
+    await exchangeToken({ ...baseParams, clientId: 'agentgateway' });
 
     const line = spy.mock.calls[0]![0] as string;
-    expect(line).toContain('INFO [exchange-shim] EXCHANGE');
-    expect(line).toContain('client_id    : mcp-gateway');
+    expect(line).toContain('INFO [agentgateway] EXCHANGE');
+    expect(line).toContain('client_id    : agentgateway');
   });
 });
 
@@ -264,15 +262,15 @@ describe('exchangeToken denial logging', () => {
     expect(spy.mock.calls[0]![0]).toContain('error     : exchange_failed');
   });
 
-  it('honours serviceLabel on the DENY line, as it does on success', async () => {
+  it('labels the DENY line with the same derived name as success', async () => {
     fetchMock.mockResolvedValue(refusal('invalid_scope', 'nope'));
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await expect(
-      exchangeToken({ ...baseParams, clientId: 'mcp-gateway', serviceLabel: 'exchange-shim' }),
+      exchangeToken({ ...baseParams, clientId: 'agentgateway' }),
     ).rejects.toThrow(CurityAuthError);
 
-    expect(spy.mock.calls[0]![0]).toContain('INFO [exchange-shim] DENY');
+    expect(spy.mock.calls[0]![0]).toContain('INFO [agentgateway] DENY');
   });
 
   it('logs no DENY block when the exchange succeeds', async () => {

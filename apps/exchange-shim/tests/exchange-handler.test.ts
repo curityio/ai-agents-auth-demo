@@ -5,7 +5,7 @@ import { ExchangeCache } from '../src/exchange-cache.js';
 const deps = {
   getSvidJwt: vi.fn(async () => 'svid.jwt.compact'),
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  clientId: 'mcp-gateway',
+  clientId: 'agentgateway',
   clientSecret: 'Password1',
   audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
   exchange: vi.fn(async () => ({
@@ -25,7 +25,7 @@ describe('handleExchange', () => {
     );
     expect(deps.exchange).toHaveBeenCalledWith(
       expect.objectContaining({
-        clientId: 'mcp-gateway',
+        clientId: 'agentgateway',
         clientSecret: 'Password1',
         subjectToken: 'caller.token',
         actorToken: 'svid.jwt.compact',
@@ -58,13 +58,17 @@ describe('handleExchange', () => {
     ).rejects.toThrow(/audience/i);
   });
 
-  it('logs under the exchange-shim workload name, not the mcp-gateway client id', async () => {
+  it('passes no log-label override: the client id IS the pod name (agentgateway)', async () => {
+    // The Curity client is named after the workload that authenticates, like every
+    // other client here, so auth-curity's derived label already matches the SPIFFE
+    // ID in the `act` chain. An override would be a second name for the same pod.
     await handleExchange(
       { callerToken: 'caller.token', targetAudience: 'mcp-observability' },
       deps,
     );
+    expect(deps.exchange).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'agentgateway' }));
     expect(deps.exchange).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceLabel: 'exchange-shim' }),
+      expect.not.objectContaining({ serviceLabel: expect.anything() }),
     );
   });
 });

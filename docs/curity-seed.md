@@ -56,7 +56,7 @@ change-ticket beat ([`design.md`](design.md) §7 *Descoped*).
 | `web-app` | OIDC confidential | client_secret_basic | authorization_code | `https://app.localtest.me/api/auth/callback/curity` | Auth.js uses PKCE + `state` (`checks` in `auth.ts`; not enforced by the client config). Allowed scopes `openid obs:read ops:write llm:invoke`: login asks for the first three, the RFC 9470 step-up re-auth adds `ops:write` with `acr_values=mfa`. Allowed authenticators `html-auth` + `totp-authn`; **no** `<force-authn>` (it would hide the password SSO session the TOTP step-up relies on). Audiences `web-app` (id_token) + `agent-copilot`. Access-token TTL 600 s (the header pill counts it down). Secret is the fixed demo value `Password1`. |
 | `https://copilot.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | `client_id` is the self-hosted metadata URL; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-copilot`. Not a config-backed client — the `<ephemeral-client>` block admits any `client_id` under `*.localtest.me` (`<client-id-restrictions>`), fetches its metadata + JWKS with the `cimd-fetch` http-client (which trusts the mkcert CA embedded by `make curity-truststore`), and allows `obs:read ops:write llm:invoke`. |
 | `https://specialist.localtest.me/.well-known/oauth-client` | CIMD ephemeral | private_key_jwt | token-exchange | n/a | as above; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/agents/sa/agent-specialist` |
-| `mcp-gateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`. Audiences `mcp-observability` + `mcp-ops`, scopes `obs:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
+| `agentgateway` | confidential | client_secret_basic | token-exchange | n/a | Used by agentgateway's `exchange-shim`; named after the workload, not the `mcp-gateway` audience it fronts. Audiences `mcp-observability` + `mcp-ops`, scopes `obs:read` + `ops:write`; `actor_token` SPIFFE ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. Secret `Password1`. |
 | `mcp-observability` | confidential | client_secret_basic | token-exchange | n/a | Audience `obs-api`, scope `obs:read`; actor `…/ns/mcp/sa/mcp-observability`. Secret `Password1`. |
 | `mcp-ops` | confidential | client_secret_basic | token-exchange | n/a | Audience `ops-api`, scope `ops:write`; actor `…/ns/mcp/sa/mcp-ops`. Secret `Password1`. |
 
@@ -185,7 +185,7 @@ kubectl -n mcp create secret generic agentgateway-llm \
 ```
 
 The full set of token-exchange clients (the two CIMD agents via the
-`<ephemeral-client>` block, plus `mcp-gateway`, `mcp-ops`, `mcp-observability`)
+`<ephemeral-client>` block, plus `agentgateway`, `mcp-ops`, `mcp-observability`)
 and the terminal audiences (`obs-api`, `ops-api`, `llm-gateway`) is defined in
 `k8s/curity/configmap.yaml`.
 

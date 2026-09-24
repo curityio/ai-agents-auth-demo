@@ -378,7 +378,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `[mcp-observability, agentgateway, agent-specialist, agent-copilot]`; ops-api
       `[mcp-ops, agentgateway, agent-specialist, agent-copilot]`; mcp-ops
       `[agentgateway, agent-specialist, agent-copilot]`. New Curity client
-      `mcp-gateway` (confidential, `client_secret_basic`) is allowed to exchange
+      `agentgateway` (confidential, `client_secret_basic`; named after the workload,
+      NOT after the `mcp-gateway` audience it fronts) is allowed to exchange
       `mcp-observability`→`obs:read` and `mcp-ops`→`ops:write`, with `allowedActor`
       pinned to the agentgateway SPIFFE ID.
     - **The gateway does NOT enforce `acr`/step-up or match the `act` chain** — those
@@ -774,10 +775,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       unreachable from a test. It drops an all-zero span context, so an uninstrumented
       service (see #28) prints no `trace` field rather than 32 zeros that look real —
       which also makes a missing `trace` field a one-glance diagnosis for #28.
-    - **`serviceLabel` exists for `exchange-shim` only.** The log's service name defaults
-      to a friendly form of the Curity `client_id`, right everywhere the client and the
-      workload share a name. The shim authenticates as `mcp-gateway`, so without the
-      override it logs under a name no pod has.
+    - **The log label is DERIVED from the Curity `client_id`, so every static client is
+      named after the workload that authenticates with it.** There is no override knob.
+      The shim used to authenticate as `mcp-gateway` (the AUDIENCE it fronts) and needed
+      a `serviceLabel` override to avoid logging under a name no pod had; the client was
+      renamed to `agentgateway` instead, so label, `client_id` claim and the SPIFFE ID in
+      the downstream `act` chain agree. Don't reintroduce the knob — rename the client.
     - The box format is deliberately multi-line for `kubectl logs` readability, which
       means a log *collector* splits each `│` line into its own record. Fine today
       (nothing ships these off-cluster); if that changes, add an opt-in `OBO_LOG=json`
