@@ -47,13 +47,34 @@ export function walkActChain(top: unknown): string[] {
   return chain;
 }
 
+/**
+ * Build an RFC 6750 `Bearer` challenge. Values are quoted-strings, so an embedded
+ * `"` is downgraded to `'` rather than ending the value early. Undefined values
+ * are omitted.
+ */
+export function bearerChallenge(params: Record<string, string | undefined>): string {
+  const parts = Object.entries(params)
+    .filter((kv): kv is [string, string] => typeof kv[1] === 'string')
+    .map(([k, v]) => `${k}="${v.replace(/"/g, "'")}"`);
+  return `Bearer ${parts.join(', ')}`;
+}
+
 export function authMiddleware(cfg: Config) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const authz = req.header('authorization');
     if (!authz || !authz.toLowerCase().startsWith('bearer ')) {
       res
         .status(401)
-        .set('www-authenticate', `Bearer realm="${cfg.expectedAudience}"`)
+        // MCP 2026-07-28 discovery: name the RFC 9728 document and the scope this
+        // resource needs, so a client can start the chain from this 401 alone.
+        .set(
+          'www-authenticate',
+          bearerChallenge({
+            realm: cfg.expectedAudience,
+            scope: cfg.requiredScopes.join(' '),
+            resource_metadata: cfg.resourceMetadataUrl,
+          }),
+        )
         .json({ error: 'invalid_token', error_description: 'missing Bearer token' });
       return;
     }
@@ -170,7 +191,18 @@ export function authMiddleware(cfg: Config) {
       if (e instanceof CurityAuthError) {
         res
           .status(401)
-          .set('www-authenticate', `Bearer error="${e.code}", error_description="${e.message}"`)
+          // RFC 6750 §3.1: the header code is invalid_token; Curity's finer code
+          // (expired_token, invalid_issuer, …) rides in error_description and
+          // stays verbatim in the JSON body.
+          .set(
+            'www-authenticate',
+            bearerChallenge({
+              realm: cfg.expectedAudience,
+              error: 'invalid_token',
+              error_description: `${e.code}: ${e.message}`,
+              resource_metadata: cfg.resourceMetadataUrl,
+            }),
+          )
           .json({ error: e.code, error_description: e.message });
         return;
       }

@@ -72,6 +72,15 @@ function mockReq(authz?: string): Request {
   } as unknown as Request;
 }
 
+function parseChallenge(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header || !/^bearer\s/i.test(header)) return out;
+  for (const m of header.slice('bearer '.length).matchAll(/(\w+)="([^"]*)"/g)) {
+    out[m[1]!.toLowerCase()] = m[2]!;
+  }
+  return out;
+}
+
 describe('walkActChain', () => {
   it('returns [] for non-object input', () => {
     expect(walkActChain(undefined)).toEqual([]);
@@ -93,7 +102,12 @@ describe('walkActChain', () => {
 });
 
 describe('authMiddleware', () => {
-  beforeEach(() => vi.mocked(verifyJwt).mockReset());
+  // Braces matter: `mockReset()` returns the mock, and vitest treats a function
+  // returned from a beforeEach hook as an after-test cleanup — it would then CALL
+  // verifyJwt() after every test, which with a rejecting mock fails the test.
+  beforeEach(() => {
+    vi.mocked(verifyJwt).mockReset();
+  });
 
   it('401 when bearer header missing', async () => {
     const res = mockRes();
@@ -277,5 +291,53 @@ describe('authMiddleware', () => {
     expect(res.headers['www-authenticate']).toContain('resource_metadata=');
     expect(res.headers['www-authenticate']).toContain('resource_metadata="https://mcp-ops.localtest.me');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('401 without a bearer advertises resource_metadata and the required scope', async () => {
+    const res = mockRes();
+    await authMiddleware(cfg)(mockReq(undefined), res, vi.fn());
+    const c = parseChallenge(res.headers['www-authenticate']);
+    expect(c.realm).toBe('mcp-ops');
+    expect(c.scope).toBe('ops:write');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
+    expect(c.error).toBeUndefined();
+  });
+
+  it('401 on a verification failure is invalid_token with the Curity code in the description', async () => {
+    vi.mocked(verifyJwt).mockRejectedValueOnce(new CurityAuthError('Token expired', 'expired_token'));
+    const res = mockRes();
+    await authMiddleware(cfg)(mockReq('Bearer x'), res, vi.fn());
+    const c = parseChallenge(res.headers['www-authenticate']);
+    expect(c.error).toBe('invalid_token');
+    expect(c.error_description).toBe('expired_token: Token expired');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
+    expect(res.body).toMatchObject({ error: 'expired_token' });
+  });
+
+  it('escapes quotes in error_description so the challenge stays parseable', async () => {
+    vi.mocked(verifyJwt).mockRejectedValueOnce(new CurityAuthError('unknown "kid" in header', 'invalid_token'));
+    const res = mockRes();
+    await authMiddleware(cfg)(mockReq('Bearer x'), res, vi.fn());
+    const c = parseChallenge(res.headers['www-authenticate']);
+    expect(c.error_description).toBe("invalid_token: unknown 'kid' in header");
+  });
+
+  it('the RFC 9470 challenge is unchanged (still insufficient_user_authentication + acr_values)', async () => {
+    vi.mocked(verifyJwt).mockResolvedValueOnce({
+      payload: {
+        sub: 'alice',
+        acr: 'html-form',
+        act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
+      },
+      protectedHeader: {},
+      scopes: new Set(['ops:write']),
+    } as never);
+    const res = mockRes();
+    await authMiddleware(cfg)(mockReq('Bearer x'), res, vi.fn());
+    const c = parseChallenge(res.headers['www-authenticate']);
+    expect(res.statusCode).toBe(401);
+    expect(c.error).toBe('insufficient_user_authentication');
+    expect(c.acr_values).toBe('mfa');
+    expect(c.resource_metadata).toBe(cfg.resourceMetadataUrl);
   });
 });
