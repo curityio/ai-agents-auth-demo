@@ -32,7 +32,7 @@ export const PERSONAS: readonly Persona[] = [
     roles: ['sre'],
     verdict: 'step-up, then every tool',
     outcome: 'success',
-    story: 'Reads freely. Privileged actions require MFA after that the actions will go through.',
+    story: 'Reads freely. Privileged actions ask for a TOTP code, then go through.',
   },
   {
     username: 'bob',
@@ -41,7 +41,7 @@ export const PERSONAS: readonly Persona[] = [
     roles: ['developer'],
     verdict: 'ops:write refused',
     outcome: 'destructive',
-    story: 'Reads freely but denied all privileged actions.',
+    story: 'Reads freely. Every privileged action is refused.',
   },
   {
     username: 'carol',
@@ -51,6 +51,18 @@ export const PERSONAS: readonly Persona[] = [
     verdict: 'one tool refused',
     outcome: 'warning',
     story:
-      'Reads freely. Privileged actions are limited. Changing an image action is refused at the tool server.',
+      "Reads freely and may restart or scale. Changing a deployment's image is refused at the tool server.",
   },
 ];
+
+/**
+ * The persona behind a session label — a username (`alice`), an email
+ * (`alice@demo.curity.local`) or a full name (`Alice Andersson`). The login
+ * scope carries no `profile`, so what Curity sends as the user's name varies;
+ * this lets the header draw the same person the landing card did.
+ */
+export function findPersona(label: string | undefined): Persona | undefined {
+  if (!label) return undefined;
+  const key = label.replace(/@.*/, '').trim().toLowerCase();
+  return PERSONAS.find((p) => p.username === key || p.displayName.toLowerCase() === key);
+}

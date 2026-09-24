@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { initials } from '@/lib/initials';
+import { findPersona } from '@/lib/personas';
 import { cn } from '@/lib/utils';
 import { tokenLifetime } from '@/lib/session-view';
 import { useNow } from '@/lib/use-now';
@@ -79,7 +80,10 @@ export function UserMenu({
           title={life ? `Access token ${life.label}` : undefined}
         >
           <Avatar className="h-7 w-7">
-            <AvatarFallback className="text-xs">{initials(name)}</AvatarFallback>
+            {/* The landing card's initials (AA, not AL) when the session names a seeded persona. */}
+            <AvatarFallback data-avatar-initials className="text-xs">
+              {initials((findPersona(name) ?? findPersona(email))?.displayName ?? name)}
+            </AvatarFallback>
           </Avatar>
           <span className="hidden max-w-[10rem] truncate text-sm font-medium sm:inline">
             {name}

@@ -1,13 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  ShieldCheck,
-  Fingerprint,
-  KeyRound,
-  ShieldAlert,
-  Radar,
-  ArrowUpRight,
-} from 'lucide-react';
+import { ShieldCheck, Fingerprint, KeyRound, ShieldAlert, Radar, ArrowUpRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { HeroStage } from '@/components/hero-stage';
@@ -81,6 +74,24 @@ interface AppShellProps {
   children: ReactNode;
 }
 
+/**
+ * GitHub's mark (the Octicon `mark-github`, MIT). Inlined because lucide 1.x
+ * no longer ships brand icons; `currentColor` so it takes the link's colour.
+ */
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg
+      data-github-mark
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  );
+}
+
 export function AppShell({
   signedIn,
   displayName,
@@ -90,7 +101,7 @@ export function AppShell({
   children,
 }: AppShellProps) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-4 sm:gap-6">
@@ -121,7 +132,7 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+      <main className="mx-auto w-full max-w-5xl px-6 py-10">
         {/* Hero */}
         <section className="relative animate-fade-in-up overflow-hidden rounded-3xl">
           <div className="mesh-hero-enterprise animate-gradient-pan bg-[length:200%_200%] px-7 py-9 sm:px-10 sm:py-11 lg:py-8">
@@ -197,6 +208,7 @@ export function AppShell({
                 target="_blank"
                 rel="noreferrer"
               >
+                <GitHubMark className="h-3.5 w-3.5" />
                 Source on GitHub
                 <ArrowUpRight className="h-3 w-3" />
               </a>

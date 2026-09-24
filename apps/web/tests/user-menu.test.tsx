@@ -5,6 +5,17 @@ import { TokenCountdown, UserMenu } from '../src/components/user-menu';
 const EXP = 1_000_000;
 
 describe('UserMenu pill', () => {
+  it('draws the same initials as the landing card, however Curity named the user', () => {
+    // No `profile` scope at login, so the session name is often the username or the email.
+    for (const name of ['alice', 'alice@demo.curity.local', 'Alice Andersson']) {
+      const html = renderToStaticMarkup(<UserMenu name={name} />);
+      expect(html, name).toMatch(/data-avatar-initials[^>]*>AA</);
+    }
+    expect(renderToStaticMarkup(<UserMenu name="bob" />)).toMatch(/>BB</);
+    expect(renderToStaticMarkup(<UserMenu name="carol" />)).toMatch(/>CC</);
+    // someone off the persona sheet still gets initials from what we have
+    expect(renderToStaticMarkup(<UserMenu name="dave" />)).toMatch(/>DA</);
+  });
   it('shows acr=mfa as a green badge beside the name', () => {
     const html = renderToStaticMarkup(
       <UserMenu name="alice" acr="mfa" expiresAt={EXP} now={(EXP - 300) * 1000} />,

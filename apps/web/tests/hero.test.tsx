@@ -150,6 +150,10 @@ describe('AppShell hero', () => {
       expect(out).toMatch(
         /<a[^>]*href="https:\/\/github\.com\/curityio\/ai-agents-auth-demo"[^>]*rel="noreferrer"[^>]*>[\s\S]*?Source on GitHub/,
       );
+      // the GitHub mark leads the link, decorative beside its text
+      expect(out).toMatch(
+        /<a[^>]*href="https:\/\/github\.com\/curityio\/ai-agents-auth-demo"[^>]*>\s*<svg[^>]*data-github-mark[^>]*aria-hidden="true"[\s\S]*?Source on GitHub/,
+      );
     }
   });
 });
