@@ -53,7 +53,10 @@ print_personas() {
     local password secret uri
     password="$(env_value "$u" PASSWORD)"
     secret="$(env_value "$u" TOTP_SECRET)"
-    uri="otpauth://totp/${ISSUER}:${u}?secret=${secret}&issuer=${ISSUER}&algorithm=SHA1&digits=6&period=30"
+    # secret + issuer only: algorithm/digits/period are the RFC 6238 defaults (SHA1/6/30)
+    # that every authenticator assumes and Curity's TOTP plugin uses. Spelling them out
+    # added 34 bytes and pushed the QR from version 5 (37 modules) to 6 (41).
+    uri="otpauth://totp/${ISSUER}:${u}?secret=${secret}&issuer=${ISSUER}"
     printf '\n'
     printf '  %s   (role: %s)\n' "$u" "$(role_of "$u")"
     printf '    %-14s %s\n' 'username' "$u"
@@ -64,9 +67,12 @@ print_personas() {
       # ANSI256UTF8, not ANSIUTF8: the latter paints with ANSI black/white (40/37), which
       # terminal themes remap to their own dark/light tints — a low-contrast blue-grey QR
       # that phone cameras struggle with. Indexed 256-colour black (16) / white (231) are
-      # left alone by themes. -m 2 keeps a real quiet zone around the code.
+      # left alone by themes. It renders two modules per text row (half blocks), so the
+      # size is set by the QR version + margin: -m 1 keeps a one-module white quiet zone
+      # (phone scanners cope with it on a terminal, the 4-module rule is for print) and
+      # with the trimmed URI the card is 19 rows × 40 columns instead of 23 × 46.
       printf '\n'
-      qrencode -t ANSI256UTF8 -m 2 "$uri" | sed 's/^/      /'
+      qrencode -t ANSI256UTF8 -m 1 "$uri" | sed 's/^/      /'
     fi
   done
   printf '\n'

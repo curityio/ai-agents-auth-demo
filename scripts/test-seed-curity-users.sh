@@ -161,6 +161,10 @@ for u in alice bob carol; do
   grep -q "otpauth://totp/.*$u.*secret=$(sed -n "s/^$(echo $u | tr a-z A-Z)_TOTP_SECRET=//p" "$ENVF")" "$TMP/print.out" \
     || fail "--print must show $u's otpauth URI with the secret from the env file"
 done
+# The otpauth URI carries only secret + issuer: algorithm/digits/period are the RFC 6238
+# defaults (SHA1/6/30) every authenticator assumes and Curity's TOTP plugin uses, and
+# each byte costs QR modules — dropping them takes the code from version 6 to 5.
+! grep -Eq "otpauth://[^ ]*(algorithm=|digits=|period=)" "$TMP/print.out" || fail "the otpauth URI must not spell out the RFC 6238 defaults (they only enlarge the QR)"
 grep -q "Password1" "$TMP/print.out" || fail "--print must show the passwords"
 grep -q "Custom9" "$TMP/print.out" || fail "--print must show an EDITED password (carol), not the default"
 # roles come from k8s/curity/procedures/add-roles.js — the card must agree with it
