@@ -22,6 +22,11 @@ want kind       "brew install kind"                                             
 want kubectl    "brew install kubectl"                                              || true
 want helm       "brew install helm"                                                 || true
 want mkcert     "brew install mkcert"                                               || true
+# python3 is not an app runtime — the TypeScript services never touch it — but the
+# host-side glue does: `make apply`'s embed/render scripts (Curity procedures, theme,
+# mkcert CA, agentgateway config), `scripts/jwks-guard.sh` and most smoke scripts
+# parse XML/YAML/JSON with it. macOS ships no python3 since 12.3, so declare it.
+want python3    "brew install python (or Xcode CLT: xcode-select --install)"        || true
 
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]')"

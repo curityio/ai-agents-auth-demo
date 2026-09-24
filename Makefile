@@ -80,7 +80,7 @@ help: ## Show available targets
 # Preflight + TypeScript workspace
 # ============================================================================
 .PHONY: tools-check
-tools-check: ## Verify required CLIs (node>=20, pnpm, docker, kind, kubectl, helm, mkcert)
+tools-check: ## Verify required CLIs (node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3)
 	@bash scripts/tools-check.sh
 
 .PHONY: install

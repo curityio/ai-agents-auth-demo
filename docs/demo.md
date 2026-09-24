@@ -272,7 +272,7 @@ Ambient.
 
 ## 4. Prerequisites
 
-- Docker, `kind`, `kubectl`, `helm`, `mkcert`, `pnpm`, Node ≥ 22.
+- Docker, `kind`, `kubectl`, `helm`, `mkcert`, `pnpm`, Node ≥ 22, `python3` (used only by the host-side embed/render/smoke scripts, not by any service). `make tools-check` verifies all of them.
   Run `make tools-check` to verify.
 - A **Curity developer license** — copy it to the repo root as `license.json`
   (gitignored). `make demo` will prompt and wait if it's missing.

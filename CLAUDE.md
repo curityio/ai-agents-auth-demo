@@ -1074,7 +1074,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 `make help` prints the canonical list. The ones that matter day-to-day:
 
 ```bash
-make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert
+make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3 (host-side embed/render/smoke scripts)
 make demo            # stand up the full platform on a fresh KIND cluster
 make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
 make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret; prints the otpauth URIs (fact #15)
