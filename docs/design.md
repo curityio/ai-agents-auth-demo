@@ -79,7 +79,9 @@ from this package); `agent-specialist` depends on it directly.
 | File | Exports | Responsibility |
 |---|---|---|
 | `llm.ts` | `buildLlm(cfg, opts?)` | Builds a single OpenAI-compatible Vercel AI SDK model pointed at agentgateway's `/llm` route; requires a per-request `opts.accessToken`. There is exactly ONE path — no per-agent provider choice and no direct-to-vendor mode. Which vendor answers `/llm` is a gateway-side config choice (§3.6, [`docs/llm-providers.md`](llm-providers.md)), not something the agent selects. |
-| `mcp-toolset.ts` | `openMcpToolset({url, bearerToken, …})` → `McpToolset`, `mcpInputSchema`, `requiredRolesOf`, `MCP_TOOL_META_REQUIRED_ROLES` | Connects to an MCP server over Streamable HTTP with a Bearer token (revision pinned to 2026-07-28, `cachePartition` = token `sub`), passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. Also exposes the raw `tools/list` entries as `listed` (name, description, `_meta`) — the AI SDK tool object has nowhere to carry `_meta`, which is where mcp-ops publishes a tool's required roles (`io.curity.demo/required-roles`, read by `requiredRolesOf`). A gateway HTTP 403 on `tools/call` is converted into a factual `{error:'forbidden', tool}` result rather than a thrown transport error (§3.7.1). `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
+| `mcp-toolset.ts` | `openMcpToolset({url, authProvider, …})` → `McpToolset`, `mcpInputSchema`, `requiredRolesOf`, `MCP_TOOL_META_REQUIRED_ROLES` | Connects to an MCP server over Streamable HTTP through the SDK's `authProvider` seam (per-request bearer from `token()`, one re-acquire via `onUnauthorized()` on 401; revision pinned to 2026-07-28, `cachePartition` = token `sub`), passes each MCP tool's advertised JSON Schema through verbatim as the AI SDK's `inputSchema`, and exposes them as a Vercel AI SDK `ToolSet`. Also exposes the raw `tools/list` entries as `listed` (name, description, `_meta`) — the AI SDK tool object has nowhere to carry `_meta`, which is where mcp-ops publishes a tool's required roles (`io.curity.demo/required-roles`, read by `requiredRolesOf`). A gateway HTTP 403 on `tools/call` is converted into a factual `{error:'forbidden', tool}` result rather than a thrown transport error (§3.7.1). `.close()` tears the connection down. An optional `fetchImpl` lets the caller intercept responses (e.g. the specialist's step-up interceptor). |
+| `mcp-oauth-client.ts` | `discoverMcpAuthorization(serverUrl, opts?)` → `McpAuthDiscovery`, `createMcpAuthProvider({serverUrl, service, exchange})` → `McpAuthProvider`, `isDiscoveryFailure`, `wellKnownPrmUrls` | The MCP 2026-07-28 client side of authorization: unauthenticated probe → `WWW-Authenticate` → RFC 9728 PRM (resource must equal the server URL) → RFC 8414/OIDC AS metadata (issuer echo, CIMD flag, HTTPS token endpoint) → scope selection (challenge, else `scopes_supported`, else refuse). Fail-closed with typed `CurityAuthError` codes; 10-min cache per server; one `DISCOVER` log per cold run. The provider's `acquire()` calls the agent-supplied `exchange` (the unchanged RFC 8693 helper); `onUnauthorized()` forces re-discovery and exchanges once more; an RFC 9470 challenge is never retried. |
+| `authorization-server.ts` | `resolveAuthorizationServer(issuer, opts?)` → `{issuer, tokenEndpoint, metadata}` | RFC 8414/OIDC discovery for hops with no MCP server to discover from (LLM egress, A2A delegation): the issuer is configured, the token endpoint is read from metadata. Same validations and cache as the MCP path. |
 
 ---
 
@@ -194,6 +196,36 @@ bus. **Every authorization gate sits outside the LLM loop**, in this fixed order
    reporting `ok`, and in the `catch` before reporting `specialist_failure`), and
    passes `stopEarly` into `stopWhen` so the loop halts on the first challenge
    instead of retrying into the same 401.
+
+### How an agent learns where to get its MCP token (discovery)
+
+Both agents are MCP clients in the sense of the 2026-07-28 authorization chapter:
+they start with the server URL and their CIMD identity and learn everything else
+from the server. `createMcpAuthProvider` runs, per toolset open:
+
+1. `POST <serverUrl>` with no token → `401`, `WWW-Authenticate: Bearer resource_metadata="…"`.
+   Anything but 401 is `discovery_failed`.
+2. `GET resource_metadata` (else `/.well-known/oauth-protected-resource<path>`, then the
+   root) → the PRM. `resource` must equal the server URL → else `resource_mismatch`.
+3. `GET` RFC 8414 metadata for `authorization_servers[0]` (SDK helper, path-insertion
+   form first, issuer echo enforced). `client_id_metadata_document_supported` must be
+   `true` → else `cimd_unsupported`. `token_endpoint` must be HTTPS.
+4. Scope = the challenge's `scope`, else `scopes_supported` → else `scope_unavailable`.
+5. `exchange({tokenEndpoint, scope})` — the agent's unchanged `obtainXToken`, i.e.
+   `exchangeToken` with the configured `audience` and the SVID as actor.
+
+The result is cached ten minutes per server URL. The SDK transport then attaches
+`token()` to every request; on a 401 it calls `onUnauthorized()`, which re-runs
+steps 2–5 with the cache bypassed and the received challenge as step 1, and
+retries once. An `insufficient_user_authentication` challenge is never exchanged
+or retried (the specialist's intercepting fetch normally converts it first).
+
+What is not discovered, and why: the RFC 8693 `audience` (RFC 8707 `resource` is
+not yet accepted by Curity; the logical name is its stand-in), and the grant (the
+agents hold a delegated user token; the spec's authorization-code flow needs a
+browser they do not have). The MCP spec's own scope-based step-up (403
+`insufficient_scope` → scope union) is not exercised because the demo's step-up is
+RFC 9470 — see the note under *Resource-server middleware*.
 
 ### Visibility surfaces (debug routes + web panels)
 
@@ -737,12 +769,10 @@ Representative variables (see `k8s/workloads/*.yaml` for the authoritative set):
 |---|---|---|
 | `CURITY_ISSUER` | all | OIDC issuer (`…/oauth/v2/oauth-anonymous`) |
 | `CURITY_JWKS_URI` | all validators | JWKS endpoint for verification |
-| `CURITY_TOKEN_ENDPOINT` | exchange clients | `…/oauth/v2/oauth-token` |
 | `*_AUDIENCE` / `MCP_AUDIENCE` / `API_AUDIENCE` | validators | the audience this server accepts |
 | `REQUIRED_SCOPES` | resource servers | scope gate |
 | `REQUIRED_ACR` | `mcp-ops`, `ops-api` | step-up requirement (`mfa`) |
-| `MCP_OPS_METADATA_URL` | `agent-specialist` | in-cluster URL the RFC 9728 document is *fetched* from when building a step-up challenge. Distinct from `MCP_OPS_RESOURCE_METADATA_URL` (the public identifier put in the challenge) and from `MCP_OPS_URL` (the agentgateway front door, which serves no `/.well-known`). |
-| `<DOWNSTREAM>_URL` / `_AUDIENCE` / `_SCOPE` | exchange clients | the next hop's address, exchange audience, requested scope |
+| `<DOWNSTREAM>_URL` / `_AUDIENCE` | exchange clients | the next hop's address and RFC 8693 exchange audience. **For MCP hops that is all:** the authorization server, token endpoint and scope are discovered (`mcp-oauth-client.ts`), and the MCP servers' URL is the agentgateway's PUBLIC name (`https://mcp-gateway.localtest.me/<tier>/mcp`) because RFC 9728 requires the PRM `resource` to equal the URL the client calls. `_SCOPE` survives only on the non-MCP hops (`SPECIALIST_SCOPE`, `LLM_GATEWAY_SCOPE`). |
 | `AGENT_CLIENT_ID` + `CURITY_AGENT_PRIVATE_KEY_PEM` | the two agents | CIMD client_id URL + RSA key for `private_key_jwt` |
 | `*_CLIENT_ID` + secret | MCP exchange clients | `client_secret_basic` credentials |
 | `LLM_GATEWAY_URL` / `_AUDIENCE` / `_SCOPE` | the two agents | agentgateway's `/llm` route + the `aud=llm-gateway`/`scope=llm:invoke` exchange. The agents have no `LLM_PROVIDER`/`LLM_MODEL` — the gateway pins the model and the vendor is a gateway-side choice ([`docs/llm-providers.md`](llm-providers.md)) — and hold no vendor credential. |

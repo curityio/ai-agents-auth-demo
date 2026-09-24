@@ -348,6 +348,9 @@ again:
     Specialist client metadata       https://specialist.localtest.me/.well-known/oauth-client
     mcp-ops resource metadata        https://mcp-ops.localtest.me/.well-known/oauth-protected-resource
     mcp-observability resource md    https://mcp-observability.localtest.me/.well-known/oauth-protected-resource
+    agentgateway PRM (read tier)     https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/observability/mcp
+    agentgateway PRM (write tier)    https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp
+    Curity RFC 8414 metadata         https://curity.localtest.me/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous
 ```
 
 The **Apps** are click-to-use — sign in with one of the persona cards `make users`
@@ -481,7 +484,13 @@ What to point at in a single remediation trace:
 - **One trace, many services, two tiers** — `web → agent-copilot →
   agent-specialist`, then the specialist fans out to **both**
   `mcp-observability → obs-api` (reads) **and** `mcp-ops → ops-api` (writes),
-  plus `auth.token_exchange` spans against Curity.
+  plus `auth.token_exchange` spans against Curity. The agents call agentgateway
+  by its public name (`mcp-gateway.localtest.me`), so an `istio-ingress` span
+  sits between each agent and agentgateway on the MCP hops.
+- **Discovery is visible too** — after an agent restart, `kubectl logs` shows one
+  `DISCOVER` block per MCP server (the 401 → RFC 9728 → RFC 8414 walk and the
+  scope it picked) before the first `EXCHANGE`; cache hits are silent for ten
+  minutes.
 - **`auth.sub=alice`** on every span — the human identity propagates intact.
 - **`auth.act[]` grows** hop by hop and shows the specialist on *both* tiers.
   Every chain includes **`agentgateway`**, which inserts itself when the
@@ -781,6 +790,8 @@ make reset             # delete cluster + reclaim docker build cache
 | TLS warnings in the browser | Expected — `make certs` no longer installs the root CA into the keychain by default. Run `make trust-ca` and restart the browser to trust it (undo with `mkcert -uninstall`). |
 | Curity pod stuck in `Init:Error` / `CreateContainerConfigError` | The `seed-users` init container failed. `kubectl -n curity logs deploy/curity -c seed-users`; a missing `curity-demo-users` Secret means `make seed-users` has not run. |
 | A TOTP code is rejected after a rebuild | The authenticator entry belongs to an older `.demo-users.env`. Re-run `make seed-users`, then `make users` and re-enrol the printed QR codes; the file — not the cluster — is the source of truth. |
+| `502 mcp_unavailable` with `discovery_failed` / `resource_mismatch` in the agent log | The agent could not walk 401 → RFC 9728 → RFC 8414 against `https://mcp-gateway.localtest.me`. Run `make smoke-mcp-discovery` (no token needed): a `PRM answered 404/000` means the gateway's well-known route match or the edge host is missing (`make apply`); a `resource … != …` means `MCP_*_URL` and the gateway's `resourceMetadata.resource` disagree; `make routing-check` catches a pod without the `mcp-gateway.localtest.me` alias. |
+| `502 mcp_unavailable` with `cimd_unsupported` | Curity's metadata no longer advertises `client_id_metadata_document_supported: true` — the `<ephemeral-client>` block was removed or Curity is not the AS the PRM names. |
 
 ---
 

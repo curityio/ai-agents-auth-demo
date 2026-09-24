@@ -47,7 +47,7 @@ These ride on top of Istio Ambient **mTLS** (transport identity) and Kubernetes
 | **Curity Identity Server** | `curity` | 8443 | The **sole** token issuer. OIDC for the user; RFC 8693 token exchange for every agent/MCP hop; hosts the SPIFFE-aware token-exchange procedure. |
 | **SPIRE** (server/agent/CSI) | `spire*` | — | Issues and rotates SPIFFE JWT-SVIDs (5-minute TTL) to every workload via a `spiffe-helper` sidecar. |
 | **Istio Ambient** (ztunnel/cni/istiod) | `istio-system` | — | Transparent ztunnel L4 mTLS for all in-mesh traffic. |
-| **Istio edge gateway** | `istio-ingress` | 80/443 | Terminates TLS for `app`/`curity`/`grafana`, the two agents' CIMD hosts (`copilot`/`specialist`), and the two MCP hosts (`mcp-ops`/`mcp-observability`, so their RFC 9728 metadata is browsable); the single ingress into the cluster. |
+| **Istio edge gateway** | `istio-ingress` | 80/443 | Terminates TLS for `app`/`curity`/`grafana`, the two agents' CIMD hosts (`copilot`/`specialist`), the two MCP hosts (`mcp-ops`/`mcp-observability`, so their RFC 9728 metadata is browsable) and `mcp-gateway` (the MCP front door, which the agents call by that public name); the single ingress into the cluster. |
 | **agentgateway** (+ co-located `exchange-shim`) | `mcp` | 8080 | The MCP front door for BOTH MCP servers, **and** the LLM egress gateway. Three path-scoped routes on one listener: `/observability/mcp` → mcp-observability, `/ops/mcp` → mcp-ops, `/llm` → the configured LLM provider. For MCP: validates the caller's `aud=mcp-gateway` JWT, applies **coarse per-tier scope authz** (per-route `ops:write`/`obs:read`) and filters `tools/list` by that tier scope — it does *not* split ops tools by role (the `set_deployment_image`=`sre` split is enforced downstream at mcp-ops) — and for each tool-call drives an `extAuthz` call to the co-located `exchange-shim` (`:8090`, same pod), which performs the RFC 8693 OBO exchange using the gateway's SPIFFE JWT-SVID as the `actor_token` and swaps the narrowed downstream token onto the request. Inserts one `act` position (`…/ns/mcp/sa/agentgateway`). Does *not* enforce the `act` chain or step-up (those stay in the resource-server middleware). For `/llm`: validates a separate `aud=llm-gateway` JWT, requires `llm:invoke`, and injects the **only** upstream LLM provider API key in the system (`backendAuth.key`) — no shim, no `act`-chain (the provider is outside the trust domain, so there is no downstream workload to nest). The provider block is generated from `.demo.env`; see `llm-providers.md`. |
 | **OTel Collector → Tempo → Grafana** | `observability` | — | Distributed tracing. Identity attributes ride on the spans so the whole OBO chain is visible in one trace. |
 | **prod** sample workloads | `prod` | — | Two sample deployments, `order-service` and `checkout-service` (busybox), that the copilot observes and the specialist restarts, scales or re-images. |
@@ -145,11 +145,15 @@ flowchart TB
 ```
 
 The arrows above are the request/OBO flow. The edge gateway also terminates TLS
-for the `curity`, `copilot`/`specialist` (CIMD), and `mcp-ops`/`mcp-observability`
-hosts purely so their discovery/`.well-known` documents (Curity OIDC metadata, the
-agents' CIMD metadata + JWKS, the MCP servers' RFC 9728 protected-resource
-metadata) are reachable over a trusted TLS cert. Those are *metadata* paths — the
-actual agent→MCP→API calls stay in-mesh over ztunnel mTLS, never through the edge.
+for the `curity`, `copilot`/`specialist` (CIMD), `mcp-ops`/`mcp-observability` and
+`mcp-gateway` hosts. For Curity, the agents and the two origin MCP servers that is
+purely so their discovery/`.well-known` documents are reachable over a trusted TLS
+cert. For `mcp-gateway.localtest.me` it is more: the agents CALL the MCP front door
+by that name, because they are spec-shaped MCP clients that discover the
+authorization server from the gateway's own RFC 9728 document, and RFC 9728 has
+the client check that the document's `resource` equals the URL it uses. The
+agent→gateway hop therefore enters through the edge; the gateway→MCP→API hops stay
+in-mesh over ztunnel mTLS.
 
 **LLM calls.** Both agents drive their tool-calling loops against an **LLM
 provider**, but neither calls it directly. Each exchanges the user's access token
@@ -563,7 +567,9 @@ produced no output.
 | **CIMD** (Client ID Metadata Documents draft) + **RFC 7523** `private_key_jwt` | the two agents authenticate as ephemeral clients — `client_id` is a self-hosted metadata URL, auth is an asymmetric signed assertion |
 | **SPIFFE / SPIRE** | per-workload JWT-SVID, presented as `actor_token` |
 | **RFC 9470** step-up | `acr=mfa` required for `ops:write`; `WWW-Authenticate: insufficient_user_authentication` |
-| **RFC 9728** protected-resource metadata | MCP/API `.well-known/oauth-protected-resource`, echoed in step-up challenges |
+| **RFC 8414** authorization-server metadata | the agents read Curity's `token_endpoint` and `client_id_metadata_document_supported` from `/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous`; nothing about the token endpoint is configured |
+| **RFC 9728** protected-resource metadata | MCP/API `.well-known/oauth-protected-resource`, served by the origin servers AND by agentgateway per route; advertised in every 401 (`resource_metadata`) and in step-up challenges; the agents discover the AS from it and check `resource` against the URL they call |
+| **MCP authorization (2026-07-28)** | servers: 401/403 challenges with `resource_metadata` + `scope`, RFC 6750 codes; clients: discovery chain, scope-selection order, CIMD gating. Deviations: RFC 8707 `resource` deferred (Curity), grant is RFC 8693 not authorization-code, step-up is RFC 9470 |
 
 ---
 

@@ -343,6 +343,22 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       token onto the request before forwarding to the origin MCP server. **The shim
       exists because agentgateway's CEL cannot read the rotating SVID file** — the
       exchange must run in a co-located sidecar.
+    - **The gateway's RFC 9728 document is served ONLY for requests that match a
+      route, and agents reach the gateway by its PUBLIC name.** `mcpAuthentication`
+      makes the 401 advertise `resource_metadata="https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/<route>"`,
+      but `mcp/auth.rs` answers the well-known path only after routing, so each MCP
+      route carries a second `exact: /.well-known/oauth-protected-resource/<path>`
+      match (mirrors upstream `examples/mcp-authentication`). Until 2026-09-24 that
+      match was missing and the host had no edge listener — the 401 pointed at a URL
+      that answered `404 route not found`. Now `mcp-gateway.localtest.me` is a TLS
+      host on the edge (`gateway-edge.yaml`, `apply-tls-secrets.sh`,
+      `mkcert-bootstrap.sh`), aliased into the web pod AND both agent pods by
+      `cluster-routing.sh`, and `MCP_*_URL` on the agents is that public URL — RFC
+      9728 §3.3 has the client check `resource == the URL it calls`, so the
+      in-cluster Service name cannot be used. Extra `resourceMetadata` keys are
+      flattened + snake_cased into the document (`acrValuesSupported` →
+      `acr_values_supported`). `make smoke-mcp-discovery` walks the chain;
+      `make test-scripts` pins the config.
     - **The gateway inserts ONE position into every downstream `act` chain** — SPIFFE
       ID `spiffe://demo.curity.local/ns/mcp/sa/agentgateway`. So obs-api now expects
       `[mcp-observability, agentgateway, agent-copilot]` (copilot direct) OR
@@ -853,8 +869,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `sub` + `jti` of the CURRENT inbound token** and shows one branch (observe XOR
       privileged), whichever is newer. Without the `jti` gate a previous login's
       exchange for the same user leaked into a fresh session before any flow ran.
-    - **Probes are not flows.** `/tools` reuses `obtainMcpToken` / `obtainSpecialistToken`
-      / `obtainOpsToken`, which stamp those slots on cache hits too, so the probes pass
+    - **Probes are not flows.** `/tools` reuses the agents' auth providers
+      (`buildObservabilityAuthProvider` / `buildOpsAuthProvider`, whose `exchange`
+      callbacks are `obtainMcpToken` / `obtainOpsToken`) and `obtainSpecialistToken`,
+      which stamp those slots on cache hits too, so the probes pass
       `recordLastExchange: false`. Forgetting it makes *Check tools* conjure a
       specialist branch that never ran. Pinned by contract tests on both tools routes.
     - **The MCP servers build their rows from the last tool call's slot, not from the
@@ -964,6 +982,44 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `monitorInterval`s; don't count on it for diagnosis — read the source instead
       (`~/workspace/curity/idsvr-work/identity-server`, `identityserver.authn`).
 
+37. **The agents are spec-shaped MCP clients: the authorization server, token
+    endpoint and scope of every MCP hop are DISCOVERED, and the only static
+    per-server inputs are the URL and the RFC 8693 `audience`.**
+    `packages/agent-runtime/src/mcp-oauth-client.ts` runs MCP 2026-07-28's sequence
+    with the SDK's own helpers: unauthenticated POST → 401 → `resource_metadata`
+    (else well-known path-form, then root) → RFC 9728 PRM (its `resource` MUST equal
+    the URL called, trailing slash aside) → `authorization_servers[0]` → RFC 8414 /
+    OIDC metadata (issuer-echo checked by the SDK; `client_id_metadata_document_supported`
+    MUST be true; HTTPS `token_endpoint`) → scope = the challenge's `scope`, else
+    `scopes_supported`, else refuse. Cached 10 min per server URL; one `DISCOVER`
+    OBO-log block per cold run. `createMcpAuthProvider` wraps it as the SDK's
+    `AuthProvider`: `acquire()` = discovery + the UNCHANGED `exchangeToken`,
+    `onUnauthorized()` = forced re-discovery + one more exchange (the transport
+    retries once), and an RFC 9470 challenge is never exchanged or retried. The
+    non-MCP hops (LLM, A2A delegation) resolve the token endpoint from
+    `CURITY_ISSUER`'s metadata via `resolveAuthorizationServer`, so
+    `CURITY_TOKEN_ENDPOINT` no longer exists anywhere on the agents; nor do
+    `MCP_*_SCOPE`, `MCP_OPS_RESOURCE_METADATA_URL`, `MCP_OPS_METADATA_URL`. Gotchas:
+    - **Discovery failures are 502, exchange refusals are 403.** `isDiscoveryFailure`
+      (`discovery_failed`/`resource_mismatch`/`cimd_unsupported`/`scope_unavailable`)
+      separates "could not learn the AS" from "the AS said no". Don't collapse them.
+    - **The specialist's step-up challenge is built from the DISCOVERED gateway PRM**
+      (`stepUpFromDiscovery`: `acr_values_supported[0]`, the selected scope, the PRM
+      URL) — so the ops route's `resourceMetadata` MUST carry `acrValuesSupported`.
+    - **`RFC 8707 resource` is deliberately absent** (Curity does not accept it yet);
+      the configured `audience` is the placeholder for it. Switching audiences to
+      resource URIs touches the Curity policy, the gateway `audiences`, the shim and
+      every smoke script — a separate change.
+    - **The gateway probe expects exactly 401.** A route that answers 200 unauthenticated
+      is refused (`discovery_failed`), on purpose: a server that does not require a
+      token is not one to hand a token to.
+    - **`beforeEach(() => mock.mockReset())` is a trap in vitest.** `mockReset()` returns
+      the mock, and a function returned from a `beforeEach` is run as an after-test
+      cleanup — so the mock gets CALLED after every test. Harmless with
+      `mockResolvedValue`; with `mockRejectedValue` the rejection is attributed to the
+      test and it fails with the mocked error's own message and a stack pointing at the
+      `new Error(...)` line. Both MCP servers' middleware tests had it. Use braces.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -980,7 +1036,8 @@ make images          # build all 8 app images and `kind load` them; IMAGES="web 
 make apply           # apply manifests + embed procedures + embed mkcert CA + run routing
 make routing         # re-patch hostAliases + mkcert CA into app pods + Curity→agent aliases
 make status          # pod health across every demo namespace
-make smoke           # routing-check + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
+make smoke           # routing-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
+make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
 make test-scripts    # shell-script contract tests (gateway-config render, theme embed)
