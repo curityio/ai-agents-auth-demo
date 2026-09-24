@@ -54,34 +54,39 @@ Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP
 
 See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 
+## Tested on
+
+| | Verified | Notes |
+|---|---|---|
+| **Host OS** | macOS with Docker Desktop | Linux is untested but nothing is Mac-specific beyond the `brew` hints. |
+| **LLM provider** | **Azure OpenAI** (`LLM_PROVIDER=azure`, the default) | OpenAI, Anthropic and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
+| **Footprint** | Single-node KIND; give Docker about **30 GB of disk** | `make demo` takes about **10–15 minutes** on a fresh machine, most of it is image builds. Ports **80 and 443** on localhost must be free for the Istio ingress. |
+
 ## Prerequisites (macOS)
 
-You need **Docker running** (Docker Desktop or OrbStack), a few CLIs, a Curity
+You need **Docker running** (Docker Desktop), a few CLIs, a Curity
 developer license, and an API key for one supported LLM provider (OpenAI,
 Anthropic, Gemini, or Azure OpenAI).
 
 ```bash
-# 1. CLIs via Homebrew (Node 22+ is required; the rest are tools the Makefile drives).
-brew install node kind kubectl helm mkcert
+# 1. CLIs via Homebrew (Node 22+ is required; python3 is used only by the host-side
+#    embed/render/smoke scripts; qrencode is optional and turns the TOTP URIs into QR codes).
+brew install node kind kubectl helm mkcert python qrencode
 
 # 2. pnpm — NO separate install. It ships with Node via corepack:
 corepack enable          # provisions the repo-pinned pnpm (9.15.0)
 
-# 3. Verify the toolchain (node>=22, pnpm, docker, kind, kubectl, helm, mkcert):
+# 3. Verify the toolchain (node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3):
 make tools-check
 ```
 
 Two things `make tools-check` can't check for — have them ready before `make demo`:
 
-- **Curity developer license** → save it as `./license.json` at the repo root (gitignored).
+- **Curity developer license** — free from the [Curity developer portal](https://developer.curity.io);
+  save it as `./license.json` at the repo root (gitignored).
 - **An LLM provider API key** — the agents' reasoning runs on it, so without it
-  they can't respond. Pick one of `openai`, `anthropic`, `gemini` or `azure` in
-  `.demo.env` (copy [`.demo.env.example`](.demo.env.example)); azure additionally
-  needs `AZURE_OPENAI_ENDPOINT`. The key is seeded **only into the agentgateway**
-  (`agentgateway-llm` secret, ns `mcp`, under `LLM_API_KEY`); the agents reach the
-  provider through the gateway's `/llm` route and never hold the key themselves.
-  `make demo` prompts for it (via `make seed-secrets` → `seed-llm-secret`).
-  Switching provider later is one file plus `make configure-llm` — see
+  they can't respond. Pick one of `openai`, `anthropic`, `gemini` or `azure` when prompted
+  Switching provider later, run `make configure-llm` — see
   [`docs/llm-providers.md`](docs/llm-providers.md).
 
 `make demo` generates the local mkcert CA (via `make certs`) but, by default,
@@ -190,10 +195,13 @@ Makefile
 
 ## Troubleshooting
 
-See the table in [`docs/demo.md`](docs/demo.md#8-troubleshooting). The most
-common gotcha: re-run `make routing` after recreating the cluster. (Curity users
-survive a `rollout restart` — an init container re-seeds them from the
-`curity-demo-users` Secret.)
+See the table in [`docs/demo.md`](docs/demo.md#8-troubleshooting). The two most
+common gotchas: re-run `make routing` after recreating the cluster, and if the
+first read on a fresh cluster fails with `401 Jwt verification fails`, run
+`make jwks-heal` (the apis-tier waypoint cached a placeholder JWKS while Curity
+was still booting; `make jwks-check` confirms it). Curity users survive a
+`rollout restart` — an init container re-seeds them from the
+`curity-demo-users` Secret.
 
 ## License
 
