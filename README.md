@@ -50,9 +50,16 @@ Browser ─https─▶ web (BFF) ─user token─▶ agent-copilot ─┬─ MCP
               every agent/MCP hop ⇄ Curity (RFC 8693 exchange, SPIFFE actor_token)
 ```
 
-<a href="docs/architecture.jpg"><img src="docs/architecture-animated.svg" alt="System topology: browser → istio-ingress → web (BFF) → agent-copilot, fanning out via MCP to mcp-inspect/inspect-api (read path) and via A2A to agent-specialist → mcp-ops/ops-api (privileged path), with SPIRE issuing JWT-SVIDs and Curity performing RFC 8693 token exchange at every hop." width="100%"></a>
+<img src="docs/architecture-animated.svg" alt="System topology: browser → istio-ingress → web (BFF) → agent-copilot, fanning out via MCP to mcp-inspect/inspect-api (read path) and via A2A to agent-specialist → mcp-ops/ops-api (privileged path), with SPIRE issuing JWT-SVIDs and Curity performing RFC 8693 token exchange at every hop." width="100%">
 
-<sub>Animated: the login, then the read path (lilac) and the privileged path (amber). Each namespace's JWT-SVID drops from SPIRE as the request reaches it, and each hop exchanges its token at Curity. Click for the static diagram; regenerate with `python3 scripts/render-architecture-svg.py`.</sub>
+<sub>Animated: the login, then the read path (lilac) and the privileged path (amber). Each namespace's JWT-SVID drops from SPIRE as the request reaches it, and each hop exchanges its token at Curity. A still version is below; regenerate both with `python3 scripts/render-architecture-svg.py`.</sub>
+
+<details>
+<summary>Show static diagram</summary>
+
+<a href="docs/architecture.svg"><img src="docs/architecture.svg" alt="System topology: browser → istio-ingress → web (BFF) → agent-copilot, fanning out via MCP to mcp-inspect/inspect-api (read path) and via A2A to agent-specialist → mcp-ops/ops-api (privileged path), with SPIRE issuing JWT-SVIDs and Curity performing RFC 8693 token exchange at every hop." width="100%"></a>
+
+</details>
 
 See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 

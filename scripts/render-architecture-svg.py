@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Render docs/architecture-animated.svg — the README's animated topology.
+"""Render the architecture diagram: docs/architecture-animated.svg + docs/architecture.svg.
 
-A vector redraw of docs/architecture.jpg with a looping walk-through: the
+The topology with a looping walk-through: the
 login, the read path (inspect:read) and the privileged path (ops:write,
 acr=mfa). Each namespace's JWT-SVID drops from SPIRE as the packet reaches it,
 and each agent/MCP hop drops to Curity for its RFC 8693 exchange. The SVG must work inside a GitHub README, i.e. through <img>: no
@@ -9,13 +9,18 @@ script, no external fonts or images — motion is SMIL only, and every animated
 element shares one clock (dur=T, repeatCount=indefinite) with keyTimes
 selecting its window. prefers-reduced-motion hides the motion layer.
 
-    python3 scripts/render-architecture-svg.py   # writes docs/architecture-animated.svg
+The static docs/architecture.svg is the same drawing minus the motion layer
+and the timed captions, so the two cannot drift apart.
+
+    python3 scripts/render-architecture-svg.py   # writes both SVGs
 """
 import math
 import pathlib
 import re
 
-OUT = pathlib.Path(__file__).resolve().parent.parent / "docs" / "architecture-animated.svg"
+DOCS = pathlib.Path(__file__).resolve().parent.parent / "docs"
+OUT_ANIMATED = DOCS / "architecture-animated.svg"
+OUT_STATIC = DOCS / "architecture.svg"
 
 W, H = 2000, 1090
 SPEED = 480.0  # packet speed, viewBox units per second
@@ -457,6 +462,7 @@ for name, color in [("read", READ), ("priv", PRIV), ("white", "#d0d7de"), ("blue
     )
 e('<filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="5"/></filter>')
 e('<filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.2"/></filter>')
+style_at = len(out)  # the static render drops this rule, which hides its fixed caption
 e(
     "<style>.static{display:none}"
     "@media (prefers-reduced-motion: reduce){#motion,#captions{display:none}.static{display:inline}}</style>"
@@ -588,6 +594,7 @@ for i, (label, color) in enumerate([("access token", PINK), ("JWT-SVID", BLUE)])
     text(lx + 44, yy + 5, label, 13, color, anchor="start")
 
 # motion layer
+motion_at = len(out)
 e('<g id="motion">')
 for a in anim:
     e(render_deferred(a))
@@ -603,8 +610,11 @@ for t0, t1, s in captions:
         )
     )
 e("</g>")
+motion_end = len(out)
 text(200, 1050, "read path (lilac): inspect:read  ·  privileged path (amber): ops:write + acr=mfa step-up", 21, FG, anchor="start", font=SANS, extra='class="static"')
 
 e("</svg>")
-OUT.write_text("\n".join(out) + "\n")
-print(f"wrote {OUT} ({OUT.stat().st_size / 1024:.1f} KiB, loop {T:.1f}s)")
+static = [x for i, x in enumerate(out) if i != style_at and not motion_at <= i < motion_end]
+for path, doc, note in [(OUT_ANIMATED, out, f", loop {T:.1f}s"), (OUT_STATIC, static, "")]:
+    path.write_text("\n".join(doc) + "\n")
+    print(f"wrote {path} ({path.stat().st_size / 1024:.1f} KiB{note})")
