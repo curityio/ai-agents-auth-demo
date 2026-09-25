@@ -60,7 +60,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 |---|---|---|
 | **Host OS** | macOS with Docker Desktop | Linux is untested but nothing is Mac-specific beyond the `brew` hints. |
 | **LLM provider** | **Azure OpenAI** (`LLM_PROVIDER=azure`, the default) | OpenAI, Anthropic and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
-| **Footprint** | Single-node KIND; give Docker about **30 GB of disk** | `make demo` takes about **10 minutes** end to end on a fresh machine, most of it is image builds; it prints a per-phase timing summary when it finishes. Ports **80 and 443** on localhost must be free for the Istio ingress. |
+| **Footprint** | Single-node KIND; give Docker about **30 GB of disk** | `make demo` takes about **10 minutes** end to end on a fresh machine, most of it is image builds; it shows one status line per phase (full output goes to `.demo-logs/`) with its duration, and ends with an *Installation complete* banner. Ports **80 and 443** on localhost must be free for the Istio ingress. |
 
 ## Prerequisites (macOS)
 

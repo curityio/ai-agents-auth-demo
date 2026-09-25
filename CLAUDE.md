@@ -1118,7 +1118,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 
 ```bash
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3 (host-side embed/render/smoke scripts)
-make demo            # stand up the full platform on a fresh KIND cluster; ends with a per-phase timing summary (demo-timing.log)
+make demo            # stand up the full platform on a fresh KIND cluster; one status line per phase, each phase's output in .demo-logs/NN-<phase>.log (DEMO_VERBOSE=1 streams it all)
 make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
 make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret (fact #15); the cards print via `make users` only
 make users           # re-print the persona cards (username/role/password/otpauth + QR) from .demo-users.env; `make demo` ends with it
@@ -1130,7 +1130,7 @@ make routing         # re-patch hostAliases + mkcert CA into app pods + Curity�
 make status          # pod health across every demo namespace
 make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (fact #38)
 make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
-make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests
+make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)

@@ -36,7 +36,25 @@ role_of() {
   esac
 }
 
+# The same, in a few words — the heading of a card in the side-by-side layout.
+role_short() {
+  case "$1" in
+    alice) echo "full write tier, may set image" ;;
+    carol) echo "restart/scale, NOT set image" ;;
+    bob)   echo "read-only, ops:write refused" ;;
+    *)     echo "?" ;;
+  esac
+}
+role_name() { role_of "$1" | cut -d' ' -f1; }
+
 env_value() { sed -n "s/^$(upper "$1")_$2=//p" "$ENV_FILE"; }
+# secret + issuer only: algorithm/digits/period are the RFC 6238 defaults (SHA1/6/30)
+# that every authenticator assumes and Curity's TOTP plugin uses. Spelling them out
+# added 34 bytes and pushed the QR from version 5 (37 modules) to 6 (41).
+otpauth_uri() { echo "otpauth://totp/${ISSUER}:$1?secret=$(env_value "$1" TOTP_SECRET)&issuer=${ISSUER}"; }
+
+# COLUMNS wins so a caller (or the contract test) can force a layout.
+term_width() { local c; c=${COLUMNS:-$(tput cols 2>/dev/null)} || c=; echo "${c:-80}"; }
 
 # One card per persona: what the presenter needs to log in and to enrol the
 # authenticator app. Reads ONLY the env file, so it is safe to call without a cluster.
@@ -49,14 +67,72 @@ print_personas() {
   printf '  Roles are assigned at login (add-roles.js); every persona is MFA-capable.\n'
   printf '  Scan each QR (or type the otpauth URI / secret) into your authenticator app. \n'
   printf '  The same secrets are re-seeded on every rebuild, so the entries never go stale.\n'
+  if command -v qrencode >/dev/null 2>&1 && print_personas_side_by_side; then
+    :
+  else
+    print_personas_stacked
+  fi
+  printf '\n'
+  if ! command -v qrencode >/dev/null 2>&1; then
+    printf '  (install qrencode to get scannable QR codes here: brew install qrencode)\n'
+  fi
+  printf "  Re-print this any time with 'make users'.\n"
+  printf '\n'
+}
+
+# The three cards as columns, QR codes in one row: ~30 rows instead of ~70. The QR
+# cannot shrink (see print_personas_stacked for why it is already minimal), so the
+# only way to make it sit comfortably in the output is to stop stacking three of
+# them. Returns 1 — and prints nothing — when the terminal is too narrow, so the
+# caller falls back to the stacked cards.
+print_personas_side_by_side() {
+  local gap='    ' indent='    ' w=0 qw rows=0 n u i tmp b= d= x=
+  [[ -t 1 && -z ${NO_COLOR:-} ]] && { b=$'\033[1m' d=$'\033[2m' x=$'\033[0m'; }
+  # Column width = the widest QR, measured in the ASCII rendering (2 chars/module),
+  # which unlike the half-block one has no multi-byte characters or colour codes.
+  for u in "${USERS[@]}"; do
+    qw=$(qrencode -t ASCII -m 1 "$(otpauth_uri "$u")" | head -n 1 | awk '{ print length / 2 }')
+    (( qw > w )) && w=$qw
+  done
+  (( w >= 39 )) || w=39 # room for "TOTP   <32-char base32 secret>"
+  (( ${#indent} + ${#USERS[@]} * w + (${#USERS[@]} - 1) * ${#gap} <= $(term_width) )) || return 1
+
+  tmp=$(mktemp -d) || return 1
+  n=0
+  for u in "${USERS[@]}"; do
+    n=$(( n + 1 ))
+    {
+      # Text is padded here, before any colour, so every cell is exactly w wide.
+      printf "%s%-${w}s%s\n" "$b" "$u  ($(role_name "$u"))" "$x"
+      printf "%s%-${w}s%s\n" "$d" "$(role_short "$u")" "$x"
+      printf "%-${w}s\n" ""
+      printf "%-${w}s\n" "login  $u / $(env_value "$u" PASSWORD)"
+      printf "%-${w}s\n" "TOTP   $(env_value "$u" TOTP_SECRET)"
+      printf "%-${w}s\n" ""
+      qrencode -t ANSI256UTF8 -m 1 "$(otpauth_uri "$u")"
+    } > "$tmp/$n"
+    i=$(wc -l < "$tmp/$n"); (( i > rows )) && rows=$i
+  done
+  # A shorter QR (smaller version) gets blank rows so the columns stay aligned.
+  for i in $(seq 1 "$n"); do
+    while (( $(wc -l < "$tmp/$i") < rows )); do printf "%-${w}s\n" "" >> "$tmp/$i"; done
+  done
+
+  printf '\n'
+  # '|' never occurs in a QR row, a base32 secret, or a persona line.
+  paste -d '|' $(for i in $(seq 1 "$n"); do echo "$tmp/$i"; done) \
+    | sed -e "s/^/$indent/" -e "s/|/$gap/g"
+  printf '\n  otpauth URIs, to paste instead of scanning:\n'
+  for u in "${USERS[@]}"; do printf '    %-6s %s\n' "$u" "$(otpauth_uri "$u")"; done
+  rm -rf "$tmp"
+}
+
+print_personas_stacked() {
   for u in "${USERS[@]}"; do
     local password secret uri
     password="$(env_value "$u" PASSWORD)"
     secret="$(env_value "$u" TOTP_SECRET)"
-    # secret + issuer only: algorithm/digits/period are the RFC 6238 defaults (SHA1/6/30)
-    # that every authenticator assumes and Curity's TOTP plugin uses. Spelling them out
-    # added 34 bytes and pushed the QR from version 5 (37 modules) to 6 (41).
-    uri="otpauth://totp/${ISSUER}:${u}?secret=${secret}&issuer=${ISSUER}"
+    uri="$(otpauth_uri "$u")"
     printf '\n'
     printf '  %s   (role: %s)\n' "$u" "$(role_of "$u")"
     printf '    %-14s %s\n' 'username' "$u"
@@ -75,14 +151,6 @@ print_personas() {
       qrencode -t ANSI256UTF8 -m 1 "$uri" | sed 's/^/      /'
     fi
   done
-  printf '\n'
-  if ! command -v qrencode >/dev/null 2>&1; then
-    printf '  (install qrencode to get scannable QR codes here: brew install qrencode)\n'
-  fi
-  printf '  Source of truth: %s (gitignored). Edit passwords there and re-run\n' "$ENV_FILE"
-  printf "  'make seed-users' to apply; keep the TOTP secrets — they are what your app holds.\n"
-  printf "  Re-print this any time with 'make users'.\n"
-  printf '\n'
 }
 
 if $PRINT_ONLY; then

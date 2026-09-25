@@ -151,28 +151,30 @@ diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "an existing .demo-users.en
 # `make demo` ends with it (via `make users`) — the ONLY place the cards are printed:
 # the presenter needs username + password + otpauth (QR) in one place, once, to enrol
 # the authenticator app.
-: > "$TMP/kubectl3.log"
-PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl3.log" DEMO_USERS_ENV_FILE="$ENVF" \
-  bash "$HOST" --print > "$TMP/print.out" || fail "--print exited non-zero"
-[[ ! -s "$TMP/kubectl3.log" ]] || fail "--print must not touch the cluster (kubectl was called)"
-diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "--print must not rewrite .demo-users.env"
-for u in alice bob carol; do
-  grep -q "^ *$u\b" "$TMP/print.out" || fail "--print must list $u"
-  grep -q "otpauth://totp/.*$u.*secret=$(sed -n "s/^$(echo $u | tr a-z A-Z)_TOTP_SECRET=//p" "$ENVF")" "$TMP/print.out" \
-    || fail "--print must show $u's otpauth URI with the secret from the env file"
+# Both layouts carry the same facts: side by side on a wide terminal (COLUMNS forces
+# it), stacked cards on a narrow one or without qrencode.
+for cols in 80 200; do
+  : > "$TMP/kubectl3.log"
+  PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl3.log" DEMO_USERS_ENV_FILE="$ENVF" COLUMNS=$cols \
+    bash "$HOST" --print > "$TMP/print.out" || fail "--print exited non-zero (COLUMNS=$cols)"
+  [[ ! -s "$TMP/kubectl3.log" ]] || fail "--print must not touch the cluster (kubectl was called)"
+  diff -q "$TMP/edited.env" "$ENVF" >/dev/null || fail "--print must not rewrite .demo-users.env"
+  for u in alice bob carol; do
+    grep -q "^ *$u\b" "$TMP/print.out" || fail "--print must list $u"
+    grep -q "otpauth://totp/.*$u.*secret=$(sed -n "s/^$(echo $u | tr a-z A-Z)_TOTP_SECRET=//p" "$ENVF")" "$TMP/print.out" \
+      || fail "--print must show $u's otpauth URI with the secret from the env file"
+  done
+  # The otpauth URI carries only secret + issuer: algorithm/digits/period are the RFC 6238
+  # defaults (SHA1/6/30) every authenticator assumes and Curity's TOTP plugin uses, and
+  # each byte costs QR modules — dropping them takes the code from version 6 to 5.
+  ! grep -Eq "otpauth://[^ ]*(algorithm=|digits=|period=)" "$TMP/print.out" || fail "the otpauth URI must not spell out the RFC 6238 defaults (they only enlarge the QR)"
+  grep -q "Password1" "$TMP/print.out" || fail "--print must show the passwords"
+  grep -q "Custom9" "$TMP/print.out" || fail "--print must show an EDITED password (carol), not the default"
+  # roles come from k8s/curity/procedures/add-roles.js — the card must agree with it
+  grep -Eq "alice.*sre" "$TMP/print.out" || fail "--print must show alice's role (sre)"
+  grep -Eq "carol.*oncall" "$TMP/print.out" || fail "--print must show carol's role (oncall)"
+  grep -Eq "bob.*developer" "$TMP/print.out" || fail "--print must show bob's role (developer)"
 done
-# The otpauth URI carries only secret + issuer: algorithm/digits/period are the RFC 6238
-# defaults (SHA1/6/30) every authenticator assumes and Curity's TOTP plugin uses, and
-# each byte costs QR modules — dropping them takes the code from version 6 to 5.
-! grep -Eq "otpauth://[^ ]*(algorithm=|digits=|period=)" "$TMP/print.out" || fail "the otpauth URI must not spell out the RFC 6238 defaults (they only enlarge the QR)"
-grep -q "Password1" "$TMP/print.out" || fail "--print must show the passwords"
-grep -q "Custom9" "$TMP/print.out" || fail "--print must show an EDITED password (carol), not the default"
-# roles come from k8s/curity/procedures/add-roles.js — the card must agree with it
-grep -Eq "alice.*sre" "$TMP/print.out" || fail "--print must show alice's role (sre)"
-grep -Eq "carol.*oncall" "$TMP/print.out" || fail "--print must show carol's role (oncall)"
-grep -Eq "bob.*developer" "$TMP/print.out" || fail "--print must show bob's role (developer)"
-grep -q "$ENVF" "$TMP/print.out" || fail "--print must point the presenter at the env file"
-grep -q "make seed-users" "$TMP/print.out" || fail "--print must say how to re-seed after editing the file"
 
 # ── 6. --print with no env file fails closed and says how to create it ─────────
 if PATH="$TMP/bin:$PATH" KUBECTL_CAPTURE="$TMP/kubectl4.log" DEMO_USERS_ENV_FILE="$TMP/missing.env" \

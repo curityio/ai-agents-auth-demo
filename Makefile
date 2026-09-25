@@ -399,7 +399,8 @@ routing-check: ## Verify every app pod is wired to reach Curity (read-only; no r
 
 .PHONY: jwks-check
 jwks-check: ## Verify the apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (read-only)
-	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check
+	@bash scripts/status.sh check "apis-waypoint JWKS" "make jwks-heal" -- \
+	  env NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check
 
 .PHONY: jwks-heal
 jwks-heal: ## Restart the apis-waypoint so istiod re-fetches Curity's JWKS (fixes "401 Jwt verification fails" at inspect-api/ops-api)
@@ -536,19 +537,21 @@ seed-gateway-secret: ## Seed the agentgateway client secret (fixed demo value "P
 # ============================================================================
 .PHONY: status
 status: ## Show pod health across every demo namespace
-	@for ns in $(NS_CURITY) $(NS_WEB) $(NS_AGENTS) $(NS_MCP) $(NS_APIS) prod spire spire-server spire-system istio-system $(NS_INGRESS) telemetry; do \
-	  echo "=== $$ns ==="; \
-	  kubectl -n $$ns get pods --no-headers 2>/dev/null || echo "  (namespace not present)"; \
-	  echo; \
-	done
-	@echo "=== routing ==="; \
-	bash scripts/cluster-routing.sh check || echo "  (run 'make routing' to fix)"
-	@echo "=== apis-waypoint JWKS ==="; \
-	NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check || echo "  (run 'make jwks-heal' to fix)"
+	@bash scripts/status.sh pods $(NS_CURITY) $(NS_WEB) $(NS_AGENTS) $(NS_MCP) $(NS_APIS) prod spire spire-server spire-system istio-system $(NS_INGRESS) telemetry
+	@bash scripts/status.sh header Checks
+	@bash scripts/status.sh check routing "make routing" -- bash scripts/cluster-routing.sh check || true
+	@bash scripts/status.sh check "apis-waypoint JWKS" "make jwks-heal" -- \
+	  env NS_CURITY=$(NS_CURITY) NS_APIS=$(NS_APIS) bash scripts/jwks-guard.sh check || true
+	@echo
 
 .PHONY: smoke
-smoke: routing-check jwks-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz ## Run all auth/authz smoke tests
-	@echo "==> All smoke tests passed."
+# The suites of `make smoke`, in order. scripts/run-smoke.sh runs each as a
+# `make <suite>` with its output in .smoke-logs/ and prints one line per suite.
+# The first two are preconditions: the run stops if either fails.
+SMOKE_SUITES := routing-check jwks-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz
+
+smoke: ## Run all auth/authz smoke tests. Needs SMOKE_TOKEN_ALICE_MFA (alice, acr=mfa); one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
+	@bash scripts/run-smoke.sh $(SMOKE_SUITES)
 
 .PHONY: smoke-mcp-discovery
 smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway + origin 401 challenges. Needs no token.
@@ -627,27 +630,17 @@ demo-inputs: ## Gather the license file + LLM provider credentials up front (int
 # unattended.
 # The phases of `make demo`, in order. They are run by scripts/time-demo.sh
 # (one `make <phase>` each, sequentially — the same as listing them as
-# prerequisites) so that the run ends with a per-phase wall-clock summary.
+# prerequisites) so that each phase gets one status line with its duration.
 DEMO_PHASES := tools-check demo-inputs kind-up certs platform seed-secrets images apply
 
 .PHONY: demo
-demo: ## Stand up EVERYTHING on a fresh KIND cluster (one command); prints how long each phase took
+demo: ## Stand up EVERYTHING on a fresh KIND cluster (one command): one status line per phase, full output in .demo-logs/ (DEMO_VERBOSE=1 streams it)
 	@bash scripts/time-demo.sh $(DEMO_PHASES)
 
 .PHONY: demo-done
-demo-done: # The closing banner of `make demo` (URLs + persona cards)
-	@echo ""
-	@echo "==> Platform, secrets, images, and manifests are all deployed."
-	@echo "    alice, bob and carol are seeded into Curity — their credentials and"
-	@echo "    authenticator (TOTP) QR codes are printed below the URLs."
-	@echo ""
-	@echo "    TLS note: the mkcert root CA was NOT added to your keychain, so the"
-	@echo "    browser will warn on https://app.localtest.me (safe to proceed)."
-	@echo "    (Optional) To trust the CA and remove the warnings: make trust-ca  (undo: mkcert -uninstall)"
+demo-done: # The closing screens of `make demo` (URLs + persona cards); scripts/time-demo.sh then prints the completion banner
 	@$(MAKE) --no-print-directory urls
 	@$(MAKE) --no-print-directory users
-	@echo "    Setup + troubleshooting: README.md · system design: docs/architecture.md"
-	@echo ""
 
 .PHONY: urls
 urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)

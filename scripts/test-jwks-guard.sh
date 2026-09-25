@@ -61,7 +61,7 @@ ra_line=$(grep -nF 'kubectl apply -f k8s/istio/apis-l7-authz.yaml' "$MK" | head 
 if [ -n "$wait_line" ] && [ -n "$ra_line" ] && [ "$wait_line" -lt "$ra_line" ]; then ok "make apply waits for Curity's JWKS BEFORE applying apis-l7-authz.yaml"; else ko "make apply must run 'jwks-guard.sh wait' before applying apis-l7-authz.yaml (wait=$wait_line ra=$ra_line)"; fi
 grep -qE '^jwks-check:' "$MK" && ok "make jwks-check exists" || ko "Makefile lacks jwks-check target"
 grep -qE '^jwks-heal:' "$MK" && ok "make jwks-heal exists" || ko "Makefile lacks jwks-heal target"
-grep -qE '^smoke: .*\bjwks-check\b' "$MK" && ok "make smoke runs jwks-check" || ko "make smoke does not run jwks-check"
+grep -qE '^SMOKE_SUITES := .*\bjwks-check\b' "$MK" && ok "make smoke runs jwks-check" || ko "make smoke does not run jwks-check"
 awk '/^status:/,/^$/' "$MK" | grep -qF 'jwks-guard.sh check' && ok "make status runs the waypoint JWKS check" || ko "make status does not run jwks-guard.sh check"
 grep -qF 'scripts/test-jwks-guard.sh' "$MK" && ok "make test-scripts runs this test" || ko "make test-scripts lacks test-jwks-guard.sh"
 grep -qF 'make jwks-heal' "$GUARD" && ok "the check's failure message names the heal" || ko "jwks-guard.sh check does not point at 'make jwks-heal'"
