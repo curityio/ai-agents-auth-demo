@@ -25,12 +25,13 @@ BG = "#0d1117"
 FG = "#e6edf3"
 MUTED = "#8b949e"
 BOX = "#c9d1d9"
-RED = "#f28b82"
-GREEN = "#6cc070"
+# Tier colours match the landing page hero (apps/web/src/components/hero-stage.tsx):
+# lilac = read, amber = privileged. Colour-blind safe, unlike red/green.
+READ = "#caa8ff"  # hsl(263 100% 83%)
+PRIV = "#f59d38"  # hsl(32 90% 59%)
 BLUE = "#58a6ff"
 POD = "#326ce5"
 PINK = "#e0569b"
-ORANGE = "#e8912d"
 WHITE = "#ffffff"
 
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
@@ -72,10 +73,10 @@ NS = {
 SVID_DROPS = {"web": (593, 325), "agents": (866, 265), "mcp": (1228, 256), "apis": (1552, 261)}
 # exchange lines to Curity: (x, top_y, colour)
 EXCH = {
-    "agents-read": (825, 765, RED),
-    "agents-priv": (905, 765, GREEN),
-    "mcp-read": (1150, 752, RED),
-    "mcp-priv": (1302, 752, GREEN),
+    "agents-read": (825, 765, READ),
+    "agents-priv": (905, 765, PRIV),
+    "mcp-read": (1150, 752, READ),
+    "mcp-priv": (1302, 752, PRIV),
 }
 
 
@@ -235,9 +236,9 @@ def gateway(key, label, sub=None):
         text(x, y + s + 36, sub, 12, MUTED)
 
 
-def ticket(x, y, color):
+def ticket(x, y, color, scale=1.0):
     e(
-        f'<g transform="translate({x} {y}) rotate(-35)"><rect x="-13" y="-8" width="26" height="16" rx="3" '
+        f'<g transform="translate({x} {y}) rotate(-35) scale({scale})"><rect x="-13" y="-8" width="26" height="16" rx="3" '
         f'fill="none" stroke="{color}" stroke-width="1.8"/><circle cx="-6" cy="0" r="2.2" fill="{color}"/></g>'
     )
 
@@ -342,17 +343,24 @@ def move(pts, color, wait=0.0):
 
 
 def exchange(key, node, color):
-    """The node drops to Curity (RFC 8693) and comes back with a narrowed token."""
+    """RFC 8693 at Curity: two tokens go down, one narrowed token comes back.
+
+    Down go the subject token (the tier colour) and the workload's own
+    JWT-SVID as actor_token (SVID blue), side by side, since they are two
+    separate credentials. Back up comes the single exchanged token.
+    """
     global t
     x, top, _ = EXCH[key]
     bottom = CURITY[1]
-    pts = [(x, top), (x, bottom), (x, top)]
     t0 = t
-    t1 = t0 + plen(pts) / (SPEED * speed * 0.9)
+    tm = t0 + (bottom - top) / (SPEED * speed * 0.9)  # at Curity
+    t1 = tm + (bottom - top) / (SPEED * speed * 0.9)  # back
     ring(node, color, t0, t1 + 0.2)
-    packet(pts, color, t0, t1, r=6)
+    packet([(x - 7, top), (x - 7, bottom)], color, t0, tm, r=6)  # subject_token
+    packet([(x + 7, top), (x + 7, bottom)], BLUE, t0, tm, r=6)  # actor_token (JWT-SVID)
+    packet([(x, bottom), (x, top)], color, tm, t1, r=6)  # the narrowed token
     trail([(x, top), (x, bottom)], color, t0, t1 + 0.1, width=4)
-    glow_rect(CURITY, PINK, t0 + (t1 - t0) * 0.4, t0 + (t1 - t0) * 0.6)
+    glow_rect(CURITY, PINK, tm - 0.15, tm + 0.15)
     t = t1 + 0.1
     return t0, t1
 
@@ -364,7 +372,7 @@ def svid(ns, arrive):
     t0 = arrive - plen(pts) / (SPEED * 0.4)
     packet(pts, BLUE, t0, arrive, r=5)
     trail(pts, BLUE, t0, arrive + 0.3, width=3)
-    glow_rect((x + 12, 164, 36, 32), PINK, t0, arrive + 0.3, rx=8)  # its ticket
+    glow_rect((x + 12, 164, 36, 32), BLUE, t0, arrive + 0.3, rx=8)  # its ticket
     glow_rect(SPIRE, BLUE, t0 - 0.1, t0 + 0.25)
 
 
@@ -396,35 +404,35 @@ end_beat("① alice signs in with OIDC + PKCE; Curity issues the user token (aud
 
 # Beat 2 — read path.
 b = t
-exchange("agents-read", "copilot", RED)
-badge(N["copilot"][0], 425, "inspect:read", RED, t - 0.4, t + 1.6)
-move(ELBOW["copilot-llm"], RED, wait=0.15)
-ring("llmgw", RED, t - 0.2, t + 0.3)
+exchange("agents-read", "copilot", READ)
+badge(N["copilot"][0], 425, "inspect:read", READ, t - 0.4, t + 1.6)
+move(ELBOW["copilot-llm"], READ, wait=0.15)
+ring("llmgw", READ, t - 0.2, t + 0.3)
 t += 0.3
-svid("mcp", move([N["copilot"], *SEG["copilot-gw"], N["gw"]], RED)[1])
-exchange("mcp-read", "gw", RED)
-move([N["gw"], *SEG["gw-mi:r"], N["mi"]], RED)
-svid("apis", move([N["mi"], *SEG["mi-wp:r"], N["wp"]], RED)[1])
-move([N["wp"], *SEG["wp-ia:r"], N["ia"]], RED)
-move([N["ia"], *SEG["ia-prod:r"]], RED)
-ring("checkout", RED, t - 0.1, t + 0.7, r=26)
-ring("order", RED, t - 0.1, t + 0.7, r=26)
+svid("mcp", move([N["copilot"], *SEG["copilot-gw"], N["gw"]], READ)[1])
+exchange("mcp-read", "gw", READ)
+move([N["gw"], *SEG["gw-mi:r"], N["mi"]], READ)
+svid("apis", move([N["mi"], *SEG["mi-wp:r"], N["wp"]], READ)[1])
+move([N["wp"], *SEG["wp-ia:r"], N["ia"]], READ)
+move([N["ia"], *SEG["ia-prod:r"]], READ)
+ring("checkout", READ, t - 0.1, t + 0.7, r=26)
+ring("order", READ, t - 0.1, t + 0.7, r=26)
 t += 0.5
 end_beat("② read path: each hop proves itself with its JWT-SVID and swaps its token at Curity (RFC 8693), narrowed to inspect:read", b)
 
 # Beat 3 — privileged path.
 b = t
-svid("agents", move([N["copilot"], *SEG["a2a"], N["specialist"]], GREEN)[1])
-exchange("agents-priv", "specialist", GREEN)
-badge(N["specialist"][0], 728, "ops:write · acr=mfa", GREEN, t - 0.4, t + 1.8)
-svid("mcp", move([N["specialist"], *SEG["specialist-gw"], N["gw"]], GREEN)[1])
-exchange("mcp-priv", "gw", GREEN)
-move([N["gw"], *SEG["gw-mo"], N["mo"]], GREEN)
-svid("apis", move([N["mo"], *SEG["mo-wp"], N["wp"]], GREEN)[1])
-move([N["wp"], *SEG["wp-oa"], N["oa"]], GREEN)
-move([N["oa"], *SEG["oa-prod"]], GREEN)
-ring("checkout", GREEN, t - 0.1, t + 0.7, r=26)
-ring("order", GREEN, t - 0.1, t + 0.7, r=26)
+svid("agents", move([N["copilot"], *SEG["a2a"], N["specialist"]], PRIV)[1])
+exchange("agents-priv", "specialist", PRIV)
+badge(N["specialist"][0], 728, "ops:write · acr=mfa", PRIV, t - 0.4, t + 1.8)
+svid("mcp", move([N["specialist"], *SEG["specialist-gw"], N["gw"]], PRIV)[1])
+exchange("mcp-priv", "gw", PRIV)
+move([N["gw"], *SEG["gw-mo"], N["mo"]], PRIV)
+svid("apis", move([N["mo"], *SEG["mo-wp"], N["wp"]], PRIV)[1])
+move([N["wp"], *SEG["wp-oa"], N["oa"]], PRIV)
+move([N["oa"], *SEG["oa-prod"]], PRIV)
+ring("checkout", PRIV, t - 0.1, t + 0.7, r=26)
+ring("order", PRIV, t - 0.1, t + 0.7, r=26)
 t += 0.5
 end_beat("③ privileged path: A2A to the specialist, which needs ops:write and an MFA step-up (acr=mfa)", b)
 
@@ -435,14 +443,14 @@ T = t + 0.4
 e(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-labelledby="t d">')
 e("<title id=\"t\">AI agent authentication and authorization: architecture</title>")
 e(
-    '<desc id="d">Browser to istio-ingress to the web BFF to agent-copilot. The read path (red) goes through the MCP '
+    '<desc id="d">Browser to istio-ingress to the web BFF to agent-copilot. The read path (lilac) goes through the MCP '
     "gateway to mcp-inspect, the Istio waypoint and inspect-api, which lists pods and logs in prod. The privileged path "
-    "(green) goes over A2A to agent-specialist, then through the MCP gateway to mcp-ops and ops-api, which patches "
+    "(amber) goes over A2A to agent-specialist, then through the MCP gateway to mcp-ops and ops-api, which patches "
     "deployments in prod. SPIRE issues each workload a JWT-SVID. At every agent and MCP hop the workload exchanges its "
     "token at Curity (RFC 8693).</desc>"
 )
 e("<defs>")
-for name, color in [("red", RED), ("green", GREEN), ("white", "#d0d7de"), ("blue", BLUE)]:
+for name, color in [("read", READ), ("priv", PRIV), ("white", "#d0d7de"), ("blue", BLUE)]:
     e(
         f'<marker id="arrow-{name}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" '
         f'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="{color}"/></marker>'
@@ -490,15 +498,16 @@ text(mx + 150, y + 38, "sole token issuer · RFC 8693 token exchange at every ho
 # SVID drops
 for x, top in SVID_DROPS.values():
     line(((x, SPIRE[1] + SPIRE[3]), (x, top)), BLUE, 1.4, dash="2 5", opacity=0.7)
-    ticket(x + 30, 180, PINK)
+    ticket(x + 30, 180, BLUE)
     text(x + 12, 214, "JWT-SVID", 13, BLUE, anchor="start")
 
 # exchange lines
 for key, (x, top, color) in EXCH.items():
     line(((x, top), (x, CURITY[1])), color, 1.8, dash="8 7", opacity=0.8)
 for cx_ in (865, 1226):
+    # the exchange's two inputs: the Curity-issued access token and the JWT-SVID
     ticket(cx_ - 12, 790, PINK)
-    ticket(cx_ + 6, 784, PINK)
+    ticket(cx_ + 6, 784, BLUE)
     e(f'<rect x="{cx_ - 128}" y="811" width="256" height="24" rx="4" fill="{BG}"/>')
     text(cx_, 828, "RFC 8693 token exchange (OBO)", 14, FG)
 
@@ -525,56 +534,58 @@ text(712, 504, "aud=agent-copilot", 13, MUTED)
 line(((593, 670), (593, CURITY[1] - 4)), "#d0d7de", 1.8, marker="white")
 text(605, 745, "OIDC + PKCE", 14, FG, anchor="start")
 
-line(SEG["copilot-gw"], RED, 2.6, marker="red")
-seg_label(SEG["copilot-gw"], "MCP · inspect:read (OBO)", 12, 14, RED)
-seg_label(SEG["copilot-gw"], "tool call", -20, 13, RED)
-line(SEG["a2a"], GREEN, 2.6, marker="green")
+line(SEG["copilot-gw"], READ, 2.6, marker="read")
+seg_label(SEG["copilot-gw"], "MCP · inspect:read (OBO)", 12, 14, READ)
+seg_label(SEG["copilot-gw"], "tool call", -20, 13, READ)
+line(SEG["a2a"], PRIV, 2.6, marker="priv")
 for i, s in enumerate(("A2A", "(OBO", "token)")):
-    text(856, 500 + i * 17, s, 13, GREEN, anchor="end")
-line(SEG["specialist-gw"], GREEN, 2.6, marker="green")
-seg_label(SEG["specialist-gw"], "MCP · ops:write (OBO)", -30, 14, GREEN)
-seg_label(SEG["specialist-gw"], "tool call", -50, 13, GREEN)
-polyline(ELBOW["copilot-llm"], RED, 1.6, dash="3 5", marker="red", opacity=0.8)
-polyline(ELBOW["specialist-llm"], GREEN, 1.6, dash="3 5", marker="green", opacity=0.8)
+    text(856, 500 + i * 17, s, 13, PRIV, anchor="end")
+line(SEG["specialist-gw"], PRIV, 2.6, marker="priv")
+seg_label(SEG["specialist-gw"], "MCP · ops:write (OBO)", -30, 14, PRIV)
+seg_label(SEG["specialist-gw"], "tool call", -50, 13, PRIV)
+polyline(ELBOW["copilot-llm"], READ, 1.6, dash="3 5", marker="read", opacity=0.8)
+polyline(ELBOW["specialist-llm"], PRIV, 1.6, dash="3 5", marker="priv", opacity=0.8)
 line(SEG["llmgw-llm"], "#d0d7de", 1.6, dash="3 4", opacity=0.8)
 
 for k in ("gw-mi", "mi-wp", "wp-ia", "ia-prod"):
-    line(SEG[k + ":r"], RED, 2.4, marker="red")
-    line(SEG[k + ":g"], GREEN, 2.4, marker="green")
+    line(SEG[k + ":r"], READ, 2.4, marker="read")
+    line(SEG[k + ":g"], PRIV, 2.4, marker="priv")
 for k in ("gw-mo", "mo-wp", "wp-oa", "oa-prod"):
-    line(SEG[k], GREEN, 2.4, marker="green")
-seg_label(SEG["mi-wp:r"], "inspect (OBO)", 14, 13, RED)
-seg_label(SEG["mo-wp"], "ops (OBO)", 12, 13, GREEN)
-seg_label(SEG["ia-prod:r"], "list, logs (RBAC)", 14, 13, RED)
-seg_label(SEG["oa-prod"], "patch (RBAC)", 12, 13, GREEN)
+    line(SEG[k], PRIV, 2.4, marker="priv")
+seg_label(SEG["mi-wp:r"], "inspect (OBO)", 14, 13, READ)
+seg_label(SEG["mo-wp"], "ops (OBO)", 12, 13, PRIV)
+seg_label(SEG["ia-prod:r"], "list, logs (RBAC)", 14, 13, READ)
+seg_label(SEG["oa-prod"], "patch (RBAC)", 12, 13, PRIV)
 
 # nodes
 pod("edge", "istio-edge-gw", r=22, label_dy=42)
 pod("web", "web", sub="Next.js BFF", r=24, label_dy=44)
-pod("copilot", "agent-copilot", RED, above=True)
-pod("specialist", "agent-specialist", GREEN)
+pod("copilot", "agent-copilot", READ, above=True)
+pod("specialist", "agent-specialist", PRIV)
 gateway("llmgw", "LLM gateway")
 x, y = N["llm"]
-e(f'<rect x="{x - 26}" y="{y - 30}" width="52" height="60" rx="8" fill="{ORANGE}" fill-opacity="0.12" stroke="{ORANGE}" stroke-width="1.8" stroke-dasharray="5 3"/>')
-text(x, y - 2, "LLM", 14, ORANGE, weight="700")
-text(x, y + 16, "vendor", 11, ORANGE)
+e(f'<rect x="{x - 26}" y="{y - 30}" width="52" height="60" rx="8" fill="#ffffff" fill-opacity="0.04" stroke="{MUTED}" stroke-width="1.8" stroke-dasharray="5 3"/>')
+text(x, y - 2, "LLM", 14, FG, weight="700")
+text(x, y + 16, "vendor", 11, MUTED)
 gateway("gw", "MCP gateway", "agentgateway")
-pod("mi", "mcp-inspect", RED, above=True)
-pod("mo", "mcp-ops", GREEN)
+pod("mi", "mcp-inspect", READ, above=True)
+pod("mo", "mcp-ops", PRIV)
 gateway("wp", "waypoint", "L7 authz")
-pod("ia", "inspect-api", RED, above=True)
-pod("oa", "ops-api", GREEN)
+pod("ia", "inspect-api", READ, above=True)
+pod("oa", "ops-api", PRIV)
 pod("checkout", "check-out", r=R["small"], label_dy=32)
 pod("order", "order", r=R["small"], label_dy=32)
 
-# legend
+# legend: the two paths, then the two kinds of token (the exchange explains itself)
 lx, ly = 1752, 910
-for i, (label, color, dash) in enumerate(
-    [("read path", RED, None), ("privileged path", GREEN, None), ("token exchange", FG, "8 7"), ("JWT-SVID", BLUE, "2 5")]
-):
+for i, (label, color) in enumerate([("read path", READ), ("privileged path", PRIV)]):
     yy = ly + i * 22
-    line(((lx, yy), (lx + 34, yy)), color, 2.4, dash=dash)
-    text(lx + 44, yy + 5, label, 13, color if color != FG else FG, anchor="start")
+    line(((lx, yy), (lx + 34, yy)), color, 2.4)
+    text(lx + 44, yy + 5, label, 13, color, anchor="start")
+for i, (label, color) in enumerate([("access token", PINK), ("JWT-SVID", BLUE)]):
+    yy = ly + (i + 2) * 22
+    ticket(lx + 17, yy, color, scale=0.62)
+    text(lx + 44, yy + 5, label, 13, color, anchor="start")
 
 # motion layer
 e('<g id="motion">')
@@ -592,7 +603,7 @@ for t0, t1, s in captions:
         )
     )
 e("</g>")
-text(200, 1050, "read path (red): inspect:read  ·  privileged path (green): ops:write + acr=mfa step-up", 21, FG, anchor="start", font=SANS, extra='class="static"')
+text(200, 1050, "read path (lilac): inspect:read  ·  privileged path (amber): ops:write + acr=mfa step-up", 21, FG, anchor="start", font=SANS, extra='class="static"')
 
 e("</svg>")
 OUT.write_text("\n".join(out) + "\n")
