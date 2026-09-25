@@ -1118,7 +1118,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 
 ```bash
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3 (host-side embed/render/smoke scripts)
-make demo            # stand up the full platform on a fresh KIND cluster
+make demo            # stand up the full platform on a fresh KIND cluster; ends with a per-phase timing summary (demo-timing.log)
 make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
 make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret (fact #15); the cards print via `make users` only
 make users           # re-print the persona cards (username/role/password/otpauth + QR) from .demo-users.env; `make demo` ends with it

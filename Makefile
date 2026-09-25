@@ -625,8 +625,17 @@ demo-inputs: ## Gather the license file + LLM provider credentials up front (int
 # `demo-inputs` runs first so the only two interactive inputs (license.json +
 # LLM provider credentials) are collected up front; everything after it runs
 # unattended.
+# The phases of `make demo`, in order. They are run by scripts/time-demo.sh
+# (one `make <phase>` each, sequentially — the same as listing them as
+# prerequisites) so that the run ends with a per-phase wall-clock summary.
+DEMO_PHASES := tools-check demo-inputs kind-up certs platform seed-secrets images apply
+
 .PHONY: demo
-demo: tools-check demo-inputs kind-up certs platform seed-secrets images apply ## Stand up EVERYTHING on a fresh KIND cluster (one command)
+demo: ## Stand up EVERYTHING on a fresh KIND cluster (one command); prints how long each phase took
+	@bash scripts/time-demo.sh $(DEMO_PHASES)
+
+.PHONY: demo-done
+demo-done: # The closing banner of `make demo` (URLs + persona cards)
 	@echo ""
 	@echo "==> Platform, secrets, images, and manifests are all deployed."
 	@echo "    alice, bob and carol are seeded into Curity — their credentials and"
