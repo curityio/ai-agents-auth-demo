@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Render docs/architecture-animated.svg — the README's animated topology.
 
-A vector redraw of docs/architecture.jpg with a looping walk-through: SVIDs
-from SPIRE, the login, the read path (inspect:read) and the privileged path
-(ops:write, acr=mfa), each agent/MCP hop dropping to Curity for its RFC 8693
-exchange. The SVG must work inside a GitHub README, i.e. through <img>: no
+A vector redraw of docs/architecture.jpg with a looping walk-through: the
+login, the read path (inspect:read) and the privileged path (ops:write,
+acr=mfa). Each namespace's JWT-SVID drops from SPIRE as the packet reaches it,
+and each agent/MCP hop drops to Curity for its RFC 8693 exchange. The SVG must work inside a GitHub README, i.e. through <img>: no
 script, no external fonts or images — motion is SMIL only, and every animated
 element shares one clock (dur=T, repeatCount=indefinite) with keyTimes
 selecting its window. prefers-reduced-motion hides the motion layer.
@@ -68,8 +68,8 @@ NS = {
     "apis": (1440, 261, 224, 475),
     "prod": (1820, 366, 90, 242),
 }
-# SVID drops from SPIRE: x, and the namespace top they land on
-SVID_DROPS = [(593, 325), (866, 265), (1228, 256), (1552, 261)]
+# SVID drops from SPIRE: namespace -> (x, the namespace top it lands on)
+SVID_DROPS = {"web": (593, 325), "agents": (866, 265), "mcp": (1228, 256), "apis": (1552, 261)}
 # exchange lines to Curity: (x, top_y, colour)
 EXCH = {
     "agents-read": (825, 765, RED),
@@ -357,6 +357,17 @@ def exchange(key, node, color):
     return t0, t1
 
 
+def svid(ns, arrive):
+    """The namespace's JWT-SVID drops from SPIRE, landing as the packet arrives."""
+    x, top = SVID_DROPS[ns]
+    pts = [(x, SPIRE[1] + SPIRE[3]), (x, top)]
+    t0 = arrive - plen(pts) / (SPEED * 0.4)
+    packet(pts, BLUE, t0, arrive, r=5)
+    trail(pts, BLUE, t0, arrive + 0.3, width=3)
+    glow_rect((x + 12, 164, 36, 32), PINK, t0, arrive + 0.3, rx=8)  # its ticket
+    glow_rect(SPIRE, BLUE, t0 - 0.1, t0 + 0.25)
+
+
 pending = []  # trails waiting for their beat to end
 
 
@@ -369,62 +380,53 @@ def end_beat(caption, start):
     t += 1.1
 
 
-# Beat 1 — identities: SPIRE hands every workload a JWT-SVID.
-b = t
-glow_rect(SPIRE, BLUE, t, t + 2.2)
-for x, top in SVID_DROPS:
-    pts = [(x, SPIRE[1] + SPIRE[3]), (x, top)]
-    packet(pts, BLUE, t + 0.3, t + 0.3 + plen(pts) / (SPEED * 0.75), r=5)
-t += 2.2
-end_beat("① SPIRE issues every workload a JWT-SVID, its actor_token for each exchange", b)
-
-# Beat 2 — login: code flow + PKCE, Curity issues the user token.
+# Beat 1 — login: code flow + PKCE, Curity issues the user token.
 b = t
 move([*SEG["code"], N["edge"]], WHITE)
-move([N["edge"], N["web"]], WHITE)
+svid("web", move([N["edge"], N["web"]], WHITE)[1])
 t0 = t
 move([N["web"], (N["web"][0], CURITY[1]), N["web"]], WHITE)
 glow_rect(CURITY, PINK, t0 + 0.45, t0 + 1.0)
 badge(N["web"][0], 612, "user token", WHITE, t - 0.2, t + 1.8)
 speed = SLOW
-move([N["web"], *SEG["web-agents"], (812, 482), (812, 365), (N["copilot"][0] - R["pod"], 365)], WHITE)
+svid("agents", move([N["web"], *SEG["web-agents"], (812, 482), (812, 365), (N["copilot"][0] - R["pod"], 365)], WHITE)[1])
 ring("copilot", WHITE, t - 0.1, t + 0.5)
 t += 0.4
-end_beat("② alice signs in with OIDC + PKCE; Curity issues the user token (aud=agent-copilot)", b)
+end_beat("① alice signs in with OIDC + PKCE; Curity issues the user token (aud=agent-copilot)", b)
 
-# Beat 3 — read path.
+# Beat 2 — read path.
 b = t
 exchange("agents-read", "copilot", RED)
 badge(N["copilot"][0], 425, "inspect:read", RED, t - 0.4, t + 1.6)
 move(ELBOW["copilot-llm"], RED, wait=0.15)
 ring("llmgw", RED, t - 0.2, t + 0.3)
 t += 0.3
-move([N["copilot"], *SEG["copilot-gw"], N["gw"]], RED)
+svid("mcp", move([N["copilot"], *SEG["copilot-gw"], N["gw"]], RED)[1])
 exchange("mcp-read", "gw", RED)
 move([N["gw"], *SEG["gw-mi:r"], N["mi"]], RED)
-move([N["mi"], *SEG["mi-wp:r"], N["wp"]], RED)
+svid("apis", move([N["mi"], *SEG["mi-wp:r"], N["wp"]], RED)[1])
 move([N["wp"], *SEG["wp-ia:r"], N["ia"]], RED)
 move([N["ia"], *SEG["ia-prod:r"]], RED)
 ring("checkout", RED, t - 0.1, t + 0.7, r=26)
 ring("order", RED, t - 0.1, t + 0.7, r=26)
 t += 0.5
-end_beat("③ read path: every hop swaps its token at Curity (RFC 8693), narrowed to inspect:read", b)
+end_beat("② read path: each hop proves itself with its JWT-SVID and swaps its token at Curity (RFC 8693), narrowed to inspect:read", b)
 
-# Beat 4 — privileged path.
+# Beat 3 — privileged path.
 b = t
-move([N["copilot"], *SEG["a2a"], N["specialist"]], GREEN)
+svid("agents", move([N["copilot"], *SEG["a2a"], N["specialist"]], GREEN)[1])
 exchange("agents-priv", "specialist", GREEN)
 badge(N["specialist"][0], 728, "ops:write · acr=mfa", GREEN, t - 0.4, t + 1.8)
-move([N["specialist"], *SEG["specialist-gw"], N["gw"]], GREEN)
+svid("mcp", move([N["specialist"], *SEG["specialist-gw"], N["gw"]], GREEN)[1])
 exchange("mcp-priv", "gw", GREEN)
 move([N["gw"], *SEG["gw-mo"], N["mo"]], GREEN)
-move([N["mo"], *SEG["mo-wp"], N["wp"]], GREEN)
+svid("apis", move([N["mo"], *SEG["mo-wp"], N["wp"]], GREEN)[1])
 move([N["wp"], *SEG["wp-oa"], N["oa"]], GREEN)
 move([N["oa"], *SEG["oa-prod"]], GREEN)
 ring("checkout", GREEN, t - 0.1, t + 0.7, r=26)
 ring("order", GREEN, t - 0.1, t + 0.7, r=26)
 t += 0.5
-end_beat("④ privileged path: A2A to the specialist, which needs ops:write and an MFA step-up (acr=mfa)", b)
+end_beat("③ privileged path: A2A to the specialist, which needs ops:write and an MFA step-up (acr=mfa)", b)
 
 T = t + 0.4
 
@@ -486,7 +488,7 @@ text(mx + 56, y + 38, "CURITY", 18, FG, anchor="start", font=SANS, weight="700",
 text(mx + 150, y + 38, "sole token issuer · RFC 8693 token exchange at every hop", 13, MUTED, anchor="start")
 
 # SVID drops
-for x, top in SVID_DROPS:
+for x, top in SVID_DROPS.values():
     line(((x, SPIRE[1] + SPIRE[3]), (x, top)), BLUE, 1.4, dash="2 5", opacity=0.7)
     ticket(x + 30, 180, PINK)
     text(x + 12, 214, "JWT-SVID", 13, BLUE, anchor="start")
