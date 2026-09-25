@@ -24,8 +24,8 @@ AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com   # azure only
 ```
 
 **`azure` is the default** — both in this file and at the `make demo` prompt —
-because it is the provider this demo is developed against and the only one
-verified end to end (§3). For any other provider, delete the
+because it is the provider this demo is developed against. It and `anthropic`
+are the two verified end to end (§3). For any other provider, delete the
 `AZURE_OPENAI_ENDPOINT` line. Because azure requires that endpoint, a tree with
 no `.demo.env` at all now fails the render with a message naming the missing
 variable, rather than quietly falling back to a provider nobody chose.
@@ -87,12 +87,21 @@ for the shape.
 
 ## 3. Which is verified
 
-**Only Azure OpenAI is exercised end to end.** It is the provider driven
-through the whole stack during development: seeded, deployed, and used to
-actually answer a chat turn from `https://app.localtest.me`, with the
-resulting trace inspected in Grafana.
+**Azure OpenAI and Anthropic are exercised end to end.**
 
-The other three — OpenAI, Anthropic, Gemini — are **schema-validated only**.
+- **Azure OpenAI** is the provider driven through the whole stack during
+  development: seeded, deployed, and used to actually answer a chat turn from
+  `https://app.localtest.me`, with the resulting trace inspected in Grafana.
+- **Anthropic** (`claude-sonnet-4-6`) was verified on 2026-09-25 on a fresh
+  `make demo` with `LLM_PROVIDER=anthropic`: the copilot answered from the web
+  UI and a restart went through the specialist, so both agents' tool-calling
+  loops ran over the gateway's Chat-Completions → Anthropic Messages
+  translation. `make smoke-llm` passed as well — its `[2/3]` is a real upstream
+  round-trip. That also confirms the implicit-`location` rewrite (the
+  `x-api-key` / `anthropic-version` fixup described under
+  [the Anthropic `location` trap](#5-adding-a-provider-agentgateway-supports-natively)) against the live vendor.
+
+The other two — OpenAI and Gemini — are **schema-validated only**.
 `make validate-llm` renders each fragment and runs it through agentgateway's
 own `--validate-only` config check against the exact pinned image
 (`ghcr.io/agentgateway/agentgateway:v1.4.1`), proving each fragment parses as a

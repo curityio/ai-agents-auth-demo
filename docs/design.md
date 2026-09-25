@@ -700,10 +700,11 @@ requested`). The full grant map:
   + several records that overflows the 512-byte UDP limit so `edns0: true` lets
   CoreDNS return it whole (without EDNS the truncated response is not
   recovered). In-cluster backends are unaffected (single small A records). These
-  two knobs were verified against Azure specifically (the only provider driven
-  end to end — [`docs/llm-providers.md`](llm-providers.md) §3); they are
-  conservative defaults for any external host and unlikely to hurt the other
-  three, but have not been re-measured against them.
+  two knobs were measured against Azure specifically; Anthropic, the other
+  provider driven end to end ([`docs/llm-providers.md`](llm-providers.md) §3),
+  works with them unchanged. They are conservative defaults for any external
+  host and unlikely to hurt OpenAI or Gemini, but have not been re-measured
+  against them.
 
 ### 3.7 MCP protocol revision (2026-07-28) and era negotiation
 
