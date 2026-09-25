@@ -233,7 +233,7 @@ export function buildLedger(
 
 /**
  * Which flow a chain belongs to. The copilot's /last-token renders exactly one
- * branch (observe XOR privileged), and only the privileged branch delegates
+ * branch (inspect XOR privileged), and only the privileged branch delegates
  * to the specialist — so a hop naming agent-specialist decides it. Undefined
  * when nothing beyond the inbound token has run yet.
  */

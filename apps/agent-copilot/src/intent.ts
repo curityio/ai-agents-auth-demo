@@ -14,7 +14,7 @@
  */
 
 export type Intent =
-  | { kind: 'observe' }
+  | { kind: 'inspect' }
   // The `restart` discriminant means "any privileged write goal" — restart,
   // scale, or image update. The name is kept for back-compat; all such goals
   // route to the privileged specialist over A2A. (Renaming is out of scope.)
@@ -68,7 +68,7 @@ const STOP_WORDS = new Set([
 ]);
 
 export function detectIntent(message: string): Intent {
-  if (!RESTART_VERBS.test(message)) return { kind: 'observe' };
+  if (!RESTART_VERBS.test(message)) return { kind: 'inspect' };
 
   // Find the first DNS-shaped token that isn't a stopword. Skip version-shaped
   // tokens (`v1`, `v2`, `v1.3`) — the image/rollout phrasings put a version
@@ -81,7 +81,7 @@ export function detectIntent(message: string): Intent {
   if (!deployment) {
     // We saw the verb but no plausible deployment name — let the LLM
     // surface a clarifying question rather than blindly call the specialist.
-    return { kind: 'observe' };
+    return { kind: 'inspect' };
   }
 
   const nsMatch = NAMESPACE_HINT.exec(message);

@@ -160,7 +160,7 @@ async function main(): Promise<void> {
         }
         // The specialist is an LLM agent: its A2A success payload carries the
         // tool-calling steps (get_deployment → restart/set-image/scale → verify).
-        // Surface them as `steps` in the same shape the observe path emits so the
+        // Surface them as `steps` in the same shape the inspect path emits so the
         // web UI's Trace tab renders the privileged run's tool calls too.
         const specialistResult = specialistResp.result as { steps?: unknown } | undefined;
         const steps = Array.isArray(specialistResult?.steps) ? specialistResult.steps : undefined;

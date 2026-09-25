@@ -60,7 +60,7 @@ export interface Suggestion {
 }
 
 // Example prompts, chosen to exercise every MCP tool the copilot can reach.
-// Read tier (observe path → mcp-inspect): list_pods, get_pod_logs,
+// Read tier (inspect path → mcp-inspect): list_pods, get_pod_logs,
 // get_deployment. Write tier (privileged path → agent-specialist → mcp-ops):
 // restart_deployment, scale_deployment, set_deployment_image.
 // The kube-system prompt is the one deliberate refusal on the read tier: the
@@ -80,14 +80,14 @@ export const SUGGESTIONS: readonly Suggestion[] = [
 
 export interface SuggestionGroup {
   /** What the prompts in the group DO — the label the chips sit under. */
-  label: 'Observe' | 'Act';
+  label: 'Inspect' | 'Act';
   tier: SuggestionTier;
   prompts: readonly Suggestion[];
 }
 
 /** The example prompts grouped by what they do, so no legend row is needed. */
 export const SUGGESTION_GROUPS: readonly SuggestionGroup[] = [
-  { label: 'Observe', tier: 'read', prompts: SUGGESTIONS.filter((s) => s.tier === 'read') },
+  { label: 'Inspect', tier: 'read', prompts: SUGGESTIONS.filter((s) => s.tier === 'read') },
   { label: 'Act', tier: 'write', prompts: SUGGESTIONS.filter((s) => s.tier === 'write') },
 ];
 

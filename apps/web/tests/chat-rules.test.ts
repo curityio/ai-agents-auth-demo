@@ -64,7 +64,7 @@ describe('SUGGESTIONS', () => {
 describe('SUGGESTION_GROUPS', () => {
   it('splits the prompts into an Observe group and an Act group, in that order', async () => {
     const { SUGGESTION_GROUPS } = await import('../src/lib/chat-rules');
-    expect(SUGGESTION_GROUPS.map((g) => g.label)).toEqual(['Observe', 'Act']);
+    expect(SUGGESTION_GROUPS.map((g) => g.label)).toEqual(['Inspect', 'Act']);
     expect(SUGGESTION_GROUPS[0]!.prompts.every((s) => s.tier === 'read')).toBe(true);
     expect(SUGGESTION_GROUPS[1]!.prompts.every((s) => s.tier === 'write')).toBe(true);
     expect(SUGGESTION_GROUPS.flatMap((g) => g.prompts)).toEqual([...SUGGESTIONS]);
