@@ -3,7 +3,7 @@
 # PLACEHOLDER JWKS to the apis-waypoint. Fact #38: when the RequestAuthentication
 # is generated while Curity is still booting, istiod inlines a random public key
 # ("public-only JWKS with discarded private key") and never retries, so every
-# obs-api/ops-api call fails "401 Jwt verification fails". The pure comparison is
+# inspect-api/ops-api call fails "401 Jwt verification fails". The pure comparison is
 # pinned here with fixtures; the Makefile wiring (wait BEFORE the policy is
 # applied, check in status/smoke) is pinned by grep.
 set -euo pipefail

@@ -13,7 +13,7 @@ import {
 } from '@ai-agents-demo/auth-curity';
 import { buildLlm, openMcpToolset, type McpAuthDiscovery } from '@ai-agents-demo/agent-runtime';
 import { buildStepUpInterceptingFetch, type StepUpSink } from './mcp-ops-client.js';
-import { buildOpsAuthProvider, buildObsAuthProvider } from './mcp-auth.js';
+import { buildOpsAuthProvider, buildInspectAuthProvider } from './mcp-auth.js';
 import { obtainLlmToken } from './llm-token.js';
 import { SPECIALIST_SYSTEM_PROMPT } from './system-prompt.js';
 import type { Config } from './config.js';
@@ -58,7 +58,7 @@ export function fallbackSummary(steps: RemediationStep[]): string {
 
 export interface RemediationDeps {
   buildOpsAuthProvider: typeof buildOpsAuthProvider;
-  buildObsAuthProvider: typeof buildObsAuthProvider;
+  buildInspectAuthProvider: typeof buildInspectAuthProvider;
   obtainLlmToken: (o: {
     cfg: Config;
     subjectToken: string;
@@ -171,13 +171,13 @@ async function remediate(args: RemediationArgs): Promise<RemediationResult> {
   // propagate, so this is the only path by which the challenge escapes.
   const stepUpSink: StepUpSink = {};
   try {
-    const obsAuth = deps.buildObsAuthProvider({ cfg, subjectToken: bearer });
-    await obsAuth.acquire();
+    const inspectAuth = deps.buildInspectAuthProvider({ cfg, subjectToken: bearer });
+    await inspectAuth.acquire();
     readSet = await deps.openMcpToolset({
-      url: cfg.mcpObservabilityUrl,
-      authProvider: obsAuth,
+      url: cfg.mcpInspectUrl,
+      authProvider: inspectAuth,
       clientName: 'agent-specialist',
-      label: 'mcp-observability',
+      label: 'mcp-inspect',
     });
     writeSet = await deps.openMcpToolset({
       url: cfg.mcpOpsUrl,
@@ -348,7 +348,7 @@ export function buildExecutor(cfg: Config): AgentExecutor {
   };
   const deps: RemediationDeps = {
     buildOpsAuthProvider,
-    buildObsAuthProvider,
+    buildInspectAuthProvider,
     obtainLlmToken,
     openMcpToolset,
     runLlm,

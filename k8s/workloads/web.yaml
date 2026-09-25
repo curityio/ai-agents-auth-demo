@@ -76,10 +76,10 @@ spec:
             - name: CURITY_ISSUER
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_CLIENT_ID
-              value: web-app
+              value: web
             - name: AGENT_COPILOT_URL
               value: http://agent-copilot.agents.svc.cluster.local:8081
-            # Demo FEATURE gate, not logging verbosity: enables the /inspect
+            # Demo FEATURE gate, not logging verbosity: enables the /tokens
             # token viewer and /api/dev/token, which `make smoke` reads for
             # SMOKE_SUBJECT_TOKEN. Turning it off breaks the smoke tests.
             # Auth.js's own verbose logging is AUTHJS_DEBUG (unset — it dumps the
@@ -89,7 +89,7 @@ spec:
             # OTel: @vercel/otel exports OTLP/HTTP to the Collector. No
             # SPIFFE_SVID_PATH — the BFF sets no spiffe.id resource attribute.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: web
             - name: OTEL_RESOURCE_ATTRIBUTES

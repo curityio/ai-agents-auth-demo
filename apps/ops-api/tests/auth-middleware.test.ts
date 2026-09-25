@@ -88,7 +88,7 @@ describe('authMiddleware (ops-api)', () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
       payload: { act: FULL_ACT, acr: 'mfa' },
       protectedHeader: { alg: 'RS256' },
-      scopes: new Set(['obs:read']),
+      scopes: new Set(['inspect:read']),
     });
     const res = mockRes();
     const next = vi.fn();

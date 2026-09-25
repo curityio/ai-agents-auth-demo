@@ -354,7 +354,7 @@ export function HeroStage({
                 className="inline-block h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: LILAC }}
               />
-              read · obs:read
+              read · inspect:read
             </span>
             <span className="inline-flex items-center gap-2">
               <i

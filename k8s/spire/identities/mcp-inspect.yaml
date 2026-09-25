@@ -1,0 +1,14 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: mcp-inspect
+spec:
+  className: spire-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}'
+  podSelector:
+    matchLabels:
+      app: mcp-inspect
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: mcp
+  jwtTtl: 5m

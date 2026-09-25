@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { authMiddleware, type AuthedRequest } from './auth-middleware.js';
 import { buildLlm } from './llm.js';
 import { openMcpToolset } from './mcp-client.js';
-import { buildObservabilityAuthProvider } from './mcp-auth.js';
+import { buildInspectAuthProvider } from './mcp-auth.js';
 import { isDiscoveryFailure } from '@ai-agents-demo/agent-runtime';
 import { obtainLlmToken } from './llm-token.js';
 import {
@@ -160,7 +160,7 @@ async function main(): Promise<void> {
         }
         // The specialist is an LLM agent: its A2A success payload carries the
         // tool-calling steps (get_deployment → restart/set-image/scale → verify).
-        // Surface them as `steps` in the same shape the observe path emits so the
+        // Surface them as `steps` in the same shape the inspect path emits so the
         // web UI's Trace tab renders the privileged run's tool calls too.
         const specialistResult = specialistResp.result as { steps?: unknown } | undefined;
         const steps = Array.isArray(specialistResult?.steps) ? specialistResult.steps : undefined;
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     // Spec-shaped MCP client: discover the server's authorization server from its
     // own 401 → RFC 9728 → RFC 8414 chain, then exchange. A failure to LEARN the
     // AS is an availability problem (502); a refusal BY it is authorization (403).
-    const mcpAuth = buildObservabilityAuthProvider({
+    const mcpAuth = buildInspectAuthProvider({
       cfg,
       subjectToken: authed.bearerToken!,
       subjectSub: userSub,
@@ -237,10 +237,10 @@ async function main(): Promise<void> {
     let toolset;
     try {
       toolset = await openMcpToolset({
-        url: cfg.mcpObservabilityUrl,
+        url: cfg.mcpInspectUrl,
         authProvider: mcpAuth,
         clientName: 'agent-copilot',
-        label: 'mcp-observability',
+        label: 'mcp-inspect',
       });
     } catch (e) {
       // A 401 mid-connect already went through the provider's onUnauthorized
@@ -296,7 +296,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         msg: 'agent-copilot listening',
         port: cfg.port,
-        mcp_observability_url: cfg.mcpObservabilityUrl,
+        mcp_inspect_url: cfg.mcpInspectUrl,
       }),
     );
   });

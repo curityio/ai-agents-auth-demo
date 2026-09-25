@@ -191,8 +191,8 @@ export function AppShell({
           <span className="flex items-center gap-4">
             {signedIn && process.env.AUTH_DEBUG === 'true' && (
               <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
-                <Link href="/inspect">
-                  Inspect session
+                <Link href="/tokens">
+                  Session tokens
                   <ArrowUpRight className="h-3 w-3" />
                 </Link>
               </Button>

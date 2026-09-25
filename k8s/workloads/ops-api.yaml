@@ -95,7 +95,7 @@ spec:
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_JWKS_URI
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
-            - name: API_AUDIENCE
+            - name: EXPECTED_AUDIENCE
               value: ops-api
             - name: REQUIRED_SCOPES
               value: ops:write
@@ -104,7 +104,7 @@ spec:
             - name: TARGET_NAMESPACE
               value: prod
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: ops-api
             - name: OTEL_RESOURCE_ATTRIBUTES

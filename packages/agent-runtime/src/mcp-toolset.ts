@@ -179,7 +179,7 @@ const EMPTY_OBJECT_SCHEMA = { type: 'object', properties: {} } as const;
  *
  * **Trade-off, deliberate:** `jsonSchema()` performs no validation unless given a
  * `validate` function, so the model's arguments are no longer checked
- * client-side. That check was never the security boundary — `mcp-observability`
+ * client-side. That check was never the security boundary — `mcp-inspect`
  * and `mcp-ops` validate their own inputs with zod 4 on every call, and the
  * gateway's `Mcp-Param-Namespace` authz rule fails closed on anything it cannot
  * read. What changes is where a malformed call is caught: the server returns an

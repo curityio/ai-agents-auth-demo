@@ -22,7 +22,7 @@ const SPIFFE = (ns: string, sa: string) => `spiffe://demo.curity.local/ns/${ns}/
 const COPILOT = SPIFFE('agents', 'agent-copilot');
 const SPECIALIST = SPIFFE('agents', 'agent-specialist');
 const GATEWAY = SPIFFE('mcp', 'agentgateway');
-const OBS = SPIFFE('mcp', 'mcp-observability');
+const INSPECT = SPIFFE('mcp', 'mcp-inspect');
 
 describe('shortSpiffe', () => {
   it('reduces a SPIFFE ID to its service-account name', () => {
@@ -35,7 +35,7 @@ describe('shortSpiffe', () => {
 
 describe('listClaim', () => {
   it('splits a space-delimited scope string', () => {
-    expect(listClaim('openid obs:read ops:write')).toEqual(['openid', 'obs:read', 'ops:write']);
+    expect(listClaim('openid inspect:read ops:write')).toEqual(['openid', 'inspect:read', 'ops:write']);
   });
   it('passes an array through as strings', () => {
     expect(listClaim(['mcp-gateway', 'x'])).toEqual(['mcp-gateway', 'x']);
@@ -73,7 +73,7 @@ describe('summarizeHop', () => {
     const s = summarizeHop({
       sub: 'alice',
       aud: 'mcp-gateway',
-      scope: 'obs:read',
+      scope: 'inspect:read',
       acr: 'mfa',
       roles: ['sre'],
       act: { sub: COPILOT },
@@ -84,7 +84,7 @@ describe('summarizeHop', () => {
     expect(s).toEqual({
       sub: 'alice',
       aud: ['mcp-gateway'],
-      scopes: ['obs:read'],
+      scopes: ['inspect:read'],
       acr: 'mfa',
       roles: ['sre'],
       act: ['agent-copilot'],
@@ -101,12 +101,12 @@ describe('summarizeHop full identities', () => {
   it('keeps the full SPIFFE IDs beside the short actor names, in the same order', () => {
     const s = summarizeHop({
       act: { sub: GATEWAY, act: { sub: COPILOT } },
-      may_act: { sub: OBS },
+      may_act: { sub: INSPECT },
     });
     expect(s.act).toEqual(['agent-copilot', 'agentgateway']);
     expect(s.actIds).toEqual([COPILOT, GATEWAY]);
-    expect(s.mayAct).toBe('mcp-observability');
-    expect(s.mayActId).toBe(OBS);
+    expect(s.mayAct).toBe('mcp-inspect');
+    expect(s.mayActId).toBe(INSPECT);
   });
 
   it('has no ids when the claims are absent', () => {
@@ -122,28 +122,28 @@ describe('buildLedger', () => {
     payload: {
       sub: 'alice',
       aud: 'agent-copilot',
-      scope: 'openid obs:read ops:write llm:invoke',
+      scope: 'openid inspect:read ops:write llm:invoke',
       acr: 'mfa',
       may_act: { sub: COPILOT },
     },
   };
   const copilotToGateway = {
-    hop: 'agent-copilot → agentgateway (/observability/mcp)',
+    hop: 'agent-copilot → agentgateway (/inspect/mcp)',
     payload: {
       sub: 'alice',
       aud: 'mcp-gateway',
-      scope: 'obs:read',
+      scope: 'inspect:read',
       acr: 'mfa',
       act: { sub: COPILOT },
       may_act: { sub: GATEWAY },
     },
   };
   const gatewayToObs = {
-    hop: 'agentgateway → mcp-observability',
+    hop: 'agentgateway → mcp-inspect',
     payload: {
       sub: 'alice',
-      aud: 'mcp-observability',
-      scope: 'obs:read',
+      aud: 'mcp-inspect',
+      scope: 'inspect:read',
       acr: 'mfa',
       act: { sub: GATEWAY, act: { sub: COPILOT } },
     },
@@ -152,7 +152,7 @@ describe('buildLedger', () => {
   it('marks the scopes an exchange dropped, relative to the token it was exchanged from', () => {
     const rows = buildLedger([user, copilotToGateway]);
     expect(rows[1]!.diff.scopesDropped).toEqual(['openid', 'ops:write', 'llm:invoke']);
-    expect(rows[1]!.diff.scopesKept).toEqual(['obs:read']);
+    expect(rows[1]!.diff.scopesKept).toEqual(['inspect:read']);
   });
 
   it('has no diff for the first hop (nothing to compare against)', () => {
@@ -176,7 +176,7 @@ describe('buildLedger', () => {
 
   it('flags a hop whose actor was NOT the one may_act named', () => {
     const rogue = {
-      hop: 'agent-copilot → agentgateway (/observability/mcp)',
+      hop: 'agent-copilot → agentgateway (/inspect/mcp)',
       payload: { ...copilotToGateway.payload, act: { sub: SPECIALIST } },
     };
     const rows = buildLedger([user, rogue]);
@@ -197,36 +197,36 @@ describe('buildLedger', () => {
   it('picks the parent by act-chain prefix, not by list position, so a second branch diffs against its real origin', () => {
     // Privileged flow: the specialist holds TWO tokens minted from the SAME
     // aud=agent-specialist delegation token. The ops:write hop appears AFTER the
-    // whole obs:read branch in the flattened chain, but its parent is still the
-    // specialist token — not obs-api's terminal token that precedes it in the list.
+    // whole inspect:read branch in the flattened chain, but its parent is still the
+    // specialist token — not inspect-api's terminal token that precedes it in the list.
     const copilotToSpecialist = {
       hop: 'agent-copilot → agent-specialist',
       payload: {
         sub: 'alice',
         aud: 'agent-specialist',
-        scope: 'obs:read ops:write llm:invoke',
+        scope: 'inspect:read ops:write llm:invoke',
         acr: 'mfa',
         act: { sub: COPILOT },
         may_act: { sub: SPECIALIST },
       },
     };
     const specToGatewayRead = {
-      hop: 'agent-specialist → agentgateway (/observability/mcp)',
+      hop: 'agent-specialist → agentgateway (/inspect/mcp)',
       payload: {
         sub: 'alice',
         aud: 'mcp-gateway',
-        scope: 'obs:read',
+        scope: 'inspect:read',
         acr: 'mfa',
         act: { sub: SPECIALIST, act: { sub: COPILOT } },
         may_act: { sub: GATEWAY },
       },
     };
     const gwToObs = {
-      hop: 'agentgateway → mcp-observability',
+      hop: 'agentgateway → mcp-inspect',
       payload: {
         sub: 'alice',
-        aud: 'mcp-observability',
-        scope: 'obs:read',
+        aud: 'mcp-inspect',
+        scope: 'inspect:read',
         acr: 'mfa',
         act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
       },
@@ -250,7 +250,7 @@ describe('buildLedger', () => {
       specToGatewayWrite,
     ]);
     expect(rows[4]!.parentIndex).toBe(1);
-    expect(rows[4]!.diff.scopesDropped).toEqual(['obs:read', 'llm:invoke']);
+    expect(rows[4]!.diff.scopesDropped).toEqual(['inspect:read', 'llm:invoke']);
     expect(rows[4]!.diff.scopesKept).toEqual(['ops:write']);
     expect(rows[4]!.diff.actAppended).toBe('agent-specialist');
   });
@@ -272,7 +272,7 @@ describe('buildLedger', () => {
     const rows = buildLedger([user, copilotToLlm, copilotToGateway, gatewayToObs]);
     expect(rows[1]!.parentIndex).toBe(0);
     expect(rows[1]!.diff.scopesKept).toEqual(['llm:invoke']);
-    expect(rows[1]!.diff.scopesDropped).toEqual(['openid', 'obs:read', 'ops:write']);
+    expect(rows[1]!.diff.scopesDropped).toEqual(['openid', 'inspect:read', 'ops:write']);
     expect(rows[1]!.diff.audChanged).toBe(true);
     expect(rows[1]!.diff.mayActHonoured).toBe(true);
     expect(rows[1]!.summary.mayAct).toBeUndefined();
@@ -287,7 +287,7 @@ describe('buildLedger', () => {
       payload: {
         sub: 'alice',
         aud: 'agent-specialist',
-        scope: 'obs:read ops:write llm:invoke',
+        scope: 'inspect:read ops:write llm:invoke',
         acr: 'mfa',
         act: { sub: COPILOT },
         may_act: { sub: SPECIALIST },
@@ -304,11 +304,11 @@ describe('buildLedger', () => {
       },
     };
     const specToGatewayRead = {
-      hop: 'agent-specialist → agentgateway (/observability/mcp)',
+      hop: 'agent-specialist → agentgateway (/inspect/mcp)',
       payload: {
         sub: 'alice',
         aud: 'mcp-gateway',
-        scope: 'obs:read',
+        scope: 'inspect:read',
         acr: 'mfa',
         act: { sub: SPECIALIST, act: { sub: COPILOT } },
         may_act: { sub: GATEWAY },
@@ -316,7 +316,7 @@ describe('buildLedger', () => {
     };
     const rows = buildLedger([user, copilotToSpecialist, specToLlm, specToGatewayRead]);
     expect(rows[2]!.parentIndex).toBe(1);
-    expect(rows[2]!.diff.scopesDropped).toEqual(['obs:read', 'ops:write']);
+    expect(rows[2]!.diff.scopesDropped).toEqual(['inspect:read', 'ops:write']);
     expect(rows[2]!.diff.mayActHonoured).toBe(true);
     expect(rows[3]!.parentIndex).toBe(1);
   });
@@ -334,11 +334,11 @@ describe('flowOfChain', () => {
     expect(flowOfChain(chain)).toBe('privileged');
   });
 
-  it('is read for the observability branch', () => {
+  it('is read for the inspect branch', () => {
     const chain = [
       hop('user → agent-copilot (inbound)', 'agent-copilot'),
-      hop('agent-copilot → agentgateway (/observability/mcp)', 'mcp-gateway'),
-      hop('mcp-observability → obs-api', 'obs-api'),
+      hop('agent-copilot → agentgateway (/inspect/mcp)', 'mcp-gateway'),
+      hop('mcp-inspect → inspect-api', 'inspect-api'),
     ];
     expect(flowOfChain(chain)).toBe('read');
   });
@@ -402,7 +402,7 @@ describe('buildLedger leaves and spine numbers', () => {
       note: 'Model call — a leaf',
     },
     {
-      hop: 'agent-copilot → agentgateway (/observability/mcp)',
+      hop: 'agent-copilot → agentgateway (/inspect/mcp)',
       payload: {
         sub: 'alice',
         aud: 'mcp-gateway',
@@ -411,7 +411,7 @@ describe('buildLedger leaves and spine numbers', () => {
       },
     },
     {
-      hop: 'agentgateway → mcp-observability',
+      hop: 'agentgateway → mcp-inspect',
       payload: { sub: 'alice', act: { sub: GATEWAY, act: { sub: COPILOT } } },
     },
   ]);

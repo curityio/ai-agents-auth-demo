@@ -19,7 +19,7 @@
 #      keyed on `Mcp-Param-Namespace` (SEP-2243). The tools declare
 #      `x-mcp-header: Namespace` on their `namespace` input so a conforming client
 #      mirrors the argument into that header. Previously this constraint existed
-#      only as ops-api/obs-api RBAC, i.e. two hops later.
+#      only as ops-api/inspect-api RBAC, i.e. two hops later.
 #
 # Assertions:
 #   [1/4] omitting `namespace` is unaffected by the confinement rule (the server
@@ -83,15 +83,15 @@ call_tool() {
 }
 
 note "Minting gateway tokens for both tiers"
-OBS_TOKEN=$(SMOKE_SUBJECT_TOKEN="$SMOKE_SUBJECT_TOKEN" bash "$SCRIPT_DIR/mint-mcp-token.sh" obs 2>/dev/null)
+INSPECT_TOKEN=$(SMOKE_SUBJECT_TOKEN="$SMOKE_SUBJECT_TOKEN" bash "$SCRIPT_DIR/mint-mcp-token.sh" inspect 2>/dev/null)
 OPS_TOKEN=$(SMOKE_SUBJECT_TOKEN="$SMOKE_SUBJECT_TOKEN" bash "$SCRIPT_DIR/mint-mcp-token.sh" ops 2>/dev/null)
-[[ -n "$OBS_TOKEN" && -n "$OPS_TOKEN" ]] || { red "could not mint gateway tokens (is the subject token acr=mfa?)"; exit 1; }
-OBS_URL="$GATEWAY_BASE/observability/mcp"
+[[ -n "$INSPECT_TOKEN" && -n "$OPS_TOKEN" ]] || { red "could not mint gateway tokens (is the subject token acr=mfa?)"; exit 1; }
+INSPECT_URL="$GATEWAY_BASE/inspect/mcp"
 OPS_URL="$GATEWAY_BASE/ops/mcp"
 
 # ----- [1/4] omitted namespace must NOT trip the confinement rule ----------------
 note "[1/4] namespace omitted → allowed (server defaults to prod)"
-OUT=$(call_tool "$OBS_URL" "$OBS_TOKEN" list_pods '{}')
+OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{}')
 case "$OUT" in
   200*) green "  OK (allowed)" ;;
   *) red "  the confinement rule over-blocks a call that omits namespace: ${OUT:0:200}"; exit 1 ;;
@@ -99,7 +99,7 @@ esac
 
 # ----- [2/4] explicit prod is allowed -------------------------------------------
 note "[2/4] namespace=prod → allowed"
-OUT=$(call_tool "$OBS_URL" "$OBS_TOKEN" list_pods '{"namespace":"prod"}')
+OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{"namespace":"prod"}')
 case "$OUT" in
   200*) green "  OK (allowed)" ;;
   *) red "  expected 200 for the permitted namespace, got: ${OUT:0:200}"; exit 1 ;;
@@ -107,7 +107,7 @@ esac
 
 # ----- [3/4] cross-namespace refused at the gateway, on BOTH tiers ---------------
 note "[3/4] namespace=kube-system → refused at the gateway (read tier)"
-OUT=$(call_tool "$OBS_URL" "$OBS_TOKEN" list_pods '{"namespace":"kube-system"}')
+OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{"namespace":"kube-system"}')
 case "$OUT" in
   403*) green "  OK (gateway refused: ${OUT:0:60})" ;;
   200*) red "  cross-namespace READ was ALLOWED — namespace confinement is not in force"; exit 1 ;;

@@ -43,8 +43,6 @@ export async function handleExchange(
     tokenEndpoint: deps.tokenEndpoint,
     clientId: deps.clientId,
     clientSecret: deps.clientSecret,
-    // Authenticates as `mcp-gateway`, but the pod/container is `exchange-shim`.
-    serviceLabel: 'exchange-shim',
     subjectToken: req.callerToken,
     actorToken,
     audience: req.targetAudience,

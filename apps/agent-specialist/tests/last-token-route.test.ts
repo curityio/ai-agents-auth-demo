@@ -2,7 +2,7 @@
  * Unit tests for selectLlmLeaf — whether the specialist's /last-token surfaces
  * its aud=llm-gateway token as a leaf of the OBO chain.
  *
- * Within one remediation the exchanges run in a fixed order: obs:read →
+ * Within one remediation the exchanges run in a fixed order: inspect:read →
  * ops:write → llm:invoke → LLM loop. A run that is refused at the ops:write
  * exchange (step-up, wrong role) never reaches the LLM exchange, so a leaf
  * stamped BEFORE the current ops slot belongs to an earlier run and must not

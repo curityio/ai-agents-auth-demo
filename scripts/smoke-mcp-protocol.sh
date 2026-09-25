@@ -22,10 +22,10 @@
 #   [1/4] READ tier through the gateway: connect + tools/list succeeds, on
 #         revision 2026-07-28 with no session id.
 #   [2/4] Tier filtering still holds in whatever revision was negotiated: an
-#         obs:read caller sees ONLY the observability tools.
+#         inspect:read caller sees ONLY the inspect tools.
 #   [3/4] WRITE tier through the gateway: connect + tools/list succeeds (needs
 #         acr=mfa + role sre/oncall), on revision 2026-07-28.
-#   [4/4] Cross-tier denial survives: the obs:read token is refused on /ops/mcp.
+#   [4/4] Cross-tier denial survives: the inspect:read token is refused on /ops/mcp.
 #
 # Required env: SMOKE_SUBJECT_TOKEN — a fresh Curity access token for Alice,
 # obtained WITH MFA (the write tier needs acr=mfa). See scripts/mint-mcp-token.sh.
@@ -96,28 +96,28 @@ require_era() {
 }
 
 # ----- mint the READ-tier token -------------------------------------------------
-note "[1/4] READ tier: connect through the gateway at /observability/mcp"
-OBS_TOKEN=$(SMOKE_SUBJECT_TOKEN="$SMOKE_SUBJECT_TOKEN" bash "$SCRIPT_DIR/mint-mcp-token.sh" obs 2>/dev/null)
-[[ -n "$OBS_TOKEN" ]] || { red "could not mint an obs:read gateway token"; exit 1; }
+note "[1/4] READ tier: connect through the gateway at /inspect/mcp"
+INSPECT_TOKEN=$(SMOKE_SUBJECT_TOKEN="$SMOKE_SUBJECT_TOKEN" bash "$SCRIPT_DIR/mint-mcp-token.sh" inspect 2>/dev/null)
+[[ -n "$INSPECT_TOKEN" ]] || { red "could not mint an inspect:read gateway token"; exit 1; }
 
-OBS_VERDICT=$(probe "$GATEWAY_BASE/observability/mcp" "$OBS_TOKEN")
-if [[ "$(echo "$OBS_VERDICT" | jq -r '.ok // false')" != "true" ]]; then
-  red "  connect/tools-list failed: $OBS_VERDICT"
+INSPECT_VERDICT=$(probe "$GATEWAY_BASE/inspect/mcp" "$INSPECT_TOKEN")
+if [[ "$(echo "$INSPECT_VERDICT" | jq -r '.ok // false')" != "true" ]]; then
+  red "  connect/tools-list failed: $INSPECT_VERDICT"
   exit 1
 fi
-green "  OK (tools: $(echo "$OBS_VERDICT" | jq -rc '.tools'))"
-require_era "$OBS_VERDICT" "READ tier"
+green "  OK (tools: $(echo "$INSPECT_VERDICT" | jq -rc '.tools'))"
+require_era "$INSPECT_VERDICT" "READ tier"
 
 # ----- [2/4] tier filtering ------------------------------------------------------
-note "[2/4] Tier filtering: an obs:read caller must see ONLY observability tools"
-OBS_TOOLS=$(echo "$OBS_VERDICT" | jq -rc '.tools')
-EXPECTED_OBS='["get_deployment","get_pod_logs","list_pods"]'
-if [[ "$OBS_TOOLS" != "$EXPECTED_OBS" ]]; then
-  red "  tools/list mismatch: got $OBS_TOOLS, expected $EXPECTED_OBS"
+note "[2/4] Tier filtering: an inspect:read caller must see ONLY inspect tools"
+OBS_TOOLS=$(echo "$INSPECT_VERDICT" | jq -rc '.tools')
+EXPECTED_INSPECT='["get_deployment","get_pod_logs","list_pods"]'
+if [[ "$OBS_TOOLS" != "$EXPECTED_INSPECT" ]]; then
+  red "  tools/list mismatch: got $OBS_TOOLS, expected $EXPECTED_INSPECT"
   red "  (an ops tool leaking in here would mean the gateway's tier filter broke)"
   exit 1
 fi
-green "  OK (no ops tools visible to an obs:read caller)"
+green "  OK (no ops tools visible to an inspect:read caller)"
 
 # ----- [3/4] write tier ----------------------------------------------------------
 note "[3/4] WRITE tier: connect through the gateway at /ops/mcp (needs acr=mfa)"
@@ -140,10 +140,10 @@ if [[ "$OPS_TOOLS" != "$EXPECTED_OPS" ]]; then
 fi
 
 # ----- [4/4] cross-tier denial ---------------------------------------------------
-note "[4/4] Cross-tier denial: the obs:read token must be refused on /ops/mcp"
-CROSS_VERDICT=$(probe "$GATEWAY_BASE/ops/mcp" "$OBS_TOKEN")
+note "[4/4] Cross-tier denial: the inspect:read token must be refused on /ops/mcp"
+CROSS_VERDICT=$(probe "$GATEWAY_BASE/ops/mcp" "$INSPECT_TOKEN")
 if [[ "$(echo "$CROSS_VERDICT" | jq -r '.ok // false')" == "true" ]]; then
-  red "  obs:read token was ACCEPTED on the ops tier: $(echo "$CROSS_VERDICT" | jq -rc '.tools')"
+  red "  inspect:read token was ACCEPTED on the ops tier: $(echo "$CROSS_VERDICT" | jq -rc '.tools')"
   exit 1
 fi
 green "  OK (denied: $(echo "$CROSS_VERDICT" | jq -r '.error' | head -c 120))"

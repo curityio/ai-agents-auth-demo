@@ -5,7 +5,7 @@
  */
 export const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL ?? 'https://grafana.localtest.me';
 
-/** Grafana datasource uid, as provisioned in k8s/observability/values-grafana.yaml. */
+/** Grafana datasource uid, as provisioned in k8s/telemetry/values-grafana.yaml. */
 const TEMPO_UID = 'tempo';
 
 export function grafanaTraceUrl(base: string, traceId: string): string {

@@ -141,7 +141,7 @@ ERROR: the apis-waypoint is NOT validating tokens with Curity's key.
   Curity serves kid(s) : $(jwks_kids "$curity" | tr '\n' ' ')
   waypoint holds kid(s): $(jwks_kids "$wp" | tr '\n' ' ')
 istiod generated the waypoint's jwt_authn filter while Curity was unreachable and
-inlined a placeholder key ("<no-kid>" above) — every obs-api/ops-api call now fails
+inlined a placeholder key ("<no-kid>" above) — every inspect-api/ops-api call now fails
 "401 Jwt verification fails", and istiod will NOT retry on its own.
 Fix: make jwks-heal   (rollout-restarts the waypoint so istiod regenerates the filter)
 MSG

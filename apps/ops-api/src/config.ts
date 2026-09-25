@@ -35,7 +35,7 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8083),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.API_AUDIENCE ?? 'ops-api',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'ops-api',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'ops:write').split(/\s+/).filter(Boolean),
     expectedActorChain: [
       SPIFFE_ID('mcp', 'mcp-ops'),

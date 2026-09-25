@@ -3,9 +3,9 @@ import { buildExchangeAttributes } from './exchange-span.js';
 
 const base = {
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  clientId: 'mcp-observability',
-  audience: 'obs-api',
-  scope: 'obs:read',
+  clientId: 'mcp-inspect',
+  audience: 'inspect-api',
+  scope: 'inspect:read',
 };
 
 describe('buildExchangeAttributes', () => {
@@ -29,9 +29,9 @@ describe('buildExchangeAttributes', () => {
 
   it('keeps the authorization semantics that were already there', () => {
     const attrs = buildExchangeAttributes(base);
-    expect(attrs['auth.exchange.audience']).toBe('obs-api');
-    expect(attrs['auth.exchange.scope']).toBe('obs:read');
-    expect(attrs['auth.exchange.client_id']).toBe('mcp-observability');
+    expect(attrs['auth.exchange.audience']).toBe('inspect-api');
+    expect(attrs['auth.exchange.scope']).toBe('inspect:read');
+    expect(attrs['auth.exchange.client_id']).toBe('mcp-inspect');
     expect(attrs['auth.exchange.grant_type']).toBe(
       'urn:ietf:params:oauth:grant-type:token-exchange',
     );

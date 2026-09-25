@@ -1,0 +1,14 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: inspect-api
+spec:
+  className: spire-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}'
+  podSelector:
+    matchLabels:
+      app: inspect-api
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: apis
+  jwtTtl: 5m

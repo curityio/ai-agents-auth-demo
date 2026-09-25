@@ -1,9 +1,9 @@
 # The "prod" namespace: the production-like workloads the copilot observes and
 # remediates (order-service, checkout-service). Stays OUT of the ambient mesh — the
 # backend APIs reach these Deployments through the Kubernetes API server (gated
-# by RBAC), not via in-mesh traffic. The Role/RoleBinding that grant obs-api
+# by RBAC), not via in-mesh traffic. The Role/RoleBinding that grant inspect-api
 # (read) and ops-api (restart) their narrow permissions live in this namespace
-# (see k8s/workloads/obs-api.yaml and ops-api.yaml).
+# (see k8s/workloads/inspect-api.yaml and ops-api.yaml).
 apiVersion: v1
 kind: Namespace
 metadata:

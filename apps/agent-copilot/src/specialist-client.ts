@@ -15,7 +15,7 @@ const svidSource = new SpiffeJwtSvidSource({
   audiences: [{ audience: SVID_AUDIENCE, filePath: SVID_FILE }],
 });
 
-// Separate cache from the mcp-observability path because (sub, scope, audience)
+// Separate cache from the mcp-inspect path because (sub, scope, audience)
 // is the cache key and these differ (`audience=agent-specialist`,
 // `scope=ops:write`). Sharing the map would just be a label change for the
 // same TTL semantics.
@@ -44,7 +44,7 @@ export function peekLastSpecialistExchange():
  * Mint a Bearer for `audience=agent-specialist` with the right scopes.
  * The procedure puts our SPIFFE ID on the issued token's `act` — so when
  * specialist re-exchanges, its result will nest us underneath. We ask for
- * `obs:read ops:write`; the procedure narrows; the specialist also re-checks
+ * `inspect:read ops:write`; the procedure narrows; the specialist also re-checks
  * its inbound scope before forwarding.
  */
 export async function obtainSpecialistToken(opts: {

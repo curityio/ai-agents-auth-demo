@@ -4,7 +4,7 @@ import type { NextAuthConfig } from 'next-auth';
 import { identityFromAccessToken, type Asking } from '@/lib/asking';
 
 const issuer = process.env.CURITY_ISSUER;
-const clientId = process.env.CURITY_CLIENT_ID ?? 'web-app';
+const clientId = process.env.CURITY_CLIENT_ID ?? 'web';
 const clientSecret = process.env.CURITY_CLIENT_SECRET;
 
 if (!issuer) {
@@ -16,7 +16,7 @@ export const authConfig: NextAuthConfig = {
   // Use a stable cookie domain inside the demo.
   trustHost: true,
   // Auth.js's own verbose logging, deliberately NOT wired to AUTH_DEBUG.
-  // AUTH_DEBUG is the demo's feature gate (the /inspect token viewer and the
+  // AUTH_DEBUG is the demo's feature gate (the /tokens token viewer and the
   // /api/dev/token route that `make smoke` reads), so it is on in the cluster —
   // and Auth.js `debug: true` dumps the full decoded ID token plus every Set-Cookie
   // value on each login, which buried the OBO chain in `kubectl logs -n web`.
@@ -41,7 +41,7 @@ export const authConfig: NextAuthConfig = {
         // params win and are forwarded to Curity.  Step-up overrides acr_values
         // and prompt per-request (e.g. acr_values=mfa, prompt=login).
         params: {
-          scope: 'openid obs:read llm:invoke',
+          scope: 'openid inspect:read llm:invoke',
           // Least-privilege: request read-only observability + the unprivileged
           // LLM-egress scope at login (both are non-MFA). The user consents to
           // llm:invoke so agents can exchange it to aud=llm-gateway on their

@@ -29,11 +29,11 @@ const svid = {
 const cfg = {
   port: 0,
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  clientId: 'mcp-gateway',
+  clientId: 'agentgateway',
   clientSecret: 'secret',
   svidAudience: 'https://curity.localtest.me/oauth/v2/oauth-token',
   svidFile: '/run/spiffe/curity-actor.jwt',
-  audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
+  audienceScopes: { 'mcp-inspect': 'inspect:read', 'mcp-ops': 'ops:write' },
   cacheTtlSeconds: 60,
   cacheMaxEntries: 100,
 } as never;
@@ -111,7 +111,7 @@ describe('exchange-shim app', () => {
       method: 'GET',
       headers: {
         'x-caller-authorization': 'Bearer caller-token',
-        'x-target-audience': 'mcp-observability',
+        'x-target-audience': 'mcp-inspect',
       },
     });
     expect(r.status).toBe(200);
@@ -128,7 +128,7 @@ describe('exchange-shim app', () => {
       method: 'POST',
       headers: {
         'x-caller-authorization': 'Bearer caller-token',
-        'x-target-audience': 'obs-api',
+        'x-target-audience': 'inspect-api',
       },
     });
     expect(r.status).toBe(403);
@@ -144,7 +144,7 @@ describe('exchange-shim app', () => {
         method: 'POST',
         headers: {
           'x-caller-authorization': 'Bearer same-question-token',
-          'x-target-audience': 'mcp-observability',
+          'x-target-audience': 'mcp-inspect',
         },
       });
       expect(r.status).toBe(200);

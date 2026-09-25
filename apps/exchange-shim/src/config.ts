@@ -35,11 +35,11 @@ export function loadConfig(): Config {
   return {
     port: Number(process.env.PORT ?? 8090),
     tokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
-    clientId: process.env.GATEWAY_CLIENT_ID ?? 'mcp-gateway',
+    clientId: process.env.CURITY_CLIENT_ID ?? 'agentgateway',
     clientSecret: required('CURITY_CLIENT_SECRET'),
     svidFile: process.env.SPIFFE_SVID_PATH ?? '/run/spiffe/curity-actor.jwt',
     svidAudience: process.env.SVID_AUDIENCE ?? 'https://curity.localtest.me/oauth/v2/oauth-token',
-    audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
+    audienceScopes: { 'mcp-inspect': 'inspect:read', 'mcp-ops': 'ops:write' },
     cacheTtlSeconds: nonNegativeInt('EXCHANGE_CACHE_TTL_SECONDS', 60),
     cacheMaxEntries: Math.max(1, nonNegativeInt('EXCHANGE_CACHE_MAX_ENTRIES', 1000)),
   };

@@ -191,7 +191,7 @@ export function Chat({
     try {
       // Show only the workloads in the flow the user just ran. The privileged
       // (A2A → mcp-ops) path is signalled by `route`/`specialist` on the response;
-      // anything else is the read path through mcp-observability. Before any
+      // anything else is the read path through mcp-inspect. Before any
       // answer there is no flow, so nothing is fetched and the panel says so —
       // the same beat as the chain panel's "No hops yet".
       const flow = svidFlowToShow(response, flowOverride);
@@ -308,7 +308,7 @@ export function Chat({
                       title={
                         s.tier === 'write'
                           ? 'Privileged: routes to the specialist and requires MFA step-up'
-                          : 'Read-only: answered by the copilot via mcp-observability'
+                          : 'Read-only: answered by the copilot via mcp-inspect'
                       }
                       className={
                         s.tier === 'write'
@@ -437,7 +437,7 @@ export function Chat({
                     // OVERRIDES the login default, so omitting it would strip
                     // llm:invoke from the post-MFA token and break the agents' LLM
                     // egress during the privileged remediation.
-                    scope: `openid obs:read llm:invoke ${stepUp.scope}`,
+                    scope: `openid inspect:read llm:invoke ${stepUp.scope}`,
                   },
                 );
               }}
@@ -586,7 +586,7 @@ export function Chat({
                       <span>
                         {flow === 'privileged'
                           ? 'The copilot delegated to the specialist, which acted through mcp-ops.'
-                          : 'The copilot read through mcp-observability on its own.'}
+                          : 'The copilot read through mcp-inspect on its own.'}
                       </span>
                     </div>
                   ) : null;

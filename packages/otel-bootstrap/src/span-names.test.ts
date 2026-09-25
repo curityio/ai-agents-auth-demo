@@ -5,15 +5,15 @@ const fakeSpan = () => ({ updateName: vi.fn() });
 
 describe('outboundSpanName', () => {
   it('is METHOD /path — the path alone tells the hops apart here, and the host stays in server.address', () => {
-    expect(outboundSpanName('POST', 'https://mcp-gateway.localtest.me', '/observability/mcp'))
-      .toBe('POST /observability/mcp');
+    expect(outboundSpanName('POST', 'https://mcp-gateway.localtest.me', '/inspect/mcp'))
+      .toBe('POST /inspect/mcp');
   });
   it('does not put the host or port in the name', () => {
     expect(outboundSpanName('POST', 'http://agentgateway.mcp.svc.cluster.local:8080', '/llm/chat/completions'))
       .toBe('POST /llm/chat/completions');
   });
   it('drops the query string (it can carry parameters and inflates cardinality)', () => {
-    expect(outboundSpanName('GET', 'http://obs-api.apis.svc.cluster.local:8084', '/pods?namespace=prod'))
+    expect(outboundSpanName('GET', 'http://inspect-api.apis.svc.cluster.local:8084', '/pods?namespace=prod'))
       .toBe('GET /pods');
   });
   it('still yields METHOD /path when the origin is not a URL', () => {

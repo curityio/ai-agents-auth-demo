@@ -12,7 +12,7 @@ import type { Span } from '@opentelemetry/api';
  *
  * These hooks rename the span to `METHOD /path` in both directions, query string
  * dropped. Path only, no host: every path in this system is distinct enough on its
- * own (`/observability/mcp`, `/oauth/v2/oauth-token`, `/llm/chat/completions`,
+ * own (`/inspect/mcp`, `/oauth/v2/oauth-token`, `/llm/chat/completions`,
  * `/pods`), and the host stays one click away in `server.address`. The conventions
  * avoid paths in span names because of cardinality; every path in this demo is
  * fixed, so that concern does not apply — do NOT lift this unchanged into a service

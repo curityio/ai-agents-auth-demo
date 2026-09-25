@@ -47,9 +47,9 @@ describe('exchange colouring', () => {
 });
 
 describe('topology', () => {
-  it('routes the mcp-observability exchange around mcp-ops, not through it', () => {
+  it('routes the mcp-inspect exchange around mcp-ops, not through it', () => {
     const ops = box('mcp-ops');
-    const pts = linkPathOf('mcp-observability');
+    const pts = linkPathOf('mcp-inspect');
     expect(pts.length).toBeGreaterThan(2);
     for (const p of pts) {
       const inside = p.x > ops.left && p.x < ops.right && p.y > ops.top && p.y < ops.bottom;
@@ -84,8 +84,8 @@ describe('buildJourney', () => {
       'llm-provider',
       'agent-copilot',
       'agentgateway',
-      'mcp-observability',
-      'obs-api',
+      'mcp-inspect',
+      'inspect-api',
     ]);
     expect(read.some((s) => s.lit.includes('agent-specialist'))).toBe(false);
   });
@@ -152,7 +152,7 @@ describe('buildJourney', () => {
       }
     }
     // the APIs never exchange: the packet stops there
-    expect(read[read.length - 1].at).toBe('obs-api');
+    expect(read[read.length - 1].at).toBe('inspect-api');
     expect(priv[priv.length - 1].at).toBe('ops-api');
   });
   it('the privileged journey names the MFA gate at Curity and is privileged-toned throughout', () => {
@@ -184,6 +184,6 @@ describe('buildJourney', () => {
     expect(IDLE_LOOP.filter((s) => s.at === 'llm-provider' && s.packet).length).toBe(2);
     // one arrival each; the closing linger repeats the stop with the packet gone
     expect(IDLE_LOOP.filter((s) => s.at === 'ops-api' && s.packet).length).toBe(1);
-    expect(IDLE_LOOP.filter((s) => s.at === 'obs-api' && s.packet).length).toBe(1);
+    expect(IDLE_LOOP.filter((s) => s.at === 'inspect-api' && s.packet).length).toBe(1);
   });
 });

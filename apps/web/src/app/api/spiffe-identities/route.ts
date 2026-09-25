@@ -14,7 +14,7 @@ const webSource = new SpiffeJwtSvidSource({
 const AGENT_URL = process.env.AGENT_COPILOT_URL ?? 'http://agent-copilot.agents.svc.cluster.local:8081';
 const SPECIALIST_URL =
   process.env.AGENT_SPECIALIST_URL ?? 'http://agent-specialist.agents.svc.cluster.local:8082';
-const MCP_URL = process.env.MCP_OBSERVABILITY_URL ?? 'http://mcp-observability.mcp.svc.cluster.local:8080';
+const MCP_URL = process.env.MCP_INSPECT_URL ?? 'http://mcp-inspect.mcp.svc.cluster.local:8080';
 const MCP_OPS_URL = process.env.MCP_OPS_URL ?? 'http://mcp-ops.mcp.svc.cluster.local:8080';
 // agentgateway is the MCP front door and inserts its own SPIFFE ID into every
 // downstream act chain. It's a Rust binary with no /spiffe-id of its own, so its
@@ -64,12 +64,12 @@ async function readLocalWebSvid(): Promise<SvidView> {
 // Returns ONLY the workloads that participate in the requested flow, so the panel
 // mirrors the chain the user just exercised (every MCP hop now goes THROUGH the
 // agentgateway, so it appears in both flows):
-//   - read (default): web → agent-copilot → agentgateway → mcp-observability
-//   - privileged:      web → agent-copilot → agent-specialist → agentgateway → mcp-observability + mcp-ops
+//   - read (default): web → agent-copilot → agentgateway → mcp-inspect
+//   - privileged:      web → agent-copilot → agent-specialist → agentgateway → mcp-inspect + mcp-ops
 // The specialist is an inspect → act → verify loop holding TWO tokens: it reads
-// the deployment through mcp-observability before and after it writes through
+// the deployment through mcp-inspect before and after it writes through
 // mcp-ops, so both MCP servers present their SVID as actor_token in that flow.
-// (The obs-api/ops-api resource servers are intentionally omitted: they receive the
+// (The inspect-api/ops-api resource servers are intentionally omitted: they receive the
 // exchanged token but perform no exchange of their own, so they aren't token-exchange
 // participants.)
 export async function GET(req: Request) {
@@ -80,12 +80,12 @@ export async function GET(req: Request) {
       ? [
           fetchRemote('agent-specialist', SPECIALIST_URL),
           fetchRemote('agentgateway', AGENTGATEWAY_URL),
-          fetchRemote('mcp-observability', MCP_URL),
+          fetchRemote('mcp-inspect', MCP_URL),
           fetchRemote('mcp-ops', MCP_OPS_URL),
         ]
       : [
           fetchRemote('agentgateway', AGENTGATEWAY_URL),
-          fetchRemote('mcp-observability', MCP_URL),
+          fetchRemote('mcp-inspect', MCP_URL),
         ];
 
   const workloads = await Promise.all([

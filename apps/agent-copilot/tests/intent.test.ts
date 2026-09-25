@@ -3,8 +3,8 @@ import { detectIntent } from '../src/intent.js';
 
 describe('detectIntent', () => {
   it('returns observe for plain questions', () => {
-    expect(detectIntent('which pods are crashlooping in prod?').kind).toBe('observe');
-    expect(detectIntent('show me logs for api-gateway').kind).toBe('observe');
+    expect(detectIntent('which pods are crashlooping in prod?').kind).toBe('inspect');
+    expect(detectIntent('show me logs for api-gateway').kind).toBe('inspect');
   });
 
   it('picks up restart and the deployment name', () => {
@@ -28,13 +28,13 @@ describe('detectIntent', () => {
   });
 
   it('falls back to observe when the verb has no plausible target', () => {
-    expect(detectIntent('restart please').kind).toBe('observe');
-    expect(detectIntent('restart the deployment').kind).toBe('observe');
+    expect(detectIntent('restart please').kind).toBe('inspect');
+    expect(detectIntent('restart the deployment').kind).toBe('inspect');
   });
 
   it('rejects single-token bare nouns as deployment names', () => {
     // "pod" is a stopword and has no dash/digit — should not be treated as a name.
-    expect(detectIntent('restart pod').kind).toBe('observe');
+    expect(detectIntent('restart pod').kind).toBe('inspect');
   });
 });
 
@@ -63,8 +63,8 @@ describe('detectIntent — privileged verbs', () => {
     }
   });
   it('does not treat a question about a change as a privileged verb', () => {
-    expect(detectIntent('what changed in prod overnight?').kind).toBe('observe');
-    expect(detectIntent('did the image change on order-service?').kind).toBe('observe');
+    expect(detectIntent('what changed in prod overnight?').kind).toBe('inspect');
+    expect(detectIntent('did the image change on order-service?').kind).toBe('inspect');
   });
   it('does not pick a version token as the deployment name', () => {
     // The version precedes the real name; we must skip `v1.3`/`v1` and pick `api-gateway`.
@@ -89,7 +89,7 @@ describe('detectIntent — privileged verbs', () => {
     expect(detectIntent('scale checkout-svc to 3 replicas').kind).toBe('restart');
   });
   it('keeps pure reads on observe', () => {
-    expect(detectIntent('what is failing in prod?').kind).toBe('observe');
-    expect(detectIntent('show me the logs for api-gateway').kind).toBe('observe');
+    expect(detectIntent('what is failing in prod?').kind).toBe('inspect');
+    expect(detectIntent('show me the logs for api-gateway').kind).toBe('inspect');
   });
 });

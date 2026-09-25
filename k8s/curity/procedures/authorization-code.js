@@ -17,9 +17,9 @@ function result(context) {
   var accessTokenData = context.getDefaultAccessTokenData();
   accessTokenData.acr = context.contextAttributes().acr;
   // Narrow the access token's audience to just the resource it targets
-  // (agent-copilot). The web-app client's <audience> list also carries
-  // `web-app` so the ID token's `aud` includes the client_id (OIDC + Auth.js
-  // require this) — but the access token doesn't need `web-app`, so we drop it
+  // (agent-copilot). The web client's <audience> list also carries
+  // `web` so the ID token's `aud` includes the client_id (OIDC + Auth.js
+  // require this) — but the access token doesn't need `web`, so we drop it
   // here. Overriding accessTokenData.aud leaves idTokenData.aud untouched.
   accessTokenData.aud = ['agent-copilot'];
   // RFC 8693 §4.4 `may_act` — the first link of the delegation chain. This token

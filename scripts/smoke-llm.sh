@@ -15,7 +15,7 @@
 #   [2/3] positive (REAL egress): that llm-gateway token drives a chat
 #         completion through the gateway → HTTP 200 (proves JWT validate +
 #         llm:invoke authz + provider-key swap + a real upstream round-trip).
-#   [3/3] negative: an aud=mcp-gateway / scope=obs:read token (no llm:invoke)
+#   [3/3] negative: an aud=mcp-gateway / scope=inspect:read token (no llm:invoke)
 #         is denied AT the gateway (401/403), before any upstream call.
 #   plus: no upstream LLM key (LLM_API_KEY / AZURE_OPENAI_API_KEY) is present in
 #         agent-copilot's env — the credential moved server-side into the gateway.
@@ -154,7 +154,7 @@ esac
 # it never gets far enough to evaluate the llm:invoke scope rule. A scopeless
 # aud=llm-gateway token isn't mintable to test the scope rule in isolation:
 # Curity caps the llm-gateway audience to exactly ['llm:invoke'].
-note "[3/3] Negative: exchange aud=mcp-gateway / scope=obs:read → expect denied at gateway"
+note "[3/3] Negative: exchange aud=mcp-gateway / scope=inspect:read → expect denied at gateway"
 RESP=$(curl -sS --cacert "$CACERT" \
   -d "client_id=$COPILOT_CLIENT_ID" \
   -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
@@ -165,7 +165,7 @@ RESP=$(curl -sS --cacert "$CACERT" \
   -d "actor_token=$SVID" \
   -d "actor_token_type=urn:ietf:params:oauth:token-type:jwt" \
   -d "audience=mcp-gateway" \
-  -d "scope=obs:read" \
+  -d "scope=inspect:read" \
   "$CURITY_TOKEN_URL")
 MCP_TOKEN=$(echo "$RESP" | jq -r '.access_token // empty')
 [[ -n "$MCP_TOKEN" ]] || { red "no access_token minting negative token: $(echo "$RESP" | redact_resp)"; exit 1; }

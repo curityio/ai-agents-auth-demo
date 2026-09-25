@@ -1,9 +1,0 @@
-# Observability stack (Collector + Tempo + Grafana). Deliberately OUTSIDE the
-# Istio Ambient mesh — it's infra, not a demo workload. In-mesh apps reach the
-# Collector as ordinary egress (no mTLS requirement to a non-meshed Service).
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability
-  labels:
-    purpose: observability

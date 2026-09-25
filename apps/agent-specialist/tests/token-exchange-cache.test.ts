@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TokenExchangeCache, type CacheKey } from '../src/token-exchange-cache.js';
 
-const key: CacheKey = { sub: 'alice', scope: 'obs:read', audience: 'mcp-observability', acr: 'mfa' };
-const value = { accessToken: 'tok.1', expiresInSec: 300, scope: 'obs:read' };
+const key: CacheKey = { sub: 'alice', scope: 'inspect:read', audience: 'mcp-inspect', acr: 'mfa' };
+const value = { accessToken: 'tok.1', expiresInSec: 300, scope: 'inspect:read' };
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -35,7 +35,7 @@ describe('TokenExchangeCache', () => {
     const c = new TokenExchangeCache({ ttlMs: 60_000 });
     c.set(key, value);
     expect(c.get({ ...key, sub: 'bob' })).toBeUndefined();
-    expect(c.get({ ...key, scope: 'obs:read ops:read' })).toBeUndefined();
+    expect(c.get({ ...key, scope: 'inspect:read ops:read' })).toBeUndefined();
     expect(c.get({ ...key, audience: 'mcp-ops' })).toBeUndefined();
   });
 
@@ -51,9 +51,9 @@ describe('TokenExchangeCache', () => {
 
   it('does not collide when a field happens to contain a space', () => {
     const c = new TokenExchangeCache({ ttlMs: 60_000 });
-    c.set({ sub: 'alice mcp-observability', scope: 'obs:read', audience: 'foo', acr: 'mfa' }, value);
+    c.set({ sub: 'alice mcp-inspect', scope: 'inspect:read', audience: 'foo', acr: 'mfa' }, value);
     expect(
-      c.get({ sub: 'alice', scope: 'obs:read', audience: 'mcp-observability foo', acr: 'mfa' }),
+      c.get({ sub: 'alice', scope: 'inspect:read', audience: 'mcp-inspect foo', acr: 'mfa' }),
     ).toBeUndefined();
   });
 

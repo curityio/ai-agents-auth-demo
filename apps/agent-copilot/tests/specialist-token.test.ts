@@ -31,7 +31,7 @@ const base = {
   agentPrivateKeyPem: 'pem',
   curityIssuer: 'https://curity.localtest.me/oauth/v2/oauth-anonymous',
   specialistAudience: 'agent-specialist',
-  specialistScope: 'ops:write obs:read llm:invoke',
+  specialistScope: 'ops:write inspect:read llm:invoke',
 } as unknown as Config;
 const U = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhbGljZSIsImp0aSI6ImoxIn0.sig';
 

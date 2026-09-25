@@ -43,7 +43,7 @@ function makeStepUp(): StepUpRequiredError {
 const cfg = {
   requiredAcr: 'mfa',
   mcpOpsUrl: 'https://mcp-gateway.localtest.me/ops/mcp',
-  mcpObservabilityUrl: 'https://mcp-gateway.localtest.me/observability/mcp',
+  mcpInspectUrl: 'https://mcp-gateway.localtest.me/inspect/mcp',
   llmGatewayUrl: 'http://gw:8080/llm',
   llmGatewayAudience: 'llm-gateway',
   llmGatewayScope: 'llm:invoke',
@@ -75,7 +75,7 @@ function fakeProvider(token: string, acquireError?: Error, discovery: unknown = 
 function deps(over: Partial<RemediationDeps> = {}): RemediationDeps {
   return {
     buildOpsAuthProvider: vi.fn(() => fakeProvider('ops-token')) as never,
-    buildObsAuthProvider: vi.fn(() => fakeProvider('obs-token')) as never,
+    buildInspectAuthProvider: vi.fn(() => fakeProvider('inspect-token')) as never,
     obtainLlmToken: vi.fn().mockResolvedValue('test-llm-token'),
     openMcpToolset: vi.fn().mockResolvedValue({ tools: {}, close: vi.fn() }),
     runLlm: vi.fn().mockResolvedValue({ text: 'done: restarted api-gateway', steps: [] }),
@@ -393,7 +393,7 @@ describe('runRemediation', () => {
     ).mock.calls;
     expect(calls).toHaveLength(2);
     const [read, write] = calls.map((c) => c[0]);
-    expect(read!.label).toBe('mcp-observability');
+    expect(read!.label).toBe('mcp-inspect');
     expect(read!.fetchImpl).toBeUndefined();
     expect(write!.label).toBe('mcp-ops');
     expect(write!.fetchImpl).toBeDefined();
@@ -431,9 +431,9 @@ describe('runRemediation', () => {
     expect(d.runLlm).not.toHaveBeenCalled();
   });
 
-  it('routes an invalid_scope on the obs path (acr=mfa, ops token ok) to step-up', async () => {
+  it('routes an invalid_scope on the inspect path (acr=mfa, ops token ok) to step-up', async () => {
     const d = deps({
-      buildObsAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('obs scope', 'invalid_scope'))) as never,
+      buildInspectAuthProvider: vi.fn(() => fakeProvider('', new CurityAuthError('inspect scope', 'invalid_scope'))) as never,
     });
     const out = await runRemediation({
       cfg,

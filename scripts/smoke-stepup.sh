@@ -12,9 +12,9 @@
 #   [1/4] alice-mfa (acr=mfa, role sre) → full chain to aud=mcp-gateway,
 #         acr=mfa propagated; restart_deployment through the gateway → 200.
 #   [2/4] ISSUANCE INVARIANT — a password-only login that ASKS for ops:write does
-#         not get it. Hand-drives /authorize as the web-app client with NO
+#         not get it. Hand-drives /authorize as the web client with NO
 #         acr_values, logs alice in with a password, and asserts the issued token
-#         carries obs:read + llm:invoke but NOT ops:write: the ACR Token Issuance
+#         carries inspect:read + llm:invoke but NOT ops:write: the ACR Token Issuance
 #         Authorizer withheld the privileged scope at issuance.
 #   [3/4] bob (role=developer, no write role) → Curity returns access_denied at
 #         the FIRST exchange hop (copilot→specialist, scope ops:write) — the role
@@ -35,7 +35,7 @@
 #         .demo-users.env (written by `make seed-users`); unset + no file → skips [2/4]. NOT a
 #         token: [2/4] drives the login itself, because the thing under test is what
 #         Curity will ISSUE, and no pre-existing token can demonstrate a refusal to
-#         mint one. The web-app client secret is read from the `web-secrets` Secret
+#         mint one. The web client secret is read from the `web-secrets` Secret
 #         in the `web` namespace.
 #   SMOKE_TOKEN_BOB        — bob (role=developer). Optional → skips [3/4].
 #   SMOKE_TOKEN_CAROL      — carol (role=oncall; seed per docs/curity-seed.md).
@@ -121,7 +121,7 @@ exchange() {
 # ops:write bearer, or empty on failure. Prints a diagnostic to stderr on failure.
 build_gateway_ops_token() {
   local subj="$1" resp spb gwb
-  resp=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$subj" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
+  resp=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$subj" "$COPILOT_SVID" "agent-specialist" "inspect:read ops:write")
   spb=$(echo "$resp" | jq -r '.access_token // empty')
   if [[ -z "$spb" ]]; then echo "copilot→specialist failed: $(echo "$resp" | redact)" >&2; return 1; fi
   resp=$(exchange "$SPECIALIST_CLIENT_ID" "$(specialist_assertion)" "$spb" "$SPECIALIST_SVID" "mcp-gateway" "ops:write")
@@ -187,7 +187,7 @@ print(f.action + "\t" + urllib.parse.urlencode(f.fields))
 '
 }
 
-# web_login_access_token: hand-drive the authorization_code flow as the web-app
+# web_login_access_token: hand-drive the authorization_code flow as the web
 # client with a PASSWORD-ONLY login, and echo the resulting access token.
 #   $1 username  $2 password  $3 requested scope
 #
@@ -207,11 +207,11 @@ web_login_access_token() {
   local jar loc nloc code resp tok page hdr form action body hops=0
   jar=$(mktemp)
 
-  # 1. Start the code flow. <force-authn>true</force-authn> on web-app means this
+  # 1. Start the code flow. <force-authn>true</force-authn> on web means this
   #    always reaches the authenticator chooser rather than reusing a session.
   curl -sS --cacert "$CACERT" -c "$jar" -b "$jar" -L -o /dev/null \
     -G "$CURITY_AUTHORIZE_URL" \
-    --data-urlencode "client_id=web-app" \
+    --data-urlencode "client_id=web" \
     --data-urlencode "response_type=code" \
     --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \
     --data-urlencode "scope=$scope" \
@@ -268,8 +268,8 @@ web_login_access_token() {
     return 1
   fi
 
-  # 4. Redeem it. web-app is a client_secret_basic client.
-  resp=$(curl -sS --cacert "$CACERT" -u "web-app:$WEB_CLIENT_SECRET" \
+  # 4. Redeem it. web is a client_secret_basic client.
+  resp=$(curl -sS --cacert "$CACERT" -u "web:$WEB_CLIENT_SECRET" \
     -d "grant_type=authorization_code" \
     -d "code=$code" \
     --data-urlencode "redirect_uri=$WEB_REDIRECT_URI" \
@@ -359,7 +359,7 @@ WEB_CLIENT_SECRET=$(kubectl -n web get secret web-secrets \
 # [1/4] alice + acr=mfa → full chain to aud=mcp-gateway; restart via gateway = 200
 # ===========================================================================
 note "[1/4] alice-mfa: full chain to aud=mcp-gateway + restart via gateway (acr=mfa propagated)"
-RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_ALICE_MFA" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
+RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_ALICE_MFA" "$COPILOT_SVID" "agent-specialist" "inspect:read ops:write")
 SPECIALIST_BEARER_MFA=$(echo "$RESP" | jq -r '.access_token // empty')
 [[ -n "$SPECIALIST_BEARER_MFA" ]] || { red "no token in 1/4-A: $(echo "$RESP" | redact)"; exit 1; }
 ACT_SUB=$(echo "$SPECIALIST_BEARER_MFA" | decode_jwt_payload | jq -r '.act.sub // empty')
@@ -396,7 +396,7 @@ esac
 # a convention upheld by whichever client happens to be asking.
 #
 # Before the TIA, the property rested on apps/web/src/auth.ts choosing to request only
-# `openid obs:read llm:invoke` at login, plus the acr checks at mcp-ops/ops-api. A
+# `openid inspect:read llm:invoke` at login, plus the acr checks at mcp-ops/ops-api. A
 # hand-crafted authorize request exactly like the one below DID yield ops:write at
 # acr=html-form. That is what this asserts is no longer possible.
 #
@@ -419,7 +419,7 @@ elif [[ -z "$WEB_CLIENT_SECRET" ]]; then
   yellow "SKIP [2/4]: could not read CURITY_CLIENT_SECRET from secret/web-secrets in ns web."
 else
   note "[2/4] password-only login REQUESTING ops:write → token must come back without it"
-  PWD_TOKEN=$(web_login_access_token "alice" "$SMOKE_ALICE_PASSWORD" "openid obs:read llm:invoke ops:write") \
+  PWD_TOKEN=$(web_login_access_token "alice" "$SMOKE_ALICE_PASSWORD" "openid inspect:read llm:invoke ops:write") \
     || { red "  password-only login flow failed (diagnostic above)"; exit 1; }
   PAYLOAD=$(echo "$PWD_TOKEN" | decode_jwt_payload)
   PWD_ACR=$(echo "$PAYLOAD" | jq -r '.acr // empty')
@@ -441,8 +441,8 @@ else
 
   # Partial denial, not blanket refusal: the TIA withholds one scope and login still
   # works. A blanket access_denied would also lack ops:write, so assert the survivors.
-  [[ "$PWD_SCOPE" == *"obs:read"* && "$PWD_SCOPE" == *"llm:invoke"* ]] \
-    || { red "  expected obs:read + llm:invoke to survive the denial, got scope: '$PWD_SCOPE'"; exit 1; }
+  [[ "$PWD_SCOPE" == *"inspect:read"* && "$PWD_SCOPE" == *"llm:invoke"* ]] \
+    || { red "  expected inspect:read + llm:invoke to survive the denial, got scope: '$PWD_SCOPE'"; exit 1; }
   green "  OK (acr=$PWD_ACR; ops:write withheld at issuance; scope='$PWD_SCOPE')"
 fi
 
@@ -453,7 +453,7 @@ if [[ -z "${SMOKE_TOKEN_BOB:-}" ]]; then
   yellow "SKIP [3/4]: SMOKE_TOKEN_BOB not set — sign in as bob (per docs/curity-seed.md) to obtain."
 else
   note "[3/4] bob (no write role): copilot exchange requesting ops:write → expect access_denied"
-  RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_BOB" "$COPILOT_SVID" "agent-specialist" "obs:read ops:write")
+  RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_BOB" "$COPILOT_SVID" "agent-specialist" "inspect:read ops:write")
   ERR=$(echo "$RESP" | jq -r '.error // empty')
   DESC=$(echo "$RESP" | jq -r '.error_description // empty')
   # The role gate is (sre OR oncall); bob is developer. Curity surfaces the

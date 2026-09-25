@@ -1,7 +1,7 @@
 # agentgateway — the MCP front door in the `mcp` namespace.
 #
 # Fronts both MCP servers on ONE listener (:8080) via two path-scoped routes
-# (/observability/mcp, /ops/mcp — see k8s/workloads/agentgateway-config.yaml).
+# (/inspect/mcp, /ops/mcp — see k8s/workloads/agentgateway-config.yaml).
 # It validates the caller's aud=mcp-gateway token, applies per-tool CEL RBAC, and
 # for each tool-call drives an extAuthz call to the co-located exchange-shim, which
 # performs the RFC 8693 exchange (subject = caller token, actor = the gateway's own
@@ -105,8 +105,11 @@ spec:
               value: "8090"
             - name: CURITY_TOKEN_ENDPOINT
               value: https://curity.localtest.me/oauth/v2/oauth-token
-            - name: GATEWAY_CLIENT_ID
-              value: mcp-gateway
+            # Named after the workload that authenticates with it, like every other
+            # static client, so the OBO log label, the client_id claim and the SPIFFE
+            # ID in the downstream `act` chain all read `agentgateway`.
+            - name: CURITY_CLIENT_ID
+              value: agentgateway
             - name: SPIFFE_SVID_PATH
               value: /run/spiffe/curity-actor.jwt
             # Reuse window for an exchanged token per (caller token, audience). One MCP
@@ -119,12 +122,12 @@ spec:
             # OTel: the shim performs the RFC 8693 exchange on every extAuthz
             # call — the hop that inserts `spiffe://…/sa/agentgateway` into the
             # downstream `act` chain. Without this it is invisible, and the
-            # audience silently jumps mcp-gateway → mcp-observability/mcp-ops
+            # audience silently jumps mcp-gateway → mcp-inspect/mcp-ops
             # with nothing in the trace to account for it. With it, auth-curity's
             # `auth.token_exchange` span shows that narrowing like every other
             # hop. Needs the express server in app.ts to actually produce spans.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: exchange-shim
             - name: OTEL_RESOURCE_ATTRIBUTES

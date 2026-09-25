@@ -1,0 +1,10 @@
+# Telemetry stack (Collector + Tempo + Grafana) — the tracing that observes the
+# demo. Named `telemetry` so "inspect" means only the demo's read tier. Deliberately OUTSIDE the
+# Istio Ambient mesh — it's infra, not a demo workload. In-mesh apps reach the
+# Collector as ordinary egress (no mTLS requirement to a non-meshed Service).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telemetry
+  labels:
+    purpose: telemetry

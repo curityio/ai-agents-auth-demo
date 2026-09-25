@@ -2,19 +2,19 @@
  * Pure rules for the tools card. No React, no fetch.
  */
 
-export type ToolTier = 'observability' | 'ops';
+export type ToolTier = 'inspect' | 'ops';
 
 /** Fixed, meaningful order per tier: reads as list → describe → logs; writes
  *  least → most invasive. Anything the server adds later trails alphabetically. */
 const TOOL_ORDER: Record<ToolTier, string[]> = {
-  observability: ['list_pods', 'get_deployment', 'get_pod_logs'],
+  inspect: ['list_pods', 'get_deployment', 'get_pod_logs'],
   ops: ['restart_deployment', 'scale_deployment', 'set_deployment_image'],
 };
 
-/** Which tier a tool call went to. Unknown names are read as observability —
+/** Which tier a tool call went to. Unknown names are read as inspect —
  *  the safe default, since it never claims a call was privileged. */
 export function toolTier(name: string): ToolTier {
-  return TOOL_ORDER.ops.includes(name) ? 'ops' : 'observability';
+  return TOOL_ORDER.ops.includes(name) ? 'ops' : 'inspect';
 }
 
 export function orderTools<T extends { name: string }>(tier: ToolTier, tools: T[]): T[] {

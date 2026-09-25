@@ -5,14 +5,14 @@ import { ExchangeCache } from '../src/exchange-cache.js';
 const deps = {
   getSvidJwt: vi.fn(async () => 'svid.jwt.compact'),
   tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token',
-  clientId: 'mcp-gateway',
+  clientId: 'agentgateway',
   clientSecret: 'Password1',
-  audienceScopes: { 'mcp-observability': 'obs:read', 'mcp-ops': 'ops:write' },
+  audienceScopes: { 'mcp-inspect': 'inspect:read', 'mcp-ops': 'ops:write' },
   exchange: vi.fn(async () => ({
     accessToken: 'narrowed.token',
     tokenType: 'Bearer',
     expiresInSec: 300,
-    scope: 'obs:read',
+    scope: 'inspect:read',
     issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
   })),
 };
@@ -20,17 +20,17 @@ const deps = {
 describe('handleExchange', () => {
   it('exchanges caller token using the SVID as actor and returns a token-endpoint body', async () => {
     const res = await handleExchange(
-      { callerToken: 'caller.token', targetAudience: 'mcp-observability' },
+      { callerToken: 'caller.token', targetAudience: 'mcp-inspect' },
       deps,
     );
     expect(deps.exchange).toHaveBeenCalledWith(
       expect.objectContaining({
-        clientId: 'mcp-gateway',
+        clientId: 'agentgateway',
         clientSecret: 'Password1',
         subjectToken: 'caller.token',
         actorToken: 'svid.jwt.compact',
-        audience: 'mcp-observability',
-        scope: 'obs:read',
+        audience: 'mcp-inspect',
+        scope: 'inspect:read',
       }),
     );
     expect(res).toEqual({ access_token: 'narrowed.token', token_type: 'Bearer', expires_in: 300 });
@@ -58,13 +58,17 @@ describe('handleExchange', () => {
     ).rejects.toThrow(/audience/i);
   });
 
-  it('logs under the exchange-shim workload name, not the mcp-gateway client id', async () => {
+  it('passes no log-label override: the client id IS the pod name (agentgateway)', async () => {
+    // The Curity client is named after the workload that authenticates, like every
+    // other client here, so auth-curity's derived label already matches the SPIFFE
+    // ID in the `act` chain. An override would be a second name for the same pod.
     await handleExchange(
-      { callerToken: 'caller.token', targetAudience: 'mcp-observability' },
+      { callerToken: 'caller.token', targetAudience: 'mcp-inspect' },
       deps,
     );
+    expect(deps.exchange).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'agentgateway' }));
     expect(deps.exchange).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceLabel: 'exchange-shim' }),
+      expect.not.objectContaining({ serviceLabel: expect.anything() }),
     );
   });
 });
@@ -81,7 +85,7 @@ describe('handleExchange with a cache', () => {
       accessToken: `narrowed.${Math.random()}`,
       tokenType: 'Bearer',
       expiresInSec: 600,
-      scope: 'obs:read',
+      scope: 'inspect:read',
       issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
     })),
     cache: new ExchangeCache({ ttlSeconds: 60, maxEntries: 100 }),
@@ -89,9 +93,9 @@ describe('handleExchange with a cache', () => {
 
   it('exchanges once for the same caller token + audience and reuses the token', async () => {
     const d = freshDeps();
-    const a = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
-    const b = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
-    const c = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    const a = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
+    const b = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
+    const c = await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
     expect(d.exchange).toHaveBeenCalledTimes(1);
     expect(b.access_token).toBe(a.access_token);
     expect(c.access_token).toBe(a.access_token);
@@ -99,14 +103,14 @@ describe('handleExchange with a cache', () => {
 
   it('exchanges again for a different caller token (new login / step-up)', async () => {
     const d = freshDeps();
-    await handleExchange({ callerToken: 'caller.token.1', targetAudience: 'mcp-observability' }, d);
-    await handleExchange({ callerToken: 'caller.token.2', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token.1', targetAudience: 'mcp-inspect' }, d);
+    await handleExchange({ callerToken: 'caller.token.2', targetAudience: 'mcp-inspect' }, d);
     expect(d.exchange).toHaveBeenCalledTimes(2);
   });
 
   it('exchanges again for a different audience (other tier)', async () => {
     const d = freshDeps();
-    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
     await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-ops' }, d);
     expect(d.exchange).toHaveBeenCalledTimes(2);
   });
@@ -120,8 +124,8 @@ describe('handleExchange with a cache', () => {
 
   it('exchanges every time when no cache is configured', async () => {
     const d = { ...freshDeps(), cache: undefined };
-    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
-    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-observability' }, d);
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
+    await handleExchange({ callerToken: 'caller.token', targetAudience: 'mcp-inspect' }, d);
     expect(d.exchange).toHaveBeenCalledTimes(2);
   });
 });

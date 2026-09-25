@@ -81,7 +81,7 @@ spec:
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous
             - name: CURITY_JWKS_URI
               value: https://curity.localtest.me/oauth/v2/oauth-anonymous/jwks
-            - name: AGENT_AUDIENCE
+            - name: EXPECTED_AUDIENCE
               value: agent-copilot
             # Re-run MCP authorization discovery (401 → RFC 9728 → RFC 8414) on EVERY
             # question instead of caching it 10 min: this demo exists to show that chain
@@ -93,7 +93,7 @@ spec:
             # 60 s code default a second question within a minute showed none.
             - name: TOKEN_EXCHANGE_CACHE_TTL_SECONDS
               value: "0"
-            - name: MCP_OBSERVABILITY_URL
+            - name: MCP_INSPECT_URL
               # The agentgateway MCP front door, by its PUBLIC name. The agent is a
               # spec-shaped MCP client: it learns the authorization server from this
               # URL's 401 → RFC 9728 → RFC 8414 chain, and RFC 9728 requires the
@@ -101,19 +101,19 @@ spec:
               # this is the edge host (scripts/cluster-routing.sh aliases it into the
               # pod) and not the in-cluster Service name. The gateway validates
               # aud=mcp-gateway, applies per-tool CEL RBAC, and re-exchanges (via the
-              # co-located exchange-shim) to a narrowed aud=mcp-observability token
+              # co-located exchange-shim) to a narrowed aud=mcp-inspect token
               # before forwarding to the origin. The authoritative JWT + act-chain
               # enforcement still lives in the MCP middleware
-              # (apps/mcp-observability/src/auth-middleware.ts).
-              value: https://mcp-gateway.localtest.me/observability/mcp
+              # (apps/mcp-inspect/src/auth-middleware.ts).
+              value: https://mcp-gateway.localtest.me/inspect/mcp
             # CIMD client_id — the HTTPS URL Curity dereferences for this agent's
             # metadata document. Must match the CLIENT_POLICY key in token-exchange.js.
-            - name: AGENT_CLIENT_ID
+            - name: CURITY_CLIENT_ID
               value: https://copilot.localtest.me/.well-known/oauth-client
             # The one static per-server value: the RFC 8693 audience (logical name).
             # Replaced by RFC 8707 resource once Curity supports it. The gateway
-            # narrows to mcp-observability per tool.
-            - name: MCP_OBSERVABILITY_AUDIENCE
+            # narrows to mcp-inspect per tool.
+            - name: MCP_INSPECT_AUDIENCE
               value: mcp-gateway
             # A2A privileged-path target.
             - name: SPECIALIST_A2A_URL
@@ -121,7 +121,7 @@ spec:
             - name: SPECIALIST_AUDIENCE
               value: agent-specialist
             - name: SPECIALIST_SCOPE
-              value: obs:read ops:write llm:invoke
+              value: inspect:read ops:write llm:invoke
             # Identity-bound LLM egress: routed through the agentgateway `/llm`
             # route (mcp ns). The agent exchanges the caller's user token for an
             # aud=llm-gateway, scope=llm:invoke token (RFC 8693) and presents it
@@ -136,7 +136,7 @@ spec:
             # OTel: export to the Collector (OTLP/HTTP); spiffe.id read from the
             # SVID file at SPIFFE_SVID_PATH by otel-bootstrap at SDK init.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://otel-collector.observability.svc.cluster.local:4318
+              value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: agent-copilot
             - name: OTEL_RESOURCE_ATTRIBUTES

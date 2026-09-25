@@ -11,7 +11,7 @@ const svidSource = new SpiffeJwtSvidSource({
 });
 const llmCache = new TokenExchangeCache({ ttlMs: 60_000 });
 
-// Mirror obs-token.ts's peekLastObsExchange: the most recent aud=llm-gateway
+// Mirror inspect-token.ts's peekLastInspectExchange: the most recent aud=llm-gateway
 // token this process minted (or reused), so /last-token can surface the model
 // call as a LEAF of the OBO chain. Stamped on cache hits too — the route
 // orders it against the ops:write exchange of the same run by `at`.

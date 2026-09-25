@@ -15,9 +15,9 @@ workloads on a user's behalf; every hop is authenticated (SPIFFE), least-privile
 actions (RFC 9470 step-up), and traceable (OTel → Tempo → Grafana).
 
 ```
-Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─┬─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s API (prod)
                                                                 └─ A2A ─▶ agent-specialist ─┬─ MCP ─▶ agentgateway ─▶ mcp-ops          ─▶ ops-api ─▶ K8s API (prod)
-                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-observability ─▶ obs-api ─▶ K8s API (prod)
+                                                                  (LLM, cross-tier)         └─ MCP ─▶ agentgateway ─▶ mcp-inspect ─▶ inspect-api ─▶ K8s API (prod)
         agent-copilot / agent-specialist ─ LLM ─▶ agentgateway (/llm; aud=llm-gateway, scope llm:invoke; holds the only provider key) ─▶ LLM provider
         every agent/MCP/LLM hop ⇄ Curity (RFC 8693 exchange; SPIFFE JWT-SVID as actor_token)
 ```
@@ -27,7 +27,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 - **The web app is a BFF.** Browser holds an httpOnly cookie; the access token
   never leaves the server. Its identity panels are fed by debug routes
   (`/spiffe-id`, `/last-token`, `/tools` on the workloads; `/api/obo-chain`,
-  `/api/spiffe-identities`, `/api/tools`, `AUTH_DEBUG`-gated `/api/inspect` on the
+  `/api/spiffe-identities`, `/api/tools`, `AUTH_DEBUG`-gated `/api/tokens` on the
   BFF) — see `CLAUDE.md` fact #34 before touching them.
 - **Every agent/MCP hop performs an RFC 8693 exchange** presenting its SPIFFE
   JWT-SVID as `actor_token`; Curity narrows scope + audience, nests the workload
@@ -35,10 +35,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   `packages/auth-curity` owns *every* "what Curity expects" rule — don't duplicate it.
 - **Client auth is split by tier.** The two agents are **CIMD ephemeral clients**
   (`client_id` = a self-hosted HTTPS metadata URL, `private_key_jwt`); the MCP
-  servers and `mcp-gateway` are static `client_secret_basic` clients.
+  servers and `agentgateway` are static `client_secret_basic` clients.
 - **Both agents are LLM agents (Vercel AI SDK v7).** The copilot is front-line; the
   specialist is a privileged cross-tier agent holding **two** `aud=mcp-gateway`
-  tokens (`ops:write` first — role gate + ACR TIA — then `obs:read`) and running an
+  tokens (`ops:write` first — role gate + ACR TIA — then `inspect:read`) and running an
   inspect → act → verify loop. Its authz gates run **before** the LLM loop
   (`apps/agent-specialist/src/executor.ts`, `runRemediation`). Shared plumbing is
   `packages/agent-runtime` (`buildLlm`, `openMcpToolset`).
@@ -46,12 +46,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
   NOT `@ai-sdk/openai`). The gateway holds the only upstream key; the provider
   (OpenAI/Anthropic/Gemini/Azure) is generated from `.demo.env` — `docs/llm-providers.md`.
 - **agentgateway is the MCP front door** for both MCP servers (`aud=mcp-gateway`,
-  path-routed `/observability/mcp` + `/ops/mcp`, coarse per-tier scope authz +
+  path-routed `/inspect/mcp` + `/ops/mcp`, coarse per-tier scope authz +
   `tools/list` filtering). Its co-located `exchange-shim` performs the per-tool-call
   OBO exchange and inserts `…/ns/mcp/sa/agentgateway` into every `act` chain. The
   `set_deployment_image`=`sre` split is authoritative at **mcp-ops**; the gateway's
   HTTP-layer `authorization` rule (keyed on `Mcp-Name`) is a first line only.
-- **MCP servers are thin clients** that re-exchange to `obs-api`/`ops-api` (ns
+- **MCP servers are thin clients** that re-exchange to `inspect-api`/`ops-api` (ns
   `apis`), the only workloads with Kubernetes credentials (minimal RBAC in `prod`).
 - **Resource servers enforce, in order:** Bearer → JWT valid → scope → `act`
   present → exact actor chain → (privileged) `acr=mfa`.
@@ -66,13 +66,13 @@ Dockerfile); `packages/*` are shared `@ai-agents-demo/*` libraries.
 - `apps/web` — Next.js App Router BFF (Auth.js v5, `@vercel/otel`); identity panels
 - `apps/agent-copilot` — front-line agent; CIMD client; deterministic intent gate
 - `apps/agent-specialist` — privileged cross-tier LLM agent; A2A server; CIMD client
-- `apps/mcp-observability` / `apps/mcp-ops` — thin MCP servers (zod 4)
-- `apps/obs-api` / `apps/ops-api` — resource servers holding the K8s credentials
+- `apps/mcp-inspect` / `apps/mcp-ops` — thin MCP servers (zod 4)
+- `apps/inspect-api` / `apps/ops-api` — resource servers holding the K8s credentials
 - `apps/exchange-shim` — agentgateway's extAuthz sidecar (Express; see fact #28)
 - `packages/auth-curity` — JWT verify, RFC 8693 exchange, CIMD, identity spans, OBO log
 - `packages/agent-runtime` — `buildLlm` + MCP→AI-SDK toolset adapter
 - `packages/spiffe`, `packages/otel-bootstrap`, `packages/a2a-helpers`
-- `k8s/` — curity (configmap + procedures), spire, istio, observability, workloads, prod, kind
+- `k8s/` — curity (configmap + procedures), spire, istio, telemetry, workloads, prod, kind
 - `scripts/` — bootstrap + smoke tests; `Makefile` is the lifecycle entry point
 
 ## Commands

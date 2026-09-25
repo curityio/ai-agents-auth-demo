@@ -92,7 +92,7 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8080),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.MCP_AUDIENCE ?? 'mcp-ops',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'mcp-ops',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'ops:write').split(/\s+/).filter(Boolean),
     expectedActorChain: [
       SPIFFE_ID('mcp', 'agentgateway'),
@@ -106,7 +106,7 @@ export function loadConfig(): Config {
       process.env.RESOURCE_METADATA_URL ??
       'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
     curityTokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
-    clientId: process.env.MCP_CLIENT_ID ?? 'mcp-ops',
+    clientId: process.env.CURITY_CLIENT_ID ?? 'mcp-ops',
     clientSecret: required('CURITY_CLIENT_SECRET'),
     opsApiUrl: required('OPS_API_URL'),
     opsApiAudience: process.env.OPS_API_AUDIENCE ?? 'ops-api',

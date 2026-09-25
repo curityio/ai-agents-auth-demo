@@ -2,7 +2,7 @@
  * Unit tests for collectToolTiers — the copilot side of GET /tools.
  *
  * The copilot can only list the READ tier itself (its Curity policy allows
- * obs:read → mcp-gateway). The WRITE tier is listed by asking the specialist
+ * inspect:read → mcp-gateway). The WRITE tier is listed by asking the specialist
  * over the same aud=agent-specialist delegation token a real remediation uses,
  * so the specialist's own gates (acr, role) decide what the card shows.
  */
@@ -12,7 +12,7 @@ import { collectToolTiers, type ToolTiersDeps } from '../src/tools-route.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
-  mcpObservabilityUrl: 'http://gw/observability/mcp',
+  mcpInspectUrl: 'http://gw/inspect/mcp',
   specialistA2aUrl: 'http://agent-specialist.agents.svc.cluster.local:8082/a2a',
 } as unknown as Config;
 
@@ -21,17 +21,17 @@ const subject = { bearer: 'USER_TOKEN', sub: 'alice', acr: 'mfa' };
 /** A provider whose acquire() resolves (or rejects) like the real one would. */
 function fakeProvider(token: string, acquireError?: Error) {
   return {
-    discover: vi.fn(async () => ({ scope: 'obs:read' })),
+    discover: vi.fn(async () => ({ scope: 'inspect:read' })),
     acquire: vi.fn(async () => { if (acquireError) throw acquireError; return token; }),
     current: () => ({ token }),
     token: async () => token,
     onUnauthorized: async () => {},
-  } as unknown as ReturnType<ToolTiersDeps['buildObservabilityAuthProvider']>;
+  } as unknown as ReturnType<ToolTiersDeps['buildInspectAuthProvider']>;
 }
 
 function deps(overrides: Partial<ToolTiersDeps> = {}): ToolTiersDeps {
   return {
-    buildObservabilityAuthProvider: vi.fn(() => fakeProvider('OBS_TOKEN')),
+    buildInspectAuthProvider: vi.fn(() => fakeProvider('INSPECT_TOKEN')),
     openMcpToolset: vi.fn(async () => ({
       tools: {},
       listed: [
@@ -55,8 +55,8 @@ describe('collectToolTiers', () => {
     const out = await collectToolTiers({ cfg, subject, deps: d });
     expect(out.tiers).toEqual([
       {
-        tier: 'observability',
-        route: '/observability/mcp',
+        tier: 'inspect',
+        route: '/inspect/mcp',
         status: 'ok',
         tools: [
           { name: 'list_pods', description: 'List pods' },
@@ -135,14 +135,14 @@ describe('collectToolTiers', () => {
 
   it('reports the read tier as an error (not a throw) when its exchange fails', async () => {
     const d = deps({
-      buildObservabilityAuthProvider: vi.fn(() =>
+      buildInspectAuthProvider: vi.fn(() =>
         fakeProvider('', new CurityAuthError('no scope intersects', 'invalid_scope')),
       ),
     });
     const out = await collectToolTiers({ cfg, subject, deps: d });
     expect(out.tiers[0]).toEqual({
-      tier: 'observability',
-      route: '/observability/mcp',
+      tier: 'inspect',
+      route: '/inspect/mcp',
       status: 'denied',
       error: 'invalid_scope',
       description: 'no scope intersects',
@@ -156,7 +156,7 @@ describe('collectToolTiers', () => {
     // than the real read flow's. The probe must opt out of that recording.
     const d = deps();
     await collectToolTiers({ cfg, subject, deps: d });
-    expect(d.buildObservabilityAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.buildInspectAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
     expect(d.obtainSpecialistToken).toHaveBeenCalledWith(
       expect.objectContaining({ recordLastExchange: false }),
     );
@@ -178,9 +178,9 @@ describe('collectToolTiers', () => {
   it('acquires the read-tier token through the provider with recordLastExchange:false and opens the toolset with it', async () => {
     const d = deps();
     await collectToolTiers({ cfg, subject, deps: d });
-    expect(d.buildObservabilityAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
+    expect(d.buildInspectAuthProvider).toHaveBeenCalledWith(expect.objectContaining({ recordLastExchange: false }));
     expect(d.openMcpToolset).toHaveBeenCalledWith(
-      expect.objectContaining({ url: cfg.mcpObservabilityUrl, authProvider: expect.objectContaining({ acquire: expect.any(Function) }) }),
+      expect.objectContaining({ url: cfg.mcpInspectUrl, authProvider: expect.objectContaining({ acquire: expect.any(Function) }) }),
     );
   });
 });

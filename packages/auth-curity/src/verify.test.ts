@@ -51,12 +51,12 @@ async function mintToken(
   } = {},
 ): Promise<string> {
   return new SignJWT({
-    scope: overrides.scope ?? 'openid profile obs:read',
+    scope: overrides.scope ?? 'openid profile inspect:read',
     ...overrides.extra,
   })
     .setProtectedHeader({ alg: 'RS256', kid: env.kid })
     .setIssuer(overrides.iss ?? env.issuer)
-    .setAudience(overrides.aud ?? 'web-app')
+    .setAudience(overrides.aud ?? 'web')
     .setSubject(overrides.sub ?? 'alice')
     .setIssuedAt()
     .setExpirationTime(overrides.exp ?? Math.floor(Date.now() / 1000) + 60)
@@ -70,36 +70,36 @@ describe('verifyJwt', () => {
   });
 
   it('verifies a valid token and parses scopes', async () => {
-    const token = await mintToken(env, { scope: 'openid obs:read obs:write' });
+    const token = await mintToken(env, { scope: 'openid inspect:read inspect:write' });
     const verified = await verifyJwt(token, {
       issuer: env.issuer,
-      audience: 'web-app',
+      audience: 'web',
       jwksUri: env.jwksUri,
     });
     expect(verified.payload.sub).toBe('alice');
-    expect(verified.scopes.has('obs:read')).toBe(true);
-    expect(verified.scopes.has('obs:write')).toBe(true);
+    expect(verified.scopes.has('inspect:read')).toBe(true);
+    expect(verified.scopes.has('inspect:write')).toBe(true);
     expect(verified.scopes.has('ops:write')).toBe(false);
   });
 
   it('rejects a token with the wrong audience', async () => {
     const token = await mintToken(env, { aud: 'other-app' });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toBeInstanceOf(CurityAuthError);
   });
 
   it('rejects a token with the wrong issuer', async () => {
     const token = await mintToken(env, { iss: 'https://attacker.example' });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toMatchObject({ code: 'invalid_issuer' });
   });
 
   it('rejects an expired token', async () => {
     const token = await mintToken(env, { exp: Math.floor(Date.now() / 1000) - 3600 });
     await expect(
-      verifyJwt(token, { issuer: env.issuer, audience: 'web-app', jwksUri: env.jwksUri }),
+      verifyJwt(token, { issuer: env.issuer, audience: 'web', jwksUri: env.jwksUri }),
     ).rejects.toMatchObject({ code: 'expired_token' });
   });
 
@@ -107,7 +107,7 @@ describe('verifyJwt', () => {
     await expect(
       verifyJwt('not-a-real-token', {
         issuer: env.issuer,
-        audience: 'web-app',
+        audience: 'web',
       }),
     ).rejects.toMatchObject({ code: 'jwks_failed' });
   });

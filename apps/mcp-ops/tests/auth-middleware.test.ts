@@ -134,7 +134,7 @@ describe('authMiddleware', () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
       payload: { act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } } },
       protectedHeader: { alg: 'RS256' },
-      scopes: new Set(['obs:read']),
+      scopes: new Set(['inspect:read']),
     });
     const res = mockRes();
     const next = vi.fn();
@@ -220,7 +220,7 @@ describe('authMiddleware', () => {
     vi.mocked(verifyJwt).mockResolvedValueOnce({
       payload: {
         sub: 'alice',
-        client_id: 'mcp-gateway',
+        client_id: 'agentgateway',
         roles: ['sre'],
         act: { sub: GATEWAY, act: { sub: SPECIALIST, act: { sub: COPILOT } } },
         acr: 'mfa',
@@ -232,7 +232,7 @@ describe('authMiddleware', () => {
     await authMiddleware(cfg)(req, mockRes(), vi.fn());
     expect(req.auth).toEqual({
       token: 'abc',
-      clientId: 'mcp-gateway',
+      clientId: 'agentgateway',
       scopes: ['ops:write'],
       extra: { sub: 'alice', roles: ['sre'] },
     });

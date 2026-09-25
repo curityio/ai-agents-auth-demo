@@ -144,7 +144,7 @@ function isPrefix(prefix: string[], of: string[]): boolean {
  * chain is this hop's chain minus its newest actor. Position in the list is
  * not enough: the chain is flattened depth-first, so a second branch (the
  * specialist's ops:write token) follows the whole read branch but descends
- * from the specialist's delegation token, not from obs-api's terminal token.
+ * from the specialist's delegation token, not from inspect-api's terminal token.
  */
 function findParentIndex(summaries: HopSummary[], i: number): number | undefined {
   const cur = summaries[i]!;
@@ -233,7 +233,7 @@ export function buildLedger(
 
 /**
  * Which flow a chain belongs to. The copilot's /last-token renders exactly one
- * branch (observe XOR privileged), and only the privileged branch delegates
+ * branch (inspect XOR privileged), and only the privileged branch delegates
  * to the specialist — so a hop naming agent-specialist decides it. Undefined
  * when nothing beyond the inbound token has run yet.
  */

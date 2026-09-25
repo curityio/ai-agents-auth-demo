@@ -86,9 +86,9 @@ describe('discoverMcpAuthorization', () => {
   });
 
   it('prefers the scope named in the 401 challenge over scopes_supported (spec scope-selection order)', async () => {
-    const { f } = fakeFetch({ ...HAPPY, [`POST ${SERVER}`]: challenge401(', scope="ops:write obs:read"') });
+    const { f } = fakeFetch({ ...HAPPY, [`POST ${SERVER}`]: challenge401(', scope="ops:write inspect:read"') });
     const d = await discoverMcpAuthorization(SERVER, { fetchImpl: f });
-    expect(d.scope).toBe('ops:write obs:read');
+    expect(d.scope).toBe('ops:write inspect:read');
     expect(d.scopeSource).toBe('challenge');
   });
 
@@ -140,7 +140,7 @@ describe('discoverMcpAuthorization', () => {
   it('refuses a PRM whose resource identifies another server (RFC 9728 §3.3)', async () => {
     const { f } = fakeFetch({
       ...HAPPY,
-      [`GET ${PRM_URL}`]: { body: { ...PRM, resource: 'https://mcp-gateway.localtest.me/observability/mcp' } },
+      [`GET ${PRM_URL}`]: { body: { ...PRM, resource: 'https://mcp-gateway.localtest.me/inspect/mcp' } },
     });
     await expect(discoverMcpAuthorization(SERVER, { fetchImpl: f }))
       .rejects.toThrowError(expect.objectContaining({ code: 'resource_mismatch' }));

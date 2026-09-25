@@ -17,9 +17,9 @@ describe('HeroStage', () => {
       'agent-copilot',
       'agent-specialist',
       'agentgateway',
-      'mcp-observability',
+      'mcp-inspect',
       'mcp-ops',
-      'obs-api',
+      'inspect-api',
       'ops-api',
       'LLM provider',
     ]) {
@@ -52,14 +52,14 @@ describe('HeroStage', () => {
     expect(html).toMatch(/carrying the token it was issued/);
   });
   it("names the tier each right-hand row is, in that tier's colour", () => {
-    expect(html).toMatch(/data-tier-label="read"[^>]*>read tier · obs:read</);
+    expect(html).toMatch(/data-tier-label="read"[^>]*>read tier · inspect:read</);
     expect(html).toMatch(/data-tier-label="privileged"[^>]*>write tier · ops:write · acr=mfa</);
     // Above the top row and below the bottom one — never on the request path.
     expect(html).toMatch(/data-tier-label="read"[^>]*y="5\d(\.\d+)?"/);
     expect(html).toMatch(/data-tier-label="privileged"[^>]*y="26\d(\.\d+)?"/);
   });
   it('explains the packet colours: lilac is a read, amber is privileged', () => {
-    expect(html).toMatch(/read · obs:read/);
+    expect(html).toMatch(/read · inspect:read/);
     expect(html).toMatch(/privileged · ops:write, acr=mfa/);
   });
   it("keeps the exchange legend swatch neutral — an exchange takes its request's tier colour", () => {

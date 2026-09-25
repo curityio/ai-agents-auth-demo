@@ -15,18 +15,18 @@ function vj(payload: VerifiedJwt['payload']): VerifiedJwt {
 describe('buildIdentityAttributes', () => {
   it('maps sub, scope and acr', () => {
     const attrs = buildIdentityAttributes(
-      vj({ sub: 'alice', scope: 'obs:read ops:write', acr: 'mfa' }),
+      vj({ sub: 'alice', scope: 'inspect:read ops:write', acr: 'mfa' }),
     );
     expect(attrs['auth.sub']).toBe('alice');
-    expect(attrs['auth.scope']).toBe('obs:read ops:write');
+    expect(attrs['auth.scope']).toBe('inspect:read ops:write');
     expect(attrs['auth.acr']).toBe('mfa');
   });
 
   it('maps audience as array', () => {
     const attrs = buildIdentityAttributes(
-      vj({ sub: 'alice', aud: ['web-app', 'agent-copilot'] }),
+      vj({ sub: 'alice', aud: ['web', 'agent-copilot'] }),
     );
-    expect(attrs['auth.aud']).toEqual(['web-app', 'agent-copilot']);
+    expect(attrs['auth.aud']).toEqual(['web', 'agent-copilot']);
   });
 
   it('maps single audience string as array', () => {
@@ -67,10 +67,10 @@ describe('buildIdentityAttributes', () => {
 
   it('maps auth.scope from an scp array (no scope string)', () => {
     const attrs = buildIdentityAttributes({
-      payload: { sub: 'alice', scp: ['obs:read', 'ops:write'] },
+      payload: { sub: 'alice', scp: ['inspect:read', 'ops:write'] },
       protectedHeader: { alg: 'RS256' },
-      scopes: new Set(['obs:read', 'ops:write']),
+      scopes: new Set(['inspect:read', 'ops:write']),
     });
-    expect(attrs['auth.scope']).toBe('obs:read ops:write');
+    expect(attrs['auth.scope']).toBe('inspect:read ops:write');
   });
 });

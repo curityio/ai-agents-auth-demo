@@ -13,7 +13,7 @@ export function buildAgentCard(cfg: Config): AgentCard {
     description:
       'LLM-driven privileged remediation specialist. Accepts an A2A task carrying ' +
       'a Bearer aud=agent-specialist (act.sub=agent-copilot), then autonomously ' +
-      'inspects deployments (obs:read) and remediates them — restart, set image, ' +
+      'inspects deployments (inspect:read) and remediates them — restart, set image, ' +
       'scale — via mcp-ops (ops:write), with MFA step-up enforced before any write.',
     url: `${cfg.publicBaseUrl}/a2a`,
     version: '0.0.1',
@@ -40,9 +40,9 @@ export function buildAgentCard(cfg: Config): AgentCard {
         name: 'Inspect Deployment',
         description:
           `Read a Deployment's current image, replica count, and ready/updated rollout ` +
-          `status in the demo's 'prod' namespace via the observability tier (obs:read). ` +
+          `status in the demo's 'prod' namespace via the inspect tier (inspect:read). ` +
           `Used to plan a remediation and to verify the result afterward.`,
-        tags: ['kubernetes', 'observability', 'read'],
+        tags: ['kubernetes', 'inspect', 'read'],
         inputModes: ['text/plain', 'application/json'],
         outputModes: ['application/json'],
       },

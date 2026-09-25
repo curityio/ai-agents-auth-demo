@@ -38,8 +38,8 @@ export interface Config {
   llmGatewayAudience: string;
   /** RFC 8693 exchange scope for the gateway LLM route. */
   llmGatewayScope: string;
-  // Read tier (observability) — the specialist also reads to plan/verify.
-  mcpObservabilityUrl: string;
+  // Read tier (inspect) — the specialist also reads to plan/verify.
+  mcpInspectUrl: string;
   /**
    * RFC 8693 `audience` for the read-tier MCP hop. The ONE per-server value that stays
    * configured: everything else about the hop (authorization server, token
@@ -47,7 +47,7 @@ export interface Config {
    * chain (packages/agent-runtime mcp-oauth-client.ts). It would be replaced by
    * the RFC 8707 `resource` parameter once Curity accepts it.
    */
-  mcpObservabilityAudience: string;
+  mcpInspectAudience: string;
   // Step-up: the acr the inbound token must carry before any write is attempted.
   requiredAcr: string;
 }
@@ -78,9 +78,9 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8082),
     curityIssuer: required('CURITY_ISSUER'),
     curityJwksUri: required('CURITY_JWKS_URI'),
-    expectedAudience: process.env.AGENT_AUDIENCE ?? 'agent-specialist',
+    expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'agent-specialist',
     agentClientId:
-      process.env.AGENT_CLIENT_ID ?? 'https://specialist.localtest.me/.well-known/oauth-client',
+      process.env.CURITY_CLIENT_ID ?? 'https://specialist.localtest.me/.well-known/oauth-client',
     agentPrivateKeyPem: required('CURITY_AGENT_PRIVATE_KEY_PEM'),
     mcpOpsUrl: required('MCP_OPS_URL'),
     mcpDiscoveryTtlMs: discoveryTtlMs(process.env.MCP_DISCOVERY_TTL_SECONDS),
@@ -91,8 +91,8 @@ export function loadConfig(): Config {
       process.env.LLM_GATEWAY_URL ?? 'http://agentgateway.mcp.svc.cluster.local:8080/llm',
     llmGatewayAudience: process.env.LLM_GATEWAY_AUDIENCE ?? 'llm-gateway',
     llmGatewayScope: process.env.LLM_GATEWAY_SCOPE ?? 'llm:invoke',
-    mcpObservabilityUrl: required('MCP_OBSERVABILITY_URL'),
-    mcpObservabilityAudience: process.env.MCP_OBSERVABILITY_AUDIENCE ?? 'mcp-observability',
+    mcpInspectUrl: required('MCP_INSPECT_URL'),
+    mcpInspectAudience: process.env.MCP_INSPECT_AUDIENCE ?? 'mcp-inspect',
     requiredAcr: process.env.REQUIRED_ACR ?? 'mfa',
   };
 

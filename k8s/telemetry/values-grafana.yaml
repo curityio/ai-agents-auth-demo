@@ -1,0 +1,42 @@
+# grafana/grafana chart. Anonymous access so presenters don't log in.
+# Exposed via the Istio edge Gateway (Task 12), not the chart's own ingress.
+#
+# org_role MUST be Editor, not Viewer: opening a trace from a dashboard table
+# navigates to Explore, and Grafana OSS gates Explore (datasources:explore) to
+# Editor+ — a Viewer gets bounced back to the home page with nothing shown.
+# Editor still requires no login; safe here (local KIND, persistence disabled).
+adminPassword: admin
+
+grafana.ini:
+  server:
+    root_url: https://grafana.localtest.me
+  auth.anonymous:
+    enabled: true
+    org_role: Editor
+  auth:
+    disable_login_form: false
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        # Tempo's query HTTP API. NOTE: the grafana/tempo single-binary chart
+        # serves this on :3200 (the "prom-metrics" service port), NOT the
+        # conventional :3100 — there is no 3100 on the Service. Pointing at
+        # 3100 silently yields an empty dashboard (ingestion still works).
+        url: http://tempo.telemetry.svc.cluster.local:3200
+        isDefault: true
+
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+
+service:
+  type: ClusterIP
+  port: 80

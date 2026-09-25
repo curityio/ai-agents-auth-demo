@@ -74,7 +74,7 @@ export function createApp(deps: AppDeps): express.Express {
 
   // agentgateway's extAuthz HTTP check MIRRORS the original request's method onto
   // the call to this shim. MCP tool-calls are POST, but the OBO-chain introspection
-  // walk hits the gateway's /observability|/ops/last-token passthrough with a GET —
+  // walk hits the gateway's /inspect|/ops/last-token passthrough with a GET —
   // so the extAuthz check arrives here as `GET /exchange`. Rejecting non-POST made
   // that GET 404 at the shim, which agentgateway surfaced as a 404 DirectResponse on
   // the route (before the backend), silently dropping the mcp→api hops from the chain.

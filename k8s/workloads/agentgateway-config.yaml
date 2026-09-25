@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
-# agentgateway config — path-routed MCP front door for mcp-observability +
+# agentgateway config — path-routed MCP front door for mcp-inspect +
 # mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.4.1.
 #
 # Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
@@ -43,7 +43,7 @@ config:
   # grpc/4317 (the collector exposes 4317 gRPC and 4318 HTTP; the Node services
   # use the latter).
   tracing:
-    otlpEndpoint: http://otel-collector.observability.svc.cluster.local:4317
+    otlpEndpoint: http://otel-collector.telemetry.svc.cluster.local:4317
     otlpProtocol: grpc
     # The gateway span already carries `http.path`, `route` and `http.host`, plus
     # `endpoint` (upstream host:port) for plain HTTP backends like /llm. It does
@@ -67,15 +67,15 @@ binds:
     routes:
 
     # ------------------------------------------------------------------ #
-    # Observability backend  ->  GET/POST {gateway}:8080/observability/mcp
+    # Inspect backend  ->  GET/POST {gateway}:8080/inspect/mcp
     # Read-only tools: list_pods, get_pod_logs, get_deployment.
-    # Audience narrowed to mcp-observability; the shim maps that audience to
-    # the obs:read scope from its own allow-list (never a caller-supplied scope).
+    # Audience narrowed to mcp-inspect; the shim maps that audience to
+    # the inspect:read scope from its own allow-list (never a caller-supplied scope).
     # ------------------------------------------------------------------ #
-    - name: observability
+    - name: inspect
       matches:
       - path:
-          pathPrefix: /observability/mcp
+          pathPrefix: /inspect/mcp
       # RFC 9728: the gateway only SERVES the protected-resource document for a
       # request that matched this route (mcp/auth.rs `apply_token_validation`
       # short-circuits on the well-known path, but routing happens first), so the
@@ -83,7 +83,7 @@ binds:
       # advertises a URL that answers 404 "route not found" — a dangling pointer
       # that any spec-shaped client fails closed on.
       - path:
-          exact: /.well-known/oauth-protected-resource/observability/mcp
+          exact: /.well-known/oauth-protected-resource/inspect/mcp
       policies:
         mcpAuthentication:
           issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
@@ -92,25 +92,25 @@ binds:
           jwks:
             url: http://curity.curity.svc.cluster.local:8443/oauth/v2/oauth-anonymous/jwks
           resourceMetadata:
-            resource: https://mcp-gateway.localtest.me/observability/mcp
+            resource: https://mcp-gateway.localtest.me/inspect/mcp
             # agentgateway hard-codes an informational `mcp_protocol_version: 2025-06-18`
             # into the document (not an RFC 9728 field); configured keys win, so state
             # the revision this gateway actually negotiates (fact #26).
             mcpProtocolVersion: "2026-07-28"
             scopesSupported:
-            - obs:read
+            - inspect:read
             bearerMethodsSupported:
             - header
-        # Read tier: obs:read required for every observability tool (mirrors the
+        # Read tier: inspect:read required for every inspect tool (mirrors the
         # ops tier's ops:write invariant). Reads are unprivileged — no role gate.
         mcpAuthorization:
           rules:
-          - '"obs:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
+          - '"inspect:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
         # Namespace confinement (SEP-2243), same construction as the ops route: the
         # read tools declare `x-mcp-header: Namespace`, so the client mirrors that
         # argument into `Mcp-Param-Namespace` and a cross-namespace read (e.g. pod
         # logs from kube-system) is refused here rather than relying solely on
-        # obs-api's RBAC. "Present AND not prod" so omitting the argument — the
+        # inspect-api's RBAC. "Present AND not prod" so omitting the argument — the
         # common case, since the server defaults it — never trips the rule.
         authorization:
           rules:
@@ -128,7 +128,7 @@ binds:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
-                x-target-audience: '"mcp-observability"'
+                x-target-audience: '"mcp-inspect"'
                 # W3C trace context for the extAuthz callout. agentgateway does
                 # not propagate to extAuthz on its own, so forward it explicitly.
                 # VERIFIED by echoing the callout's headers: at this point
@@ -149,9 +149,9 @@ binds:
       backends:
       - mcp:
           targets:
-          - name: observability
+          - name: inspect
             mcp:
-              host: mcp-observability.mcp.svc.cluster.local
+              host: mcp-inspect.mcp.svc.cluster.local
               port: 8080
               path: /mcp
 
@@ -165,7 +165,7 @@ binds:
       matches:
       - path:
           pathPrefix: /ops/mcp
-      # RFC 9728 well-known path — see the observability route for why.
+      # RFC 9728 well-known path — see the inspect route for why.
       - path:
           exact: /.well-known/oauth-protected-resource/ops/mcp
       policies:
@@ -336,17 +336,17 @@ binds:
     # path). The web UI walks the OBO chain by recursively calling each service's
     # /last-token. Since the agents now reach the MCP servers only THROUGH this
     # gateway, these plain-HTTP routes proxy
-    #   {gateway}/observability/last-token → mcp-observability:8080/last-token
+    #   {gateway}/inspect/last-token → mcp-inspect:8080/last-token
     #   {gateway}/ops/last-token           → mcp-ops:8080/last-token
     # through the SAME extAuthz→shim exchange as the /mcp routes, so the caller's
-    # aud=mcp-gateway token is narrowed to aud=mcp-observability / aud=mcp-ops —
+    # aud=mcp-gateway token is narrowed to aud=mcp-inspect / aud=mcp-ops —
     # the audience each /last-token endpoint verifies. urlRewrite strips the
-    # /observability|/ops prefix so the origin sees plain /last-token.
+    # /inspect|/ops prefix so the origin sees plain /last-token.
     # ------------------------------------------------------------------ #
-    - name: observability-last-token
+    - name: inspect-last-token
       matches:
       - path:
-          pathPrefix: /observability/last-token
+          pathPrefix: /inspect/last-token
       policies:
         jwtAuth:
           providers:
@@ -363,7 +363,7 @@ binds:
               path: '"/exchange"'
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
-                x-target-audience: '"mcp-observability"'
+                x-target-audience: '"mcp-inspect"'
                 # W3C trace context for the extAuthz callout. agentgateway does
                 # not propagate to extAuthz on its own, so forward it explicitly.
                 # VERIFIED by echoing the callout's headers: at this point
@@ -385,7 +385,7 @@ binds:
           path:
             full: /last-token
       backends:
-      - host: mcp-observability.mcp.svc.cluster.local:8080
+      - host: mcp-inspect.mcp.svc.cluster.local:8080
 
     - name: ops-last-token
       matches:

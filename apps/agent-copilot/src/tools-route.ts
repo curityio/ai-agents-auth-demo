@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { isDiscoveryFailure, requiredRolesOf, type ListedTool } from '@ai-agents-demo/agent-runtime';
 import type { AuthedRequest } from './auth-middleware.js';
-import { buildObservabilityAuthProvider } from './mcp-auth.js';
+import { buildInspectAuthProvider } from './mcp-auth.js';
 import { openMcpToolset } from './mcp-client.js';
 import { obtainSpecialistToken } from './specialist-client.js';
 import type { Config } from './config.js';
@@ -12,7 +12,7 @@ import type { Config } from './config.js';
  *
  * Makes agentgateway's per-tier `tools/list` filtering visible in the web UI.
  * The copilot lists the READ tier itself (its Curity policy allows
- * obs:read → mcp-gateway). It cannot list the WRITE tier — only the specialist
+ * inspect:read → mcp-gateway). It cannot list the WRITE tier — only the specialist
  * may exchange for ops:write — so it asks the specialist over the same
  * aud=agent-specialist delegation token a real remediation uses. The
  * specialist's gates (acr pre-check, role gate) then decide what comes back, so
@@ -37,14 +37,14 @@ export type TierStatus =
   | { status: 'denied'; error: string; description: string }
   | { status: 'error'; error: string; description: string };
 
-export type TierResult = { tier: 'observability' | 'ops'; route: string } & TierStatus;
+export type TierResult = { tier: 'inspect' | 'ops'; route: string } & TierStatus;
 
 export interface ToolTiersResponse {
   tiers: TierResult[];
 }
 
 export interface ToolTiersDeps {
-  buildObservabilityAuthProvider: typeof buildObservabilityAuthProvider;
+  buildInspectAuthProvider: typeof buildInspectAuthProvider;
   openMcpToolset: typeof openMcpToolset;
   obtainSpecialistToken: typeof obtainSpecialistToken;
   /** GET the specialist's /tools with the delegation token; returns its verdict. */
@@ -85,7 +85,7 @@ function authFailure(e: unknown): TierStatus {
 
 async function listReadTier(cfg: Config, subject: ToolsSubject, deps: ToolTiersDeps): Promise<TierStatus> {
   // PROBE, not a flow: recordLastExchange:false keeps the OBO-chain view truthful (fact #34).
-  const auth = deps.buildObservabilityAuthProvider({
+  const auth = deps.buildInspectAuthProvider({
     cfg,
     subjectToken: subject.bearer,
     subjectSub: subject.sub,
@@ -100,10 +100,10 @@ async function listReadTier(cfg: Config, subject: ToolsSubject, deps: ToolTiersD
   let toolset: Awaited<ReturnType<typeof openMcpToolset>> | undefined;
   try {
     toolset = await deps.openMcpToolset({
-      url: cfg.mcpObservabilityUrl,
+      url: cfg.mcpInspectUrl,
       authProvider: auth,
       clientName: 'agent-copilot',
-      label: 'mcp-observability (tools/list probe)',
+      label: 'mcp-inspect (tools/list probe)',
     });
     return { status: 'ok', tools: toolInfos(toolset.listed, subject.roles ?? []) };
   } catch (e) {
@@ -146,7 +146,7 @@ export async function collectToolTiers(args: {
   ]);
   return {
     tiers: [
-      { tier: 'observability', route: '/observability/mcp', ...read },
+      { tier: 'inspect', route: '/inspect/mcp', ...read },
       { tier: 'ops', route: '/ops/mcp', ...write },
     ],
   };
@@ -172,7 +172,7 @@ async function fetchSpecialistTools(o: { cfg: Config; bearer: string }): Promise
 }
 
 const defaultDeps: ToolTiersDeps = {
-  buildObservabilityAuthProvider,
+  buildInspectAuthProvider,
   openMcpToolset,
   obtainSpecialistToken,
   fetchSpecialistTools,

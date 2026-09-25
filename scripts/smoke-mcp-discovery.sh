@@ -16,7 +16,7 @@
 set -uo pipefail
 
 GATEWAY_HOST="${GATEWAY_HOST:-https://mcp-gateway.localtest.me}"
-OBS_HOST="${OBS_HOST:-https://mcp-observability.localtest.me}"
+OBS_HOST="${OBS_HOST:-https://mcp-inspect.localtest.me}"
 OPS_HOST="${OPS_HOST:-https://mcp-ops.localtest.me}"
 CURL="curl -sk -m 10"
 
@@ -43,7 +43,7 @@ param() { printf '%s' "$1" | sed -n "s/.*$2=\"\([^\"]*\)\".*/\1/p"; }
 # jget <json> <python-expr over d>
 jget() { python3 -c 'import sys,json; d=json.load(sys.stdin); print('"$2"')' <<<"$1" 2>/dev/null; }
 
-for route in observability ops; do
+for route in inspect ops; do
   URL="$GATEWAY_HOST/$route/mcp"
   note "[1/4] $URL unauthenticated → 401 + resource_metadata"
   OUT=$(probe "$URL"); STATUS=${OUT%%$'\n'*}; WWW=${OUT#*$'\n'}

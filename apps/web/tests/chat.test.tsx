@@ -26,20 +26,20 @@ describe('Chat — Ask card', () => {
     expect(ask).toMatch(new RegExp(`<textarea[^>]*>${SUGGESTIONS[0]!.text}</textarea>`));
   });
 
-  it('groups the prompts under Observe and Act instead of a legend row', () => {
-    expect(ask).toMatch(/data-prompt-group="Observe"/);
+  it('groups the prompts under Inspect and Act instead of a legend row', () => {
+    expect(ask).toMatch(/data-prompt-group="Inspect"/);
     expect(ask).toMatch(/data-prompt-group="Act"/);
     expect(ask).not.toMatch(/Prompt legend/);
     expect(ask).not.toContain('→');
-    const observe = ask.match(/data-prompt-group="Observe"[\s\S]*?data-prompt-group="Act"/)![0];
-    for (const s of SUGGESTIONS.filter((s) => s.tier === 'read')) expect(observe).toContain(s.text);
+    const inspect = ask.match(/data-prompt-group="Inspect"[\s\S]*?data-prompt-group="Act"/)![0];
+    for (const s of SUGGESTIONS.filter((s) => s.tier === 'read')) expect(inspect).toContain(s.text);
     for (const s of SUGGESTIONS.filter((s) => s.tier === 'write'))
-      expect(observe).not.toContain(s.text);
+      expect(inspect).not.toContain(s.text);
   });
 
-  it('tints the Observe eye lilac — the colour the hero and Tools panel use for the read tier', () => {
-    const observe = ask.match(/data-prompt-group="Observe"[\s\S]*?<\/span>/)![0];
-    expect(observe).toMatch(/lucide-eye[^"]*text-accent-violet|text-accent-violet[^"]*lucide-eye/);
+  it('tints the Inspect eye lilac — the colour the hero and Tools panel use for the read tier', () => {
+    const inspect = ask.match(/data-prompt-group="Inspect"[\s\S]*?<\/span>/)![0];
+    expect(inspect).toMatch(/lucide-eye[^"]*text-accent-violet|text-accent-violet[^"]*lucide-eye/);
     const act = ask.match(/data-prompt-group="Act"[\s\S]*?<\/span>/)![0];
     expect(act).not.toMatch(/text-accent-violet/);
   });

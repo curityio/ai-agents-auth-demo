@@ -7,7 +7,7 @@ import type { Config } from './config.js';
  * to exchange and for WHICH scope; `obtainMcpToken` (unchanged RFC 8693 path,
  * cached per subject) decides everything else. One provider per request.
  */
-export function buildObservabilityAuthProvider(opts: {
+export function buildInspectAuthProvider(opts: {
   cfg: Config;
   subjectToken: string;
   subjectSub: string;
@@ -15,7 +15,7 @@ export function buildObservabilityAuthProvider(opts: {
   recordLastExchange?: boolean;
 }): McpAuthProvider {
   return createMcpAuthProvider({
-    serverUrl: opts.cfg.mcpObservabilityUrl,
+    serverUrl: opts.cfg.mcpInspectUrl,
     service: 'agent-copilot',
     // The MCP server names an AS; this agent only ever exchanges with the issuer it
     // already trusts for inbound tokens. Anything else fails closed at discovery.
