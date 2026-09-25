@@ -19,6 +19,7 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "docs" / "architecture-an
 
 W, H = 2000, 1090
 SPEED = 480.0  # packet speed, viewBox units per second
+SLOW = 0.65  # speed factor from the agents box on, where there is more to read
 
 BG = "#0d1117"
 FG = "#e6edf3"
@@ -40,7 +41,7 @@ SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-se
 NODES = {
     "browser": (90, 492),
     "edge": (423, 482),
-    "web": (593, 470),
+    "web": (593, 482),
     "copilot": (866, 365),
     "specialist": (866, 640),
     "llmgw": (992, 498),
@@ -105,16 +106,21 @@ def pstr(pts):
 N = NODES
 PROD_IN_TOP, PROD_IN_BOT = (1820, 428), (1820, 552)
 
+# The LLM hops are elbows (down/up, then across) so neither crosses a data line.
+LLM_IN = N["llmgw"][0] - R["gw"] - 3
+ELBOW = {
+    "copilot-llm": [(884, 386), (884, N["llmgw"][1] - 7), (LLM_IN, N["llmgw"][1] - 7)],
+    "specialist-llm": [(884, 619), (884, N["llmgw"][1] + 7), (LLM_IN, N["llmgw"][1] + 7)],
+}
+
 # Data-plane segments. Shared hops carry both tiers, drawn as parallel lines.
 SEG = {
-    "code": ((155, 488), (N["edge"][0] - R["pod"] - 4, 484)),
+    "code": ((155, 482), (N["edge"][0] - R["pod"] - 4, 482)),
     "edge-web": trim(N["edge"], N["web"], R["pod"], R["pod"]),
-    "web-agents": ((622, 478), (786, 478)),
+    "web-agents": ((622, 482), (786, 482)),
     "copilot-gw": trim(N["copilot"], N["gw"], R["pod"] + 4, R["gw"] + 6),
-    "a2a": trim(N["copilot"], N["specialist"], R["pod"] + 26, R["pod"] + 4),
+    "a2a": trim(N["copilot"], N["specialist"], R["pod"] + 4, R["pod"] + 4),
     "specialist-gw": trim(N["specialist"], N["gw"], R["pod"] + 4, R["gw"] + 6),
-    "copilot-llm": trim((908, 420), N["llmgw"], 0, R["gw"] + 4),
-    "specialist-llm": trim(N["specialist"], N["llmgw"], R["pod"] + 4, R["gw"] + 4),
     "llmgw-llm": trim(N["llmgw"], N["llm"], R["gw"] + 2, 28),
     "gw-mo": trim(N["gw"], N["mo"], R["gw"] + 4, R["pod"] + 4),
     "mo-wp": trim(N["mo"], N["wp"], R["pod"] + 4, R["gw"] + 6),
@@ -171,6 +177,15 @@ def line(seg, color, width=2.2, marker=None, dash=None, opacity=1):
     e(
         f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{color}" '
         f'stroke-width="{width}" stroke-opacity="{opacity}" stroke-linecap="round"{d}{m}/>'
+    )
+
+
+def polyline(pts, color, width=2.2, marker=None, dash=None, opacity=1):
+    m = f' marker-end="url(#arrow-{marker})"' if marker else ""
+    d = f' stroke-dasharray="{dash}"' if dash else ""
+    e(
+        f'<path d="{pstr(pts)}" fill="none" stroke="{color}" stroke-width="{width}" '
+        f'stroke-opacity="{opacity}" stroke-linecap="round" stroke-linejoin="round"{d}{m}/>'
     )
 
 
@@ -240,6 +255,7 @@ CURITY_MARK = (
 anim = []  # SMIL-animated elements, appended in timeline order
 captions = []  # (t0, t1, text)
 t = 0.4
+speed = 1.0  # current factor on SPEED; drops to SLOW once the packet reaches the agents
 T = None  # set once the timeline is laid out
 
 
@@ -318,7 +334,7 @@ def move(pts, color, wait=0.0):
     """Walk a packet along pts; its trail stays lit until the beat ends."""
     global t
     t0 = t
-    t1 = t0 + plen(pts) / SPEED
+    t1 = t0 + plen(pts) / (SPEED * speed)
     packet(pts, color, t0, t1)
     pending.append((pts, color, t0))
     t = t1 + wait
@@ -332,7 +348,7 @@ def exchange(key, node, color):
     bottom = CURITY[1]
     pts = [(x, top), (x, bottom), (x, top)]
     t0 = t
-    t1 = t0 + plen(pts) / (SPEED * 0.9)
+    t1 = t0 + plen(pts) / (SPEED * speed * 0.9)
     ring(node, color, t0, t1 + 0.2)
     packet(pts, color, t0, t1, r=6)
     trail([(x, top), (x, bottom)], color, t0, t1 + 0.1, width=4)
@@ -370,7 +386,8 @@ t0 = t
 move([N["web"], (N["web"][0], CURITY[1]), N["web"]], WHITE)
 glow_rect(CURITY, PINK, t0 + 0.45, t0 + 1.0)
 badge(N["web"][0], 612, "user token", WHITE, t - 0.2, t + 1.8)
-move([N["web"], *SEG["web-agents"], (812, 478), (812, 365), (N["copilot"][0] - R["pod"], 365)], WHITE)
+speed = SLOW
+move([N["web"], *SEG["web-agents"], (812, 482), (812, 365), (N["copilot"][0] - R["pod"], 365)], WHITE)
 ring("copilot", WHITE, t - 0.1, t + 0.5)
 t += 0.4
 end_beat("② alice signs in with OIDC + PKCE; Curity issues the user token (aud=agent-copilot)", b)
@@ -378,8 +395,8 @@ end_beat("② alice signs in with OIDC + PKCE; Curity issues the user token (aud
 # Beat 3 — read path.
 b = t
 exchange("agents-read", "copilot", RED)
-badge(N["copilot"][0], 312, "inspect:read", RED, t - 0.4, t + 1.6)
-move([N["copilot"], *SEG["copilot-llm"]], RED, wait=0.15)
+badge(N["copilot"][0], 425, "inspect:read", RED, t - 0.4, t + 1.6)
+move(ELBOW["copilot-llm"], RED, wait=0.15)
 ring("llmgw", RED, t - 0.2, t + 0.3)
 t += 0.3
 move([N["copilot"], *SEG["copilot-gw"], N["gw"]], RED)
@@ -498,11 +515,11 @@ for name, (x, y, w, h) in NS.items():
 
 # data plane — static lines
 line(SEG["code"], "#d0d7de", 2.4, marker="white")
-text(262, 470, "code flow", 18, FG, font=SANS)
+text(262, 468, "code flow", 18, FG, font=SANS)
 line(SEG["edge-web"], "#d0d7de", 2, marker="white")
 line(SEG["web-agents"], "#d0d7de", 2, marker="white")
-text(712, 462, "user access token", 13, FG)
-text(712, 500, "aud=agent-copilot", 13, MUTED)
+text(712, 468, "user access token", 13, FG)
+text(712, 504, "aud=agent-copilot", 13, MUTED)
 line(((593, 670), (593, CURITY[1] - 4)), "#d0d7de", 1.8, marker="white")
 text(605, 745, "OIDC + PKCE", 14, FG, anchor="start")
 
@@ -515,8 +532,8 @@ for i, s in enumerate(("A2A", "(OBO", "token)")):
 line(SEG["specialist-gw"], GREEN, 2.6, marker="green")
 seg_label(SEG["specialist-gw"], "MCP · ops:write (OBO)", -30, 14, GREEN)
 seg_label(SEG["specialist-gw"], "tool call", -50, 13, GREEN)
-line(SEG["copilot-llm"], RED, 1.6, dash="3 5", marker="red", opacity=0.8)
-line(SEG["specialist-llm"], GREEN, 1.6, dash="3 5", marker="green", opacity=0.8)
+polyline(ELBOW["copilot-llm"], RED, 1.6, dash="3 5", marker="red", opacity=0.8)
+polyline(ELBOW["specialist-llm"], GREEN, 1.6, dash="3 5", marker="green", opacity=0.8)
 line(SEG["llmgw-llm"], "#d0d7de", 1.6, dash="3 4", opacity=0.8)
 
 for k in ("gw-mi", "mi-wp", "wp-ia", "ia-prod"):
@@ -532,7 +549,7 @@ seg_label(SEG["oa-prod"], "patch (RBAC)", 12, 13, GREEN)
 # nodes
 pod("edge", "istio-edge-gw", r=22, label_dy=42)
 pod("web", "web", sub="Next.js BFF", r=24, label_dy=44)
-pod("copilot", "agent-copilot", RED)
+pod("copilot", "agent-copilot", RED, above=True)
 pod("specialist", "agent-specialist", GREEN)
 gateway("llmgw", "LLM gateway")
 x, y = N["llm"]
