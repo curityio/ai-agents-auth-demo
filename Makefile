@@ -260,6 +260,17 @@ spire-uninstall: ## Remove the SPIRE Helm release (keeps the namespace + CRs)
 telemetry-install: ## Install the OTel Collector + Tempo + Grafana and the trace dashboard
 	helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
 	helm repo update grafana
+	# The Grafana chart owns two CLUSTER-scoped objects. Deleting a namespace does not
+	# delete those, and Helm refuses to adopt them into a release in another namespace
+	# ("invalid ownership metadata ... release-namespace must equal telemetry"). Drop
+	# them only when a release from a DIFFERENT namespace owns them (2026-09 rename).
+	@for kind in clusterrole clusterrolebinding; do \
+	  owner=$$(kubectl get $$kind grafana-$$kind -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null); \
+	  if [ -n "$$owner" ] && [ "$$owner" != "telemetry" ]; then \
+	    echo "==> removing $$kind/grafana-$$kind orphaned by the old '$$owner' release"; \
+	    kubectl delete $$kind grafana-$$kind; \
+	  fi; \
+	done
 	kubectl apply -f k8s/telemetry/namespace.yaml
 	kubectl apply -f k8s/telemetry/collector.yaml
 	kubectl apply -f k8s/telemetry/grafana-dashboards-configmap.yaml
