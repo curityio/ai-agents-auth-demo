@@ -52,12 +52,12 @@ interface ExchangeSlot {
  * An exchange slot is only "ours" if it was minted from the current inbound
  * token — matched on (sub, subjectJti). The `jti` gate is what stops a prior
  * session's exchange for the SAME user from leaking in after a fresh login when
- * no flow has run yet. A single /chat takes exactly ONE path (observe XOR
+ * no flow has run yet. A single /chat takes exactly ONE path (inspect XOR
  * privileged), so when both slots match we show only the most recent.
  *
  * The LLM slot is a LEAF, not a third branch. The copilot exchanges to
- * aud=llm-gateway only on the observe path, and only AFTER that request's
- * mcp-gateway exchange — so the leaf is shown iff the observe branch is shown
+ * aud=llm-gateway only on the inspect path, and only AFTER that request's
+ * mcp-gateway exchange — so the leaf is shown iff the inspect branch is shown
  * and the leaf was stamped after it. A leaf stamped earlier belongs to a
  * previous read flow (this one failed before reaching the model), and under
  * the privileged branch the copilot's leaf is never shown at all: on that path
@@ -138,7 +138,7 @@ const fetchDownstreamChain = createDownstreamChainFetcher();
  * (index 0) to the deepest resource server. Both branches may appear if the
  * user exercised each recently:
  *
- *   observe:     user → copilot → mcp-inspect → inspect-api
+ *   inspect:     user → copilot → mcp-inspect → inspect-api
  *   privileged:  user → copilot → agent-specialist → mcp-ops → ops-api
  *
  * Each MCP server and agent exposes its own `/last-token` that returns its
@@ -154,7 +154,7 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
   const subjectSub = authed.caller.payload.sub;
   const subjectJti = authed.caller.payload.jti;
   // Raw tokens are opt-in per request (`?raw=1`). The only caller that asks is
-  // the web BFF's /api/inspect route, which is itself gated on AUTH_DEBUG.
+  // the web BFF's /api/tokens route, which is itself gated on AUTH_DEBUG.
   const includeRaw = req.query.raw === '1';
   const chain: ChainHop[] = [];
 
@@ -165,7 +165,7 @@ export async function lastTokenHandler(req: Request, res: Response): Promise<voi
   // from THIS inbound token (matched on sub + subjectJti) — otherwise a prior
   // session's exchange for the same user leaks in after a fresh login when no
   // flow has run yet. selectDownstreamBranch also collapses to the single
-  // most-recently-exercised path (a /chat is observe XOR privileged).
+  // most-recently-exercised path (a /chat is inspect XOR privileged).
   const inspectExch = peekLastExchange();
   const specExch = peekLastSpecialistExchange();
   const llmExch = peekLastLlmExchange();

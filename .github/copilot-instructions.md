@@ -27,7 +27,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 - **The web app is a BFF.** Browser holds an httpOnly cookie; the access token
   never leaves the server. Its identity panels are fed by debug routes
   (`/spiffe-id`, `/last-token`, `/tools` on the workloads; `/api/obo-chain`,
-  `/api/spiffe-identities`, `/api/tools`, `AUTH_DEBUG`-gated `/api/inspect` on the
+  `/api/spiffe-identities`, `/api/tools`, `AUTH_DEBUG`-gated `/api/tokens` on the
   BFF) — see `CLAUDE.md` fact #34 before touching them.
 - **Every agent/MCP hop performs an RFC 8693 exchange** presenting its SPIFFE
   JWT-SVID as `actor_token`; Curity narrows scope + audience, nests the workload

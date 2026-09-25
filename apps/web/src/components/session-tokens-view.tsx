@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button';
 import { DelegationLedger, type LedgerHop } from '@/components/delegation-ledger';
 import { friendlyFetchError } from '@/lib/fetch-error';
 
+/** The BFF route this page reads. Pinned by tests/session-tokens-view.test.ts. */
+export const SESSION_TOKENS_ENDPOINT = '/api/tokens';
+
 interface SessionTokensResponse {
   sub?: string;
   expires_at?: number;
@@ -22,7 +25,7 @@ export function SessionTokensView() {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/inspect', { cache: 'no-store' });
+      const r = await fetch(SESSION_TOKENS_ENDPOINT, { cache: 'no-store' });
       if (!r.ok) {
         setError(await friendlyFetchError(r, 'session tokens'));
         setData(null);

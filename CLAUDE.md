@@ -43,7 +43,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 - **The web UI's identity panels are fed by debug routes** — `/spiffe-id`,
   `/last-token` and `/tools` on the workloads; `/api/obo-chain`,
   `/api/spiffe-identities?flow=`, `/api/tools` and the `AUTH_DEBUG`-gated
-  `/api/inspect` on the BFF. They mint real tokens for display, and the chain view
+  `/api/tokens` on the BFF. They mint real tokens for display, and the chain view
   has rules that break silently — see fact #34 and `docs/design.md` §2
   *Visibility surfaces* before touching them.
 - **Each agent/MCP hop performs an RFC 8693 token exchange**, presenting its
@@ -887,7 +887,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     keep the OBO-chain view truthful — each one was a bug first.** Every workload
     serves `GET /spiffe-id`; the agents and MCP servers serve `GET /last-token` (their
     hop's tokens, decoded; `?raw=1` adds raw JWTs and is asked for only by the BFF's
-    `AUTH_DEBUG`-gated `/api/inspect`); the agents serve `GET /tools`. The BFF proxies
+    `AUTH_DEBUG`-gated `/api/tokens`); the agents serve `GET /tools`. The BFF proxies
     them (`/api/obo-chain`, `/api/spiffe-identities?flow=`, `/api/tools`) so the
     browser never holds a token. Full table in `docs/design.md` §2 *Visibility surfaces*.
     - **Exchange slots are process-global; `selectDownstreamBranch` gates them on the

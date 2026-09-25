@@ -7,7 +7,7 @@ import { SessionTokensView } from '@/components/session-tokens-view';
 
 /**
  * Demo-only token inspector. Server-gated on AUTH_DEBUG=true (notFound otherwise,
- * matching the /api/inspect + /api/dev/token posture) and behind a session.
+ * matching the /api/tokens + /api/dev/token posture) and behind a session.
  */
 // Force dynamic rendering: the AUTH_DEBUG gate below short-circuits with
 // notFound() *before* auth() reads cookies, so Next.js sees no dynamic API on
