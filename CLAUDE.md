@@ -1139,7 +1139,7 @@ make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + 
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
 make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
-make test-scripts    # shell-script contract tests (gateway-config render, theme embed, user seeding, MCP discovery config, JWKS guard)
+make test-scripts    # shell-script contract tests (gateway-config render, demo-inputs LLM check, theme embed, user seeding, MCP discovery config, JWKS guard)
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit
 make clean           # full teardown

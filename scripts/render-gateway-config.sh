@@ -125,6 +125,13 @@ case "$fragment_name" in
   *) provider_label="$provider" ;;
 esac
 
+# RENDER_CHECK_ONLY=1: stop after every input check, writing nothing. demo-inputs.sh
+# uses it so a bad endpoint is refused at the prompt, not at `make apply`.
+if [ "${RENDER_CHECK_ONLY:-}" = 1 ]; then
+  printf '==> LLM configuration OK (provider=%s model=%s)\n' "$provider_label" "$model"
+  exit 0
+fi
+
 mkdir -p "$(dirname "$OUT")"
 
 SRC="$SRC" FRAGMENT="$FRAGMENT" OUT="$OUT" MODEL="$model" RESOURCE_NAME="$resource_name" PROJECT_NAME="$project_name" \

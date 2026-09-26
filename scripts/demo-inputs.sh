@@ -16,6 +16,16 @@ set -euo pipefail
 LICENSE="${LICENSE_FILE:-license.json}"
 ENV_FILE="${DEMO_ENV_FILE:-.demo.env}"
 VALID_PROVIDERS="openai anthropic gemini azure"
+RENDER="$(dirname "${BASH_SOURCE[0]}")/render-gateway-config.sh"
+
+# check_llm PROVIDER MODEL ENDPOINT — run the gateway render's own input checks
+# (endpoint shape, provider name) without writing anything. The render first runs
+# at `make apply`, the LAST `make demo` phase; without this a mistyped endpoint
+# would be accepted here and fail only after the whole cluster was built.
+check_llm() {
+  LLM_PROVIDER="$1" LLM_MODEL="$2" AZURE_OPENAI_ENDPOINT="$3" RENDER_CHECK_ONLY=1 \
+    bash "$RENDER" >/dev/null
+}
 
 # 1. Curity license -----------------------------------------------------------
 if [[ -f "$LICENSE" ]]; then
@@ -49,6 +59,10 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 if [[ -n "$existing_key" ]]; then
+  check_llm "${existing_provider:-azure}" "${LLM_MODEL:-}" "$existing_endpoint" || {
+    echo "    $ENV_FILE is not a usable LLM configuration (above) — fix it, or delete it to re-enter." >&2
+    exit 1
+  }
   echo "==> Reusing LLM credentials from $ENV_FILE — provider=${existing_provider:-azure} (delete it to re-enter)."
   exit 0
 fi
@@ -57,6 +71,10 @@ fi
 # had AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY (no LLM_PROVIDER/LLM_API_KEY
 # at all). Reuse that too, exactly as before this feature.
 if [[ -n "$existing_endpoint" && -n "$existing_azure_key" ]]; then
+  check_llm azure "${LLM_MODEL:-}" "$existing_endpoint" || {
+    echo "    $ENV_FILE is not a usable LLM configuration (above) — fix it, or delete it to re-enter." >&2
+    exit 1
+  }
   echo "==> Reusing Azure OpenAI creds from $ENV_FILE (delete it to re-enter)."
   exit 0
 fi
@@ -118,6 +136,7 @@ case "$provider" in
 esac
 read -r -p "LLM_MODEL (default $default_model): " model
 model="${model:-$default_model}"
+check_llm "$provider" "$model" "$endpoint" || { echo "    nothing saved — re-run to try again." >&2; exit 1; }
 
 # Endpoints are URLs, keys are opaque vendor tokens, and the model is a short
 # identifier — none contain shell metacharacters — so a plain KEY=value file is
