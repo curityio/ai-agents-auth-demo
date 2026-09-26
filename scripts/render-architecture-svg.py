@@ -430,6 +430,10 @@ b = t
 svid("agents", move([N["copilot"], *SEG["a2a"], N["specialist"]], PRIV)[1])
 exchange("agents-priv", "specialist", PRIV)
 badge(N["specialist"][0], 728, "ops:write · acr=mfa", PRIV, t - 0.4, t + 1.8)
+# the specialist is an LLM agent too: its model call goes through the gateway's /llm route
+move(ELBOW["specialist-llm"], PRIV, wait=0.15)
+ring("llmgw", PRIV, t - 0.2, t + 0.3)
+t += 0.3
 svid("mcp", move([N["specialist"], *SEG["specialist-gw"], N["gw"]], PRIV)[1])
 exchange("mcp-priv", "gw", PRIV)
 move([N["gw"], *SEG["gw-mo"], N["mo"]], PRIV)
