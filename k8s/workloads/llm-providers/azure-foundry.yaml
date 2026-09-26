@@ -1,6 +1,6 @@
 # Azure AI Foundry. One resource serves BOTH GPT and Claude deployments;
 # LLM_MODEL (the DEPLOYMENT name) picks which. A Claude deployment's name must
-# start with "claude": agentgateway (v1.4.1 is_anthropic_model) routes on that
+# start with "claude": agentgateway (is_anthropic_model, v1.4.1 and v1.5.0) routes on that
 # prefix, translating Chat Completions to Anthropic Messages at
 # /anthropic/v1/messages; any other name goes to
 # /api/projects/<projectName>/openai/v1/chat/completions. resourceName and

@@ -281,8 +281,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       path-routed (not a single federated `/mcp`) because agentgateway does **not**
       expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
       narrowing can't be done on a single federated endpoint. Callers pick the path.
-      **Re-verified on v1.4.1 (2026-08-05): still true, and it is structural, not a
-      timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
+      **Re-verified on v1.4.1 (2026-08-05) and again in the v1.5.0 source (2026-09-26):
+      still true, and it is structural, not a timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
       field is a plain `Option<&MCPInfo>` while its neighbours (`jwt`, `llm`, `extauthz`,
       `backend`, …) are `ExtensionOrDirect`; `set_request()` wires up all thirteen of
       those and never touches `mcp`. `ext_authz.rs` builds its context with
@@ -420,7 +420,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     exactly ONE path — no direct-to-vendor mode exists; reintroducing one would put
     a static vendor key back in the agent's environment and bypass the `llm:invoke`
     scope check, which is the property this demo argues against. Two traps, both
-    measured against the pinned `agentgateway:v1.4.1`: **Anthropic breaks if
+    measured against `agentgateway:v1.4.1` (the pin is now v1.5.0: its `llm/mod.rs`
+    was heavily reworked, and on 2026-09-26 only the Foundry/Claude path was
+    re-measured live — it still works with the key location left implicit; the
+    other fragments are config-validated only, so re-measure before trusting them): **Anthropic breaks if
     `backendAuth.key.location` is set explicitly** — the `x-api-key`/
     `anthropic-version` rewrite (`llm/mod.rs:1247-1276`) only fires when the location
     was left implicit, so "fixing" `anthropic.yaml` to look like `azure-openai.yaml` breaks
@@ -428,7 +431,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     (it gets no such rewrite), and **Azure AI Foundry must again leave it implicit**:
     Bearer is the only header both its families accept (Claude 401s on `api-key`, GPT
     on `x-api-key`, measured 2026-09-26; a Claude deployment must also be NAMED
-    `claude…`, the prefix the gateway routes on); and standalone YAML at v1.4.1 accepts only **eight**
+    `claude…`, the prefix the gateway routes on); and standalone YAML at v1.4.1 (unchanged at v1.5.0) accepts only **eight**
     provider keys (`openAI, gemini, vertex, anthropic, bedrock, azure, copilot,
     custom`) — the 13 named presets agentgateway's docs otherwise list (ollama, groq,
     …) are xDS-only and fail config load with `` unknown variant `ollama` ``.
@@ -643,8 +646,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     cardinality warning applies the moment a path carries user data.
 
 29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
-    `traceparent`, and MCP backends mis-parent the origin span.** Three separate
-    things, all verified on v1.4.1:
+    `traceparent`, and MCP backends mis-parent the origin span.** Separate things,
+    verified on v1.4.1 and re-measured on v1.5.0 (2026-09-26) where noted:
     - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
       `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
       gateway generates a span per request (it logs `trace.id`/`span.id`) and
@@ -655,7 +658,22 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       host:port — HTTP backends only; `mcp:` backends use named targets so
       `mcp.target` names the backend instead). `fields.add: {url.full: 'request.uri'}`
       adds the absolute URL under the standard key.
-    - **Validate offline** with `docker run …/agentgateway:v1.4.1 -f cfg.yaml
+    - **v1.5.0 adds CLIENT spans** under each gateway server span: one per policy
+      callout (`ExtAuthz`) and one for the upstream request (`tools/call
+      inspect_list_pods`, `server/discover inspect`, `POST <foundry host>`). **A trace
+      with no inbound `traceparent` is not exported** — the smoke scripts' bare curls
+      leave no agentgateway spans in Tempo, while the same routes driven by an agent
+      (whose instrumented client sends a sampled `traceparent`) do. Judge gateway
+      tracing from a real question, never from a smoke run.
+    - **v1.5.0 marks gateway server spans ERROR when the request fails** (v1.4.1 left
+      every span's status unset): `trc.rs` sets `Status::error(request.error)`, from
+      #3068. So the deliberate unauthenticated discovery probe (fact #37) now opens
+      EVERY question's trace with a red `POST /inspect/mcp/*` span reading `mcp
+      authentication failure: … no bearer token found` — the handshake, not a fault.
+      Genuine gateway refusals (authorization denied) turn red too, which is the
+      useful half. Not configurable; don't hide it by caching discovery — the
+      manifests' `MCP_DISCOVERY_TTL_SECONDS=0` exists so the handshake is visible.
+    - **Validate offline** with `docker run …/agentgateway:v1.5.0 -f cfg.yaml
       --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
       fetch, which is past schema validation). It does **NOT** check CEL — an unknown
       CEL root passes validation and silently yields nothing at runtime.
@@ -666,16 +684,24 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       (`httpproxy.rs` `tp.new_span()` + `ns.insert_header(req)`, at the listener stage
       before route policies), so forwarding it parents the shim's exchange directly
       under the gateway span — exactly right. Confirmed by echoing the callout's
-      headers from a throwaway listener in the pod.
+      headers from a throwaway listener in the pod. **On v1.5.0 this is superseded:**
+      the gateway injects its own `ExtAuthz` client span into the callout, and every
+      `exchange-shim POST /exchange` now parents to that span, not to the value our
+      CEL forwards. The explicit header is kept (harmless; still needed on v1.4.x).
     - **Known upstream bug — the MCP origin span is a SIBLING of the gateway span,**
       not a child. For HTTP backends the gateway forwards its rewritten `traceparent`
       and nesting is correct; for `mcp:` backends the upstream request is built fresh
       (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
       headers only where absent, carrying the ORIGINAL inbound traceparent. So
       `mcp-inspect`/`mcp-ops` parent to the CALLER, and the gateway looks like a
-      bystander to a call that went around it. Not configurable, and still present on
-      `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
-      the indentation lies.
+      bystander to a call that went around it. The bars still nest correctly in time;
+      only the indentation lies. **Upstream closed it (#2904 → #3059, rewritten by
+      #3068 into `start_mcp_outbound_span`'s `inject_headers`), and it is STILL
+      PRESENT on v1.5.0** — measured 2026-09-26 by span id: `mcp-inspect POST /mcp`'s
+      parent is the copilot's `POST /inspect/mcp` client span, not the gateway's new
+      `tools/call inspect_list_pods` client span. No newer fix on `main` and no open
+      issue as of that date; #3068 also dropped #3059's `apply_prefers_gateway_span`
+      test, so nothing upstream pins the behaviour. Root cause not chased further.
 
 30. **The Vercel AI SDK is v7 (`ai@7`, providers `4.x`), and two of its changes are
     silent — one converts an exception into data, the other repoints an HTTP path.**

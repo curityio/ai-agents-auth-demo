@@ -428,7 +428,7 @@ Boundary properties worth calling out:
   the RFC 9728 document each route's 401 points to — the document the agents
   discover the authorization server from. It is
   path-routed — `/inspect/mcp` → mcp-inspect, `/ops/mcp` → mcp-ops —
-  because agentgateway (re-verified on v1.4.1) does not expose `mcp.tool.target` in its `extAuthz`
+  because agentgateway (verified on v1.4.1, re-checked on v1.5.0) does not expose `mcp.tool.target` in its `extAuthz`
   CEL scope, so per-backend audience narrowing can't be done on a single federated
   endpoint. For each tool-call the gateway drives an `extAuthz` call to the
   co-located **exchange-shim** (`apps/exchange-shim`, same pod), which performs the
@@ -558,6 +558,9 @@ on the Tempo datasource — the one-click route from an answer to its trace.
 > span rather than its child: agentgateway forwards the inbound `traceparent`
 > verbatim on `mcp:` backends while rewriting it correctly for HTTP backends
 > ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904)).
+> Upstream closed that issue, but the pinned v1.5.0 still shows it (measured
+> 2026-09-26): the gateway now emits a client span for the upstream call, and
+> the origin span still parents to the caller instead.
 > Durations still nest correctly — only the indentation misleads.
 
 ### 7.1 The OBO log (the log-plane view)
