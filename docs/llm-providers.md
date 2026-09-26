@@ -18,9 +18,10 @@ Edit `.demo.env`:
 
 ```sh
 LLM_PROVIDER=azure           # openai | anthropic | gemini | azure
-LLM_MODEL=gpt-4.1
+LLM_MODEL=claude-sonnet-4-6  # on azure: the deployment name
 LLM_API_KEY=...
-AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com   # azure only
+# azure only — a Foundry PROJECT endpoint (GPT + Claude) or an Azure OpenAI resource (GPT)
+AZURE_OPENAI_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>
 ```
 
 **`azure` is the default** — both in this file and at the `make demo` prompt —
@@ -76,12 +77,70 @@ transitional.
 | `openai` | https://platform.openai.com/api-keys | `gpt-4.1` | — |
 | `anthropic` | https://console.anthropic.com/settings/keys | `claude-sonnet-4-6` | — |
 | `gemini` | https://aistudio.google.com/apikey | `gemini-2.5-pro` | — |
-| `azure` | your Azure OpenAI (AI Foundry) resource | the **deployment name** in that resource, not the base model | `AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com` |
+| `azure` | an Azure AI Foundry resource (GPT + Claude) or an Azure OpenAI resource (GPT only) — see [§2.1](#21-azure-two-resource-types) | the **deployment name**, e.g. `claude-sonnet-4-6` or `gpt-4.1` | `AZURE_OPENAI_ENDPOINT` — its host picks the resource type |
 
-Each row is a fragment in `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure}.yaml`
+Each row is a fragment in `k8s/workloads/llm-providers/` (`azure` has two,
+`azure-openai.yaml` and `azure-foundry.yaml`),
 supplying the `backendAuth` policy and the `backends` block for the gateway's
 `/llm` route — see [§5](#5-adding-a-provider-agentgateway-supports-natively)
 for the shape.
+
+### 2.1 Azure: two resource types
+
+`LLM_PROVIDER=azure` covers two kinds of Azure resource. The host in
+`AZURE_OPENAI_ENDPOINT` decides which fragment is rendered:
+
+| `AZURE_OPENAI_ENDPOINT` | Resource | Serves | Fragment |
+| --- | --- | --- | --- |
+| `https://<res>.services.ai.azure.com/api/projects/<project>` | Azure AI Foundry (kind `AIServices`) | GPT **and** Claude | `azure-foundry.yaml` |
+| `https://<res>.openai.azure.com` | Azure OpenAI (kind `OpenAI`) | GPT only | `azure-openai.yaml` |
+
+Anything else — including the `https://<res>.cognitiveservices.azure.com/` that
+`az cognitiveservices account show` prints — fails the render with the two shapes
+above. Foundry needs the **project** endpoint (the one the Foundry portal shows on
+the project overview): agentgateway sends GPT deployments to
+`/api/projects/<project>/openai/v1/chat/completions`, and a project is generally
+not named after its resource.
+
+On Foundry, GPT versus Claude is just `LLM_MODEL`. **A Claude deployment's name
+must start with `claude`** — agentgateway v1.4.1 decides "this is Claude" by that
+prefix, then translates the agents' Chat Completions request to Anthropic Messages
+at `/anthropic/v1/messages` and adds `anthropic-version`. Name it `sonnet-prod` and
+the request goes the OpenAI way, which Foundry refuses with `404 api_not_supported`.
+The render cannot check this; it does not see deployment names.
+
+**The Foundry auth-header trap.** Measured on 2026-09-26 with a real key:
+
+| Request | `api-key` | `x-api-key` | `Authorization: Bearer <key>` |
+| --- | --- | --- | --- |
+| Claude, `/anthropic/v1/messages` | 401 | 200 | 200 |
+| GPT, `/api/projects/<p>/openai/v1/chat/completions` | 200 | 401 | 200 |
+
+Bearer is the only header both families accept, and it is what a `backendAuth.key`
+with no `location` sends. So `azure-foundry.yaml` has **no** `location:` — the
+opposite of `azure-openai.yaml` next to it, which needs `api-key`. Copying one onto
+the other breaks whichever family the copied header does not suit, and
+`make validate-llm` cannot see it (the config is still well-formed).
+
+**Creating a Foundry resource for this demo** (what was done for
+`ai-agents-demo-suren-foundry`):
+
+- A **new** resource of kind `AIServices`, not an Azure OpenAI one, in a region
+  whose catalog lists Claude — Sweden Central does, West Europe does not.
+- Key authentication must be enabled (`disableLocalAuth` not `true`).
+- Create a project on it; its endpoint is what goes in `AZURE_OPENAI_ENDPOINT`.
+- A Claude deployment needs `properties.modelProviderData` (`organizationName`,
+  `countryCode`, `industry`). The Azure CLI has no flag for it and
+  `api-version=2025-06-01` silently drops it; the management API accepts it at
+  `api-version=2025-10-01-preview`:
+
+  ```bash
+  az rest --method put --url "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<res>/deployments/claude-sonnet-4-6?api-version=2025-10-01-preview" \
+    --body '{"sku":{"name":"GlobalStandard","capacity":50},"properties":{"model":{"format":"Anthropic","name":"claude-sonnet-4-6","version":"1"},"modelProviderData":{"organizationName":"<org>","countryCode":"<CC>","industry":"technology"}}}'
+  ```
+
+Gemini is not offered on Azure; Google's hosted Gemini is Vertex AI, which is not
+shipped here (see §5).
 
 ---
 
@@ -179,10 +238,12 @@ rewrites `Authorization: Bearer` → `x-api-key` and injects the
 `anthropic-version: 2023-06-01` header **when that location was left implicit**
 (`llm/mod.rs:1247-1276`). `k8s/workloads/llm-providers/anthropic.yaml` therefore
 has no `location:` block at all — adding one "for clarity," which is exactly
-what `azure.yaml` right next to it does, silently suppresses both rewrites and
-the upstream call fails to authenticate. Azure is the mirror image: it gets no
-per-provider fixup, so it *needs* the explicit `api-key` header location it
-already has. This asymmetry is the single most likely thing a future
+what `azure-openai.yaml` right next to it does, silently suppresses both rewrites and
+the upstream call fails to authenticate. Azure OpenAI is the mirror image: it gets no
+per-provider fixup, so `azure-openai.yaml` *needs* the explicit `api-key` header
+location it already has — and Azure AI Foundry is the mirror of *that*:
+`azure-foundry.yaml` must leave `location` implicit, because Bearer is the only
+header both its GPT and Claude deployments accept ([§2.1](#21-azure-two-resource-types)). This asymmetry is the single most likely thing a future
 contributor "fixes" by making the two fragments look more alike. Don't.
 
 More generally: required fields differ per provider (`bedrock` wants `region`,

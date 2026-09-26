@@ -404,9 +404,11 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `$AZURE_OPENAI_API_KEY`) in the `agentgateway-llm` Secret (ns `mcp`). **The
     provider block is generated, not hand-edited:** `scripts/render-gateway-config.sh`
     reads `.demo.env` (`LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`, plus
-    `AZURE_OPENAI_ENDPOINT` for azure) and splices the matching fragment from
-    `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure}.yaml` into
-    `.gen/agentgateway-config.yaml` (gitignored) between `# BEGIN_LLM_PROVIDER` /
+    `AZURE_OPENAI_ENDPOINT` for azure, whose host picks the fragment:
+    `*.services.ai.azure.com/api/projects/<p>` → Azure AI Foundry, serving GPT and
+    Claude from one resource; `*.openai.azure.com` → Azure OpenAI) and splices the matching fragment from
+    `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure-openai,azure-foundry}.yaml`
+    into `.gen/agentgateway-config.yaml` (gitignored) between `# BEGIN_LLM_PROVIDER` /
     `# END_LLM_PROVIDER` sentinels — editing the tracked
     `agentgateway-config.yaml`'s `llm` route between those markers has NO effect,
     since `make apply`/`make configure-llm` always re-render over it. `jwtAuth` and
@@ -421,13 +423,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     measured against the pinned `agentgateway:v1.4.1`: **Anthropic breaks if
     `backendAuth.key.location` is set explicitly** — the `x-api-key`/
     `anthropic-version` rewrite (`llm/mod.rs:1247-1276`) only fires when the location
-    was left implicit, so "fixing" `anthropic.yaml` to look like `azure.yaml` breaks
-    it — while **Azure is the opposite and REQUIRES the explicit `api-key` header**
-    (it gets no such rewrite); and standalone YAML at v1.4.1 accepts only **eight**
+    was left implicit, so "fixing" `anthropic.yaml` to look like `azure-openai.yaml` breaks
+    it — while **Azure OpenAI is the opposite and REQUIRES the explicit `api-key` header**
+    (it gets no such rewrite), and **Azure AI Foundry must again leave it implicit**:
+    Bearer is the only header both its families accept (Claude 401s on `api-key`, GPT
+    on `x-api-key`, measured 2026-09-26; a Claude deployment must also be NAMED
+    `claude…`, the prefix the gateway routes on); and standalone YAML at v1.4.1 accepts only **eight**
     provider keys (`openAI, gemini, vertex, anthropic, bedrock, azure, copilot,
     custom`) — the 13 named presets agentgateway's docs otherwise list (ollama, groq,
     …) are xDS-only and fail config load with `` unknown variant `ollama` ``.
-    `resourceType` stays `openAI` (lowercase-o) on the azure fragment. The AI SDK
+    `resourceType` stays `openAI` (lowercase-o) on the azure-openai fragment (`foundry` on azure-foundry). The AI SDK
     client (`buildLlm`) points `baseURL` at `.../llm` and passes the exchanged JWT as
     the OpenAI bearer. The route serves **Chat Completions**, so the client must be
     `@ai-sdk/openai-compatible` — `@ai-sdk/openai` would POST `/llm/responses`
