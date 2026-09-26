@@ -281,8 +281,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       path-routed (not a single federated `/mcp`) because agentgateway does **not**
       expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
       narrowing can't be done on a single federated endpoint. Callers pick the path.
-      **Re-verified on v1.4.1 (2026-08-05): still true, and it is structural, not a
-      timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
+      **Re-verified on v1.4.1 (2026-08-05) and again in the v1.5.0 source (2026-09-26):
+      still true, and it is structural, not a timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
       field is a plain `Option<&MCPInfo>` while its neighbours (`jwt`, `llm`, `extauthz`,
       `backend`, …) are `ExtensionOrDirect`; `set_request()` wires up all thirteen of
       those and never touches `mcp`. `ext_authz.rs` builds its context with
@@ -420,7 +420,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     exactly ONE path — no direct-to-vendor mode exists; reintroducing one would put
     a static vendor key back in the agent's environment and bypass the `llm:invoke`
     scope check, which is the property this demo argues against. Two traps, both
-    measured against the pinned `agentgateway:v1.4.1`: **Anthropic breaks if
+    measured against `agentgateway:v1.4.1` (the pin is now v1.5.0: its `llm/mod.rs`
+    was heavily reworked, and on 2026-09-26 only the Foundry/Claude path was
+    re-measured live — it still works with the key location left implicit; the
+    other fragments are config-validated only, so re-measure before trusting them): **Anthropic breaks if
     `backendAuth.key.location` is set explicitly** — the `x-api-key`/
     `anthropic-version` rewrite (`llm/mod.rs:1247-1276`) only fires when the location
     was left implicit, so "fixing" `anthropic.yaml` to look like `azure-openai.yaml` breaks
@@ -428,7 +431,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     (it gets no such rewrite), and **Azure AI Foundry must again leave it implicit**:
     Bearer is the only header both its families accept (Claude 401s on `api-key`, GPT
     on `x-api-key`, measured 2026-09-26; a Claude deployment must also be NAMED
-    `claude…`, the prefix the gateway routes on); and standalone YAML at v1.4.1 accepts only **eight**
+    `claude…`, the prefix the gateway routes on); and standalone YAML at v1.4.1 (unchanged at v1.5.0) accepts only **eight**
     provider keys (`openAI, gemini, vertex, anthropic, bedrock, azure, copilot,
     custom`) — the 13 named presets agentgateway's docs otherwise list (ollama, groq,
     …) are xDS-only and fail config load with `` unknown variant `ollama` ``.
@@ -594,8 +597,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       yourself", which is vague and wrong about who lacked permission (it is the USER,
       not the agent). Two changes fix it, and **both are needed**:
       (a) `openMcpToolset` converts a 403 into a factual `{error:'forbidden', tool}`
-      result; (b) the specialist's system prompt says to name the refused tool and
-      never offer a bypass route. (a) alone does NOT work — the model ignored guidance
+      result; (b) the agent's system prompt says to name the refused tool and
+      never offer a bypass route — BOTH agents' prompts
+      (`apps/agent-specialist/src/system-prompt.ts`, `apps/agent-copilot/src/system-prompt.ts`).
+      The copilot's was missed at first: its old rule, *"explain the missing
+      scope/permission"*, made it invent a cause for a gateway 403 (a refused
+      `kube-system` read became "you need a Kubernetes RBAC role… ask your cluster
+      administrator"); it now also says not to guess a cause the refusal doesn't
+      state (fixed 2026-09-26, 4/4 runs factual). Neither prompt names the allowed
+      namespace, on purpose: told it, the model refuses `kube-system` itself and the
+      gateway denial the demo shows never happens. (a) alone does NOT work — the model ignored guidance
       embedded in the tool payload. **Keep instructions OUT of tool results:** tool
       output is untrusted data, and obeying imperatives smuggled through it is exactly
       the prompt-injection hole this demo argues against. Verified end to end: carol
@@ -643,8 +654,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     cardinality warning applies the moment a path carries user data.
 
 29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
-    `traceparent`, and MCP backends mis-parent the origin span.** Three separate
-    things, all verified on v1.4.1:
+    `traceparent` (on v1.4.x), and MCP origin spans nest only if W3C is the sole
+    propagation format.** Separate things,
+    verified on v1.4.1 and re-measured on v1.5.0 (2026-09-26) where noted:
     - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
       `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
       gateway generates a span per request (it logs `trace.id`/`span.id`) and
@@ -655,7 +667,33 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       host:port — HTTP backends only; `mcp:` backends use named targets so
       `mcp.target` names the backend instead). `fields.add: {url.full: 'request.uri'}`
       adds the absolute URL under the standard key.
-    - **Validate offline** with `docker run …/agentgateway:v1.4.1 -f cfg.yaml
+    - **v1.5.0 adds CLIENT spans** under each gateway server span: one per policy
+      callout (`ExtAuthz`) and one for the upstream request (`tools/call
+      inspect_list_pods`, `server/discover inspect`, `POST <foundry host>`). **A trace
+      with no inbound `traceparent` is not exported** — the smoke scripts' bare curls
+      leave no agentgateway spans in Tempo, while the same routes driven by an agent
+      (whose instrumented client sends a sampled `traceparent`) do. Judge gateway
+      tracing from a real question, never from a smoke run.
+    - **v1.5.0 marks gateway server spans ERROR when the request fails** (v1.4.1 left
+      every span's status unset): `trc.rs` sets `Status::error(request.error)`, from
+      #3068. So the deliberate unauthenticated discovery probe (fact #37) now opens
+      EVERY question's trace with a red `POST /inspect/mcp/*` span reading `mcp
+      authentication failure: … no bearer token found` — the handshake, not a fault.
+      Genuine gateway refusals (authorization denied) turn red too, which is the
+      useful half — verified 2026-09-26: alice's `kube-system` read and carol's
+      `set_deployment_image` each show a red `403 authorization failed` span with no
+      downstream MCP span. Such a span is named generically (`POST /ops/mcp/*`, not
+      `tools/call`) and carries no `gen_ai.tool.name`, because the HTTP-layer
+      `authorization` policy refuses it before the MCP layer runs; its `ExtAuthz` →
+      `exchange-shim` child makes fact #27's "extAuthz runs before authorization"
+      ordering visible in the trace. What was refused is therefore recorded from the
+      rules' own inputs: `tracing.fields.add` captures `Mcp-Name` and
+      `Mcp-Param-Namespace` as `http.request.header.mcp-name` /
+      `…mcp-param-namespace` (semconv captured-header keys; omitted when the header is
+      absent), so the red span reads `list_pods` + `kube-system` or
+      `set_deployment_image`. Pinned by `scripts/test-render-gateway-config.sh`. Not configurable; don't hide it by caching discovery — the
+      manifests' `MCP_DISCOVERY_TTL_SECONDS=0` exists so the handshake is visible.
+    - **Validate offline** with `docker run …/agentgateway:v1.5.0 -f cfg.yaml
       --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
       fetch, which is past schema validation). It does **NOT** check CEL — an unknown
       CEL root passes validation and silently yields nothing at runtime.
@@ -666,16 +704,34 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       (`httpproxy.rs` `tp.new_span()` + `ns.insert_header(req)`, at the listener stage
       before route policies), so forwarding it parents the shim's exchange directly
       under the gateway span — exactly right. Confirmed by echoing the callout's
-      headers from a throwaway listener in the pod.
-    - **Known upstream bug — the MCP origin span is a SIBLING of the gateway span,**
-      not a child. For HTTP backends the gateway forwards its rewritten `traceparent`
-      and nesting is correct; for `mcp:` backends the upstream request is built fresh
-      (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
-      headers only where absent, carrying the ORIGINAL inbound traceparent. So
-      `mcp-inspect`/`mcp-ops` parent to the CALLER, and the gateway looks like a
-      bystander to a call that went around it. Not configurable, and still present on
-      `main` (v1.4.1 is the newest tag). The bars still nest correctly in time; only
-      the indentation lies.
+      headers from a throwaway listener in the pod. **On v1.5.0 this is superseded:**
+      the gateway injects its own `ExtAuthz` client span into the callout, and every
+      `exchange-shim POST /exchange` now parents to that span, not to the value our
+      CEL forwards. The explicit header is kept (harmless; still needed on v1.4.x).
+    - **MCP origin spans nest under the gateway — ONLY because the services speak
+      W3C alone.** On v1.4.1 they didn't: for `mcp:` backends the upstream request was
+      built fresh and `IncomingRequestContext::apply` carried the ORIGINAL inbound
+      `traceparent`, so `mcp-inspect`/`mcp-ops` parented to the CALLER (agentgateway
+      #2904). v1.5.0 fixes that (#3059, reworked by #3068: `start_mcp_outbound_span`
+      injects its own client span into the upstream headers) — verified 2026-09-26 on
+      the wire with the gateway's debug trace (`POST localhost:15000/debug/trace?follow=90s`
+      on the admin port; its `"final request"` snapshot shows every header sent
+      upstream). **It still looked broken, and the cause was ours:** `otel-bootstrap`
+      registered W3C + baggage + **B3**, so every service also injected `x-b3-*`. The
+      gateway rewrites only `traceparent` and forwards every other header untouched,
+      so mcp-inspect received `traceparent` naming the gateway's span AND
+      `x-b3-spanid` naming the caller's; `CompositePropagator.extract` is a `reduce`
+      in which the LAST propagator wins, and B3 was last. Proven by an A/B against the
+      gateway Service (same `traceparent`, ± a stale `x-b3-spanid`: without → parent
+      is the gateway's `tools/call …` client span; with → parent is the fake B3 id),
+      and fixed by dropping B3 (`packages/otel-bootstrap/src/telemetry.ts`, pinned by
+      `telemetry.test.ts`; afterwards 10/10 MCP server spans across both tiers nest
+      under the gateway). **Do not add a second trace-context format back** — nothing
+      here consumes B3 (agentgateway, `@vercel/otel` and the SDK are all W3C), and any
+      header a proxy doesn't rewrite will contradict the one it does. Wrong turn worth
+      remembering: span ids in Tempo showed "caller as parent" and the upstream fix's
+      absence looked proven; only the wire capture showed the gateway sending the
+      right `traceparent`.
 
 30. **The Vercel AI SDK is v7 (`ai@7`, providers `4.x`), and two of its changes are
     silent — one converts an exception into data, the other repoints an HTTP path.**

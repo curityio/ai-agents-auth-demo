@@ -173,7 +173,7 @@ shipped here (see §5).
 The other two — OpenAI and Gemini — are **schema-validated only**.
 `make validate-llm` renders each fragment and runs it through agentgateway's
 own `--validate-only` config check against the exact pinned image
-(`ghcr.io/agentgateway/agentgateway:v1.4.1`), proving each fragment parses as a
+(`ghcr.io/agentgateway/agentgateway:v1.5.0`), proving each fragment parses as a
 well-formed provider block. Neither has been exercised against its
 live vendor. Say so plainly rather than implying otherwise: a fragment that
 loads cleanly can still have the wrong path prefix or the wrong auth header and
@@ -187,8 +187,9 @@ driving all four live — see [§4](#4-why-only-four).
 ## 4. Why only four
 
 agentgateway's published documentation lists 19 first-class providers. That
-page tracks `latest`, not the image this demo pins. At **v1.4.1**, standalone
-YAML config accepts exactly eight provider keys:
+page tracks `latest`, not the image this demo pins. At **v1.4.1**, and still at
+**v1.5.0** (re-checked in source on the 2026-09-26 bump), standalone YAML config
+accepts exactly eight provider keys:
 
 ```
 openAI, gemini, vertex, anthropic, bedrock, azure, copilot, custom
@@ -213,8 +214,8 @@ docs and this pinned version, discovered by actually trying it, not by reading
 a changelog. If you land on this page searching that error text, this is why:
 reach the vendor through `custom` + `hostOverride` instead (see
 [§6](#6-reaching-groq--openrouter--ollama--vllm)), and re-check on any
-agentgateway version bump — the eight-key list is a property of v1.4.1, not a
-permanent architectural limit.
+agentgateway version bump — the eight-key list is a property of v1.4.1–v1.5.0,
+not a permanent architectural limit.
 
 This is also why the four shipped providers are exactly OpenAI, Anthropic,
 Gemini, and Azure OpenAI: they're the ones with a real native provider key at

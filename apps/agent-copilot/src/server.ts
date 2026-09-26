@@ -19,15 +19,7 @@ import { getCimdIdentity } from './cimd-identity.js';
 import { spiffeIdHandler } from './spiffe-route.js';
 import { lastTokenHandler } from './last-token-route.js';
 import { buildToolsHandler } from './tools-route.js';
-
-const SYSTEM_PROMPT = `You are an SRE/DevOps copilot. The user is asking questions about a running Kubernetes cluster.
-
-Rules:
-- Use the available tools to fetch concrete data before answering.
-- Never invent pod names, log entries, or metrics — always cite tool output.
-- If a tool refuses with an authorization error, explain the missing scope/permission to the user rather than retrying blindly.
-- Keep answers concise and structured (bullet points or short paragraphs).
-- The current user's identity is available in your context; you act on their behalf.`;
+import { COPILOT_SYSTEM_PROMPT } from './system-prompt.js';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -254,7 +246,7 @@ async function main(): Promise<void> {
     try {
       const result = await generateText({
         model: llm,
-        instructions: SYSTEM_PROMPT,
+        instructions: COPILOT_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: `User: ${userSub}\n\nQuestion: ${message}` }],
         tools: toolset.tools,
         stopWhen: isStepCount(6),

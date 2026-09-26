@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
 # agentgateway config — path-routed MCP front door for mcp-inspect +
-# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.4.1.
+# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.5.0.
 #
 # Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
 # (`mcp.tool.target` / `mcp.tool.name`) is NOT available inside `extAuthz` — it
@@ -55,9 +55,19 @@ config:
     # request.host. `backend` and `route` do NOT resolve as CEL roots here, and
     # --validate-only does not check CEL, so an unknown root silently yields
     # nothing rather than erroring.)
+    #
+    # The two MCP headers the `authorization` rules key on are recorded under the
+    # semconv captured-header keys. That is what names the tool on a DENIED call:
+    # the HTTP-layer `authorization` policy refuses it before the MCP layer runs,
+    # so that span is a generic `POST /ops/mcp/*` with no `gen_ai.tool.name` — the
+    # header is the only record of what was refused, and of the namespace that
+    # tripped the prod-only rule. Absent header (the /llm route, `tools/list`) →
+    # the field is omitted, not emptied.
     fields:
       add:
         url.full: 'request.uri'
+        http.request.header.mcp-name: 'request.headers["mcp-name"]'
+        http.request.header.mcp-param-namespace: 'request.headers["mcp-param-namespace"]'
 
 binds:
 - port: 8080
@@ -129,8 +139,10 @@ binds:
                 # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
                 x-target-audience: '"mcp-inspect"'
-                # W3C trace context for the extAuthz callout. agentgateway does
-                # not propagate to extAuthz on its own, so forward it explicitly.
+                # W3C trace context for the extAuthz callout. agentgateway v1.4.x
+                # did not propagate to extAuthz on its own, so forward it explicitly.
+                # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
+                # which supersedes this value; kept because it is harmless.)
                 # VERIFIED by echoing the callout's headers: at this point
                 # `request.headers["traceparent"]` is NOT the caller's value — the
                 # gateway has already rewritten it to its OWN span
@@ -264,8 +276,10 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
-                # W3C trace context for the extAuthz callout. agentgateway does
-                # not propagate to extAuthz on its own, so forward it explicitly.
+                # W3C trace context for the extAuthz callout. agentgateway v1.4.x
+                # did not propagate to extAuthz on its own, so forward it explicitly.
+                # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
+                # which supersedes this value; kept because it is harmless.)
                 # VERIFIED by echoing the callout's headers: at this point
                 # `request.headers["traceparent"]` is NOT the caller's value — the
                 # gateway has already rewritten it to its OWN span
@@ -364,8 +378,10 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-inspect"'
-                # W3C trace context for the extAuthz callout. agentgateway does
-                # not propagate to extAuthz on its own, so forward it explicitly.
+                # W3C trace context for the extAuthz callout. agentgateway v1.4.x
+                # did not propagate to extAuthz on its own, so forward it explicitly.
+                # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
+                # which supersedes this value; kept because it is harmless.)
                 # VERIFIED by echoing the callout's headers: at this point
                 # `request.headers["traceparent"]` is NOT the caller's value — the
                 # gateway has already rewritten it to its OWN span
@@ -408,8 +424,10 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
-                # W3C trace context for the extAuthz callout. agentgateway does
-                # not propagate to extAuthz on its own, so forward it explicitly.
+                # W3C trace context for the extAuthz callout. agentgateway v1.4.x
+                # did not propagate to extAuthz on its own, so forward it explicitly.
+                # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
+                # which supersedes this value; kept because it is harmless.)
                 # VERIFIED by echoing the callout's headers: at this point
                 # `request.headers["traceparent"]` is NOT the caller's value — the
                 # gateway has already rewritten it to its OWN span

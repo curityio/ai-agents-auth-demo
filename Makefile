@@ -62,8 +62,8 @@ image_deploy = $(if $(filter exchange-shim,$1),mcp/agentgateway,$(if $(filter ag
 # Values below are what the working demo cluster runs (captured 2026-08-05).
 # To move up: bump one, `make platform`, and re-run `make status` + `make smoke`.
 ISTIO_VERSION      ?= 1.30.3
-SPIRE_VERSION      ?= 0.30.0
-SPIRE_CRDS_VERSION ?= 0.6.0
+SPIRE_VERSION      ?= 0.30.2
+SPIRE_CRDS_VERSION ?= 0.6.1
 TEMPO_VERSION      ?= 1.24.4
 GRAFANA_VERSION    ?= 10.5.15
 KIALI_VERSION      ?= 2.30.0

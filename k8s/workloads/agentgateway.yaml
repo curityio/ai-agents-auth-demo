@@ -144,19 +144,19 @@ spec:
         # containers[1] — the agentgateway binary.
         - name: agentgateway
           # Pinned, NOT :latest. agentgateway-config.yaml is validated against this
-          # version, and `latest` has since rolled to v1.4.x — a fresh cluster would
-          # silently get a different gateway than the one this repo was tested with.
+          # version, and `latest` moves on its own — a fresh cluster would silently
+          # get a different gateway than the one this repo was tested with.
           #
-          # Upgrading to v1.4.x is a deliberate step, not a free one. Its release notes
-          # say top-level standalone `llm` and `mcp` listeners may no longer share a
-          # port, and our single :8080 listener carries both the MCP routes and the
-          # `/llm` ai route — verify that first. v1.4 also adds MCP 2026-07-28 support
-          # (harmless for us: it keeps the upstream hop on the old protocol while our
-          # clients remain on MCP SDK v1) and a native `backendAuth.oauthTokenExchange`
-          # that still CANNOT replace apps/exchange-shim, because `actorToken.source`
-          # only reads from the request — there is no file source for the rotating
-          # SPIFFE JWT-SVID. See experiments/agentgateway-cel-probe/README.md.
-          image: ghcr.io/agentgateway/agentgateway:v1.4.1
+          # An upgrade is a deliberate step, not a free one: `make validate-llm`, then
+          # `make apply` + `make smoke`, then drive one real question and read its
+          # trace. v1.4.1 → v1.5.0 (2026-09-26) passed all of that; its breaking
+          # changes (JWT `iss`/`aud` now enforced, LLM token counts include cache
+          # tokens) do not bite here. The native `backendAuth.oauthTokenExchange`
+          # still CANNOT replace apps/exchange-shim at v1.5.0: `actorToken.source`
+          # only reads from the request — there is no file or Workload API source for
+          # the rotating SPIFFE JWT-SVID (v1.5.0's new SPIFFE support covers the
+          # gateway's mTLS identity only). See experiments/agentgateway-cel-probe/README.md.
+          image: ghcr.io/agentgateway/agentgateway:v1.5.0
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
           env:
