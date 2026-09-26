@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Render k8s/workloads/agentgateway-config.yaml with the LLM provider block
-# selected by .demo.env, into .gen/agentgateway-config.yaml.
+# selected by .demo.env, into .gen/agentgateway-config.yaml. LLM_PROVIDER=azure
+# picks azure-openai.yaml or azure-foundry.yaml from AZURE_OPENAI_ENDPOINT's host.
 #
 # The provider is chosen at config-ASSEMBLY time rather than by an env var at
 # gateway runtime because agentgateway expands $VARS in values only — each
@@ -55,31 +56,78 @@ fi
 # rather than quietly rendering a provider nobody chose.
 provider="$(printf '%s' "${provider:-azure}" | tr '[:upper:]' '[:lower:]')"
 
-# Default model per provider. bash 3.2 on macOS has no associative arrays.
+case " openai anthropic gemini azure " in
+  *" $provider "*) ;;
+  *) die "unknown LLM_PROVIDER '$provider' (expected one of: openai anthropic gemini azure)" ;;
+esac
+
+# azure: AZURE_OPENAI_ENDPOINT's host picks the resource type, and with it the
+# fragment. Foundry needs the PROJECT endpoint because agentgateway sends GPT
+# deployments to /api/projects/<project>/..., and a project is generally not
+# named after its resource.
+AZURE_SHAPES="https://<resource>.openai.azure.com (Azure OpenAI) or https://<resource>.services.ai.azure.com/api/projects/<project> (Azure AI Foundry)"
+fragment_name="$provider"
+resource_name=""
+project_name=""
+if [ "$provider" = "azure" ]; then
+  [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] || \
+    die "LLM_PROVIDER=azure needs AZURE_OPENAI_ENDPOINT in .demo.env: $AZURE_SHAPES"
+  endpoint="$(printf '%s' "$AZURE_OPENAI_ENDPOINT" | sed -E 's#/+$##')"
+  case "$endpoint" in
+    [Hh][Tt][Tt][Pp][Ss]://*) rest="${endpoint#*://}" ;;
+    *) die "AZURE_OPENAI_ENDPOINT must be $AZURE_SHAPES (got '$AZURE_OPENAI_ENDPOINT')" ;;
+  esac
+  host="$(printf '%s' "${rest%%/*}" | tr '[:upper:]' '[:lower:]')"
+  case "$rest" in
+    */*) path="/${rest#*/}" ;;
+    *) path="" ;;
+  esac
+  case "$host" in
+    *.openai.azure.com)
+      fragment_name=azure-openai
+      resource_name="${host%.openai.azure.com}"
+      [ -z "$path" ] || \
+        die "AZURE_OPENAI_ENDPOINT for an Azure OpenAI resource is the resource URL without a path: https://$host (got '$AZURE_OPENAI_ENDPOINT')"
+      ;;
+    *.services.ai.azure.com)
+      fragment_name=azure-foundry
+      resource_name="${host%.services.ai.azure.com}"
+      project_name="$(printf '%s' "$path" | sed -nE 's#^/api/projects/([A-Za-z0-9._-]+)$#\1#p')"
+      [ -n "$project_name" ] || \
+        die "Azure AI Foundry needs the PROJECT endpoint: https://$host/api/projects/<name> (got '$AZURE_OPENAI_ENDPOINT')"
+      ;;
+    *)
+      die "AZURE_OPENAI_ENDPOINT must be $AZURE_SHAPES (got '$AZURE_OPENAI_ENDPOINT')"
+      ;;
+  esac
+  printf '%s' "$resource_name" | grep -qE '^[a-z0-9-]+$' || \
+    die "could not derive the Azure resource name from '$AZURE_OPENAI_ENDPOINT'"
+fi
+
+# Default model per fragment. bash 3.2 on macOS has no associative arrays.
+# Per Azure resource type because an Azure OpenAI resource cannot host Claude.
 if [ -z "$model" ]; then
-  case "$provider" in
-    openai)    model=gpt-4.1 ;;
-    anthropic) model=claude-sonnet-4-6 ;;
-    gemini)    model=gemini-2.5-pro ;;
-    azure)     model=gpt-4.1 ;;
+  case "$fragment_name" in
+    openai)        model=gpt-4.1 ;;
+    anthropic)     model=claude-sonnet-4-6 ;;
+    gemini)        model=gemini-2.5-pro ;;
+    azure-openai)  model=gpt-4.1 ;;
+    azure-foundry) model=claude-sonnet-4-6 ;;
   esac
 fi
 
-FRAGMENT="$FRAG_DIR/$provider.yaml"
-[ -f "$FRAGMENT" ] || die "unknown LLM_PROVIDER '$provider' (expected one of: openai anthropic gemini azure)"
+FRAGMENT="$FRAG_DIR/$fragment_name.yaml"
+[ -f "$FRAGMENT" ] || die "missing fragment $FRAGMENT"
 [ -n "$model" ] || die "LLM_MODEL is empty and no default is known for '$provider'"
 
-resource_name=""
-if [ "$provider" = "azure" ]; then
-  [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] || \
-    die "LLM_PROVIDER=azure needs AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com) in .demo.env"
-  resource_name="$(printf '%s' "$AZURE_OPENAI_ENDPOINT" | sed -E 's#https?://([^.]+)\..*#\1#')"
-  [ -n "$resource_name" ] || die "could not derive the Azure resource name from '$AZURE_OPENAI_ENDPOINT'"
-fi
+case "$fragment_name" in
+  azure-*) provider_label="azure/${fragment_name#azure-}" ;;
+  *) provider_label="$provider" ;;
+esac
 
 mkdir -p "$(dirname "$OUT")"
 
-SRC="$SRC" FRAGMENT="$FRAGMENT" OUT="$OUT" MODEL="$model" RESOURCE_NAME="$resource_name" \
+SRC="$SRC" FRAGMENT="$FRAGMENT" OUT="$OUT" MODEL="$model" RESOURCE_NAME="$resource_name" PROJECT_NAME="$project_name" \
 python3 - <<'PY'
 import os, re, sys
 
@@ -92,6 +140,7 @@ body = "\n".join(l for l in frag.splitlines() if not l.lstrip().startswith("#"))
 body = body.strip("\n")
 body = body.replace("__LLM_MODEL__", os.environ["MODEL"])
 body = body.replace("__AZURE_RESOURCE_NAME__", os.environ["RESOURCE_NAME"])
+body = body.replace("__AZURE_PROJECT_NAME__", os.environ["PROJECT_NAME"])
 
 pattern = re.compile(r"( *)# BEGIN_LLM_PROVIDER\n.*?\n( *)# END_LLM_PROVIDER", re.DOTALL)
 if not pattern.search(src):
@@ -103,4 +152,4 @@ def repl(m):
 open(os.environ["OUT"], "w").write(pattern.sub(repl, src, count=1))
 PY
 
-printf '==> rendered %s (provider=%s model=%s)\n' "${OUT#"$REPO_ROOT/"}" "$provider" "$model"
+printf '==> rendered %s (provider=%s model=%s)\n' "${OUT#"$REPO_ROOT/"}" "$provider_label" "$model"
