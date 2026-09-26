@@ -146,7 +146,7 @@ shipped here (see §5).
 
 ## 3. Which is verified
 
-**Azure OpenAI and Anthropic are exercised end to end.**
+**Azure (both resource types) and Anthropic are exercised end to end.**
 
 - **Azure OpenAI** is the provider driven through the whole stack during
   development: seeded, deployed, and used to actually answer a chat turn from
@@ -159,12 +159,22 @@ shipped here (see §5).
   round-trip. That also confirms the implicit-`location` rewrite (the
   `x-api-key` / `anthropic-version` fixup described under
   [the Anthropic `location` trap](#5-adding-a-provider-agentgateway-supports-natively)) against the live vendor.
+- **Azure AI Foundry** (`ai-agents-demo-suren-foundry`, Sweden Central) was
+  verified on 2026-09-26: `make smoke-llm` passed with both
+  `LLM_MODEL=claude-sonnet-4-6` and `LLM_MODEL=gpt-4.1` against the same resource
+  and key. With Claude, the copilot answered a read question (`list_pods`) and a
+  restart went through the specialist (`get_deployment` → `restart_deployment` →
+  `get_deployment`) with an `acr=mfa` token from a real TOTP login. Both turns were
+  sent to the copilot's `/chat` with real login tokens, not typed into the browser,
+  and every gateway `/llm` span in both traces carried `gen_ai.usage.*`. That
+  confirms the Chat Completions → Messages translation, the implicit Bearer key and
+  `anthropic-version` on Foundry ([§2.1](#21-azure-two-resource-types)).
 
 The other two — OpenAI and Gemini — are **schema-validated only**.
 `make validate-llm` renders each fragment and runs it through agentgateway's
 own `--validate-only` config check against the exact pinned image
 (`ghcr.io/agentgateway/agentgateway:v1.4.1`), proving each fragment parses as a
-well-formed provider block. None of the three has been exercised against its
+well-formed provider block. Neither has been exercised against its
 live vendor. Say so plainly rather than implying otherwise: a fragment that
 loads cleanly can still have the wrong path prefix or the wrong auth header and
 only fail when a real request reaches the vendor. Every fragment here was
