@@ -55,9 +55,19 @@ config:
     # request.host. `backend` and `route` do NOT resolve as CEL roots here, and
     # --validate-only does not check CEL, so an unknown root silently yields
     # nothing rather than erroring.)
+    #
+    # The two MCP headers the `authorization` rules key on are recorded under the
+    # semconv captured-header keys. That is what names the tool on a DENIED call:
+    # the HTTP-layer `authorization` policy refuses it before the MCP layer runs,
+    # so that span is a generic `POST /ops/mcp/*` with no `gen_ai.tool.name` — the
+    # header is the only record of what was refused, and of the namespace that
+    # tripped the prod-only rule. Absent header (the /llm route, `tools/list`) →
+    # the field is omitted, not emptied.
     fields:
       add:
         url.full: 'request.uri'
+        http.request.header.mcp-name: 'request.headers["mcp-name"]'
+        http.request.header.mcp-param-namespace: 'request.headers["mcp-param-namespace"]'
 
 binds:
 - port: 8080

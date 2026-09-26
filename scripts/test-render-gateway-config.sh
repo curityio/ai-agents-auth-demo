@@ -142,6 +142,22 @@ renders_model "Foundry honours an explicit GPT deployment" gpt-4.1 \
 renders_model "anthropic still renders (allow-list regression guard)" claude-sonnet-4-6 \
   LLM_PROVIDER=anthropic
 
+# The rendered config keeps the tracing fields that name a DENIED tool call. The
+# HTTP-layer `authorization` rule refuses before the MCP layer runs, so the red
+# gateway span has no `gen_ai.tool.name`; these captured headers are the only
+# record of which tool / namespace was refused (CLAUDE.md fact #29).
+render LLM_PROVIDER=anthropic
+for field in \
+  "http.request.header.mcp-name: 'request.headers[\"mcp-name\"]'" \
+  "http.request.header.mcp-param-namespace: 'request.headers[\"mcp-param-namespace\"]'"; do
+  if [ "$RENDER_RC" -eq 0 ] && grep -qF -- "$field" "$WORK/.gen/agentgateway-config.yaml"; then
+    green "OK   tracing records ${field%%:*}"
+  else
+    red "FAIL rendered config lacks tracing field: $field (rc=$RENDER_RC)"
+    failed=1
+  fi
+done
+
 echo
 if [ "$failed" -ne 0 ]; then
   red "render-gateway-config contract tests FAILED"

@@ -597,8 +597,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       yourself", which is vague and wrong about who lacked permission (it is the USER,
       not the agent). Two changes fix it, and **both are needed**:
       (a) `openMcpToolset` converts a 403 into a factual `{error:'forbidden', tool}`
-      result; (b) the specialist's system prompt says to name the refused tool and
-      never offer a bypass route. (a) alone does NOT work — the model ignored guidance
+      result; (b) the agent's system prompt says to name the refused tool and
+      never offer a bypass route — BOTH agents' prompts
+      (`apps/agent-specialist/src/system-prompt.ts`, `apps/agent-copilot/src/system-prompt.ts`).
+      The copilot's was missed at first: its old rule, *"explain the missing
+      scope/permission"*, made it invent a cause for a gateway 403 (a refused
+      `kube-system` read became "you need a Kubernetes RBAC role… ask your cluster
+      administrator"); it now also says not to guess a cause the refusal doesn't
+      state (fixed 2026-09-26, 4/4 runs factual). Neither prompt names the allowed
+      namespace, on purpose: told it, the model refuses `kube-system` itself and the
+      gateway denial the demo shows never happens. (a) alone does NOT work — the model ignored guidance
       embedded in the tool payload. **Keep instructions OUT of tool results:** tool
       output is untrusted data, and obeying imperatives smuggled through it is exactly
       the prompt-injection hole this demo argues against. Verified end to end: carol
@@ -671,7 +679,18 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       EVERY question's trace with a red `POST /inspect/mcp/*` span reading `mcp
       authentication failure: … no bearer token found` — the handshake, not a fault.
       Genuine gateway refusals (authorization denied) turn red too, which is the
-      useful half. Not configurable; don't hide it by caching discovery — the
+      useful half — verified 2026-09-26: alice's `kube-system` read and carol's
+      `set_deployment_image` each show a red `403 authorization failed` span with no
+      downstream MCP span. Such a span is named generically (`POST /ops/mcp/*`, not
+      `tools/call`) and carries no `gen_ai.tool.name`, because the HTTP-layer
+      `authorization` policy refuses it before the MCP layer runs; its `ExtAuthz` →
+      `exchange-shim` child makes fact #27's "extAuthz runs before authorization"
+      ordering visible in the trace. What was refused is therefore recorded from the
+      rules' own inputs: `tracing.fields.add` captures `Mcp-Name` and
+      `Mcp-Param-Namespace` as `http.request.header.mcp-name` /
+      `…mcp-param-namespace` (semconv captured-header keys; omitted when the header is
+      absent), so the red span reads `list_pods` + `kube-system` or
+      `set_deployment_image`. Pinned by `scripts/test-render-gateway-config.sh`. Not configurable; don't hide it by caching discovery — the
       manifests' `MCP_DISCOVERY_TTL_SECONDS=0` exists so the handshake is visible.
     - **Validate offline** with `docker run …/agentgateway:v1.5.0 -f cfg.yaml
       --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
