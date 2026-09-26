@@ -542,26 +542,32 @@ The `net`/`dns`/`fs` auto-instrumentations are switched **off**
 (`packages/otel-bootstrap/src/instrumentation-config.ts`): `tcp.connect` /
 `tls.connect` were a third of a read-path waterfall and say nothing about
 delegation. Connection failures still surface on the enclosing HTTP span.
-Trace context propagates on the wire via a composite W3C + B3 propagator, so
-the spans stitch into a single trace. agentgateway does not propagate context to
-its `extAuthz` callout on its own, so each extAuthz block forwards `traceparent`
-explicitly — that value is already the *gateway's own* span, which is what nests
-the shim's exchange underneath it.
+Trace context propagates on the wire as W3C `traceparent` (plus W3C baggage) and
+nothing else, so the spans stitch into a single trace. That is deliberate: a
+second format (B3 used to ride along) is a header agentgateway forwards without
+rewriting, and it made the MCP servers parent to the caller instead of the
+gateway (see *Reading the waterfall* below). On agentgateway v1.4.x the
+`extAuthz` callout got no context on its own, so each extAuthz block forwards
+`traceparent` explicitly — that value is already the *gateway's own* span. From
+v1.5.0 the gateway injects its own `ExtAuthz` client span into the callout, which
+supersedes the forwarded value; the explicit header is kept and is harmless.
 
 Every `/chat` response also carries the request's `traceId` (`activeTraceId()`
 in `packages/auth-curity`, which reports nothing rather than 32 zeros when no
 span is active), and the web UI's Result card deep-links it into Grafana Explore
 on the Tempo datasource — the one-click route from an answer to its trace.
 
-> **Reading the waterfall.** On the two MCP routes the origin span
-> (`mcp-inspect` / `mcp-ops`) renders as a *sibling* of the agentgateway
-> span rather than its child: agentgateway forwards the inbound `traceparent`
-> verbatim on `mcp:` backends while rewriting it correctly for HTTP backends
-> ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904)).
-> Upstream closed that issue, but the pinned v1.5.0 still shows it (measured
-> 2026-09-26): the gateway now emits a client span for the upstream call, and
-> the origin span still parents to the caller instead.
-> Durations still nest correctly — only the indentation misleads.
+> **Reading the waterfall.** Each gateway server span (`tools/call`,
+> `tools/list`, `POST /llm/*`) has CLIENT children for what the gateway did on
+> the caller's behalf — `ExtAuthz` (the shim's OBO exchange) and the upstream call
+> (`tools/call inspect_list_pods`, `POST <LLM host>`) — and the MCP server span
+> (`mcp-inspect` / `mcp-ops`) nests under that upstream call. It did not always:
+> agentgateway v1.4.x forwarded the caller's `traceparent` on `mcp:` backends
+> ([agentgateway#2904](https://github.com/agentgateway/agentgateway/issues/2904),
+> fixed in v1.5.0), and after that fix our own B3 headers — forwarded unrewritten —
+> kept the MCP servers parented to the caller until B3 was dropped. A red gateway
+> span is a request the gateway refused; the first one in every trace is the
+> deliberate unauthenticated discovery probe (RFC 9728), not a failure.
 
 ### 7.1 The OBO log (the log-plane view)
 
@@ -594,7 +600,7 @@ it. Two properties make it useful rather than decorative:
   additionally distinguishes *which* unit of work emitted the line — the
   `EXCHANGE` blocks carry their own `auth.token_exchange` span id, distinct from
   the enclosing request. Because trace ids are constant across a whole trace,
-  this correlation is unaffected by the `mcp:` backend mis-parenting noted above.
+  this correlation never depended on how the spans parent.
 - **Refusals are logged, not just grants** (`DENY`). This is the plane where the
   authorization story is easiest to read live, and a chain that simply *stopped*
   would be indistinguishable from a crash. See §7.2.

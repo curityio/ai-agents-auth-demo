@@ -6,7 +6,6 @@ import {
   W3CTraceContextPropagator,
   W3CBaggagePropagator,
 } from '@opentelemetry/core';
-import { B3Propagator, B3InjectEncoding } from '@opentelemetry/propagator-b3';
 import { readSpiffeIdSync } from '@ai-agents-demo/spiffe';
 import { buildResource } from './resource.js';
 import { INSTRUMENTATION_CONFIG } from './instrumentation-config.js';
@@ -19,8 +18,17 @@ export interface StartTelemetryOptions {
 /**
  * Start the OTel Node SDK: auto-instrumentation (http/express/undici/fetch),
  * OTLP/proto export to the Collector (OTEL_EXPORTER_OTLP_ENDPOINT), and a
- * composite W3C tracecontext + baggage + B3 propagator (spec D8). The
- * `spiffe.id` resource attribute is read synchronously before start.
+ * composite W3C tracecontext + baggage propagator. The `spiffe.id` resource
+ * attribute is read synchronously before start.
+ *
+ * W3C is the ONLY trace-context format, deliberately. B3 used to ride along
+ * (multi-header `x-b3-*`) and broke the MCP waterfall: agentgateway rewrites
+ * `traceparent` to its own span but forwards every other header untouched, so
+ * the calling agent's `x-b3-spanid` reached mcp-inspect still naming the caller,
+ * and the composite's extract is a reduce in which the LAST propagator wins. The
+ * MCP server parented to the caller and the gateway looked like a bystander
+ * (CLAUDE.md fact #29). Nothing here consumes B3 — agentgateway, @vercel/otel and
+ * this SDK all speak W3C — so do not add it back.
  */
 export function startTelemetry(opts: StartTelemetryOptions = {}): NodeSDK {
   const svidPath =
@@ -38,7 +46,6 @@ export function startTelemetry(opts: StartTelemetryOptions = {}): NodeSDK {
       propagators: [
         new W3CTraceContextPropagator(),
         new W3CBaggagePropagator(),
-        new B3Propagator({ injectEncoding: B3InjectEncoding.MULTI_HEADER }),
       ],
     }),
   });

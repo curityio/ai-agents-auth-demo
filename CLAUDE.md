@@ -654,7 +654,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     cardinality warning applies the moment a path carries user data.
 
 29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
-    `traceparent`, and MCP backends mis-parent the origin span.** Separate things,
+    `traceparent` (on v1.4.x), and MCP origin spans nest only if W3C is the sole
+    propagation format.** Separate things,
     verified on v1.4.1 and re-measured on v1.5.0 (2026-09-26) where noted:
     - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
       `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
@@ -707,20 +708,30 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       the gateway injects its own `ExtAuthz` client span into the callout, and every
       `exchange-shim POST /exchange` now parents to that span, not to the value our
       CEL forwards. The explicit header is kept (harmless; still needed on v1.4.x).
-    - **Known upstream bug — the MCP origin span is a SIBLING of the gateway span,**
-      not a child. For HTTP backends the gateway forwards its rewritten `traceparent`
-      and nesting is correct; for `mcp:` backends the upstream request is built fresh
-      (`mcp/upstream/streamablehttp.rs`) and `IncomingRequestContext::apply` copies
-      headers only where absent, carrying the ORIGINAL inbound traceparent. So
-      `mcp-inspect`/`mcp-ops` parent to the CALLER, and the gateway looks like a
-      bystander to a call that went around it. The bars still nest correctly in time;
-      only the indentation lies. **Upstream closed it (#2904 → #3059, rewritten by
-      #3068 into `start_mcp_outbound_span`'s `inject_headers`), and it is STILL
-      PRESENT on v1.5.0** — measured 2026-09-26 by span id: `mcp-inspect POST /mcp`'s
-      parent is the copilot's `POST /inspect/mcp` client span, not the gateway's new
-      `tools/call inspect_list_pods` client span. No newer fix on `main` and no open
-      issue as of that date; #3068 also dropped #3059's `apply_prefers_gateway_span`
-      test, so nothing upstream pins the behaviour. Root cause not chased further.
+    - **MCP origin spans nest under the gateway — ONLY because the services speak
+      W3C alone.** On v1.4.1 they didn't: for `mcp:` backends the upstream request was
+      built fresh and `IncomingRequestContext::apply` carried the ORIGINAL inbound
+      `traceparent`, so `mcp-inspect`/`mcp-ops` parented to the CALLER (agentgateway
+      #2904). v1.5.0 fixes that (#3059, reworked by #3068: `start_mcp_outbound_span`
+      injects its own client span into the upstream headers) — verified 2026-09-26 on
+      the wire with the gateway's debug trace (`POST localhost:15000/debug/trace?follow=90s`
+      on the admin port; its `"final request"` snapshot shows every header sent
+      upstream). **It still looked broken, and the cause was ours:** `otel-bootstrap`
+      registered W3C + baggage + **B3**, so every service also injected `x-b3-*`. The
+      gateway rewrites only `traceparent` and forwards every other header untouched,
+      so mcp-inspect received `traceparent` naming the gateway's span AND
+      `x-b3-spanid` naming the caller's; `CompositePropagator.extract` is a `reduce`
+      in which the LAST propagator wins, and B3 was last. Proven by an A/B against the
+      gateway Service (same `traceparent`, ± a stale `x-b3-spanid`: without → parent
+      is the gateway's `tools/call …` client span; with → parent is the fake B3 id),
+      and fixed by dropping B3 (`packages/otel-bootstrap/src/telemetry.ts`, pinned by
+      `telemetry.test.ts`; afterwards 10/10 MCP server spans across both tiers nest
+      under the gateway). **Do not add a second trace-context format back** — nothing
+      here consumes B3 (agentgateway, `@vercel/otel` and the SDK are all W3C), and any
+      header a proxy doesn't rewrite will contradict the one it does. Wrong turn worth
+      remembering: span ids in Tempo showed "caller as parent" and the upstream fix's
+      absence looked proven; only the wire capture showed the gateway sending the
+      right `traceparent`.
 
 30. **The Vercel AI SDK is v7 (`ai@7`, providers `4.x`), and two of its changes are
     silent — one converts an exception into data, the other repoints an HTTP path.**

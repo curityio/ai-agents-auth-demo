@@ -27,7 +27,6 @@
     "@opentelemetry/auto-instrumentations-node": "^0.52.0",
     "@opentelemetry/core": "^1.27.0",
     "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0",
-    "@opentelemetry/propagator-b3": "^1.27.0",
     "@opentelemetry/resources": "^1.27.0",
     "@opentelemetry/sdk-node": "^0.54.0",
     "@opentelemetry/sdk-trace-base": "^1.27.0",

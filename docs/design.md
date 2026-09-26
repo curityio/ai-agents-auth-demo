@@ -55,7 +55,7 @@ Boot-time OpenTelemetry wiring for the plain-Node services. Loaded via
 
 | File | Responsibility |
 |---|---|
-| `telemetry.ts` | NodeSDK + HTTP/fetch auto-instrumentation + OTLP/proto exporter + composite W3C/B3 propagator. |
+| `telemetry.ts` | NodeSDK + HTTP/fetch auto-instrumentation + OTLP/proto exporter + W3C tracecontext + baggage propagator — W3C only, on purpose (no B3: CLAUDE.md fact #29). |
 | `resource.ts` | Builds the OTel `Resource`: `service.name`, `service.namespace`, and `spiffe.id` (read from the SVID file). |
 | `instrumentation-config.ts` | Disables the `net`/`dns`/`fs` auto-instrumentations (connect-level noise) and attaches the span-naming hooks below to `http` and `undici`. |
 | `span-names.ts` | `requestHook`s that rename auto-instrumented spans to `METHOD /path` in both directions (host stays in `server.address`), query dropped. The conventions' bare `POST` made every hop in a waterfall read alike; every path here is fixed, so the cardinality warning behind that convention does not apply. |
