@@ -3,7 +3,8 @@
 # long platform install + seeding unattended:
 #   1. the Curity license file (./license.json)
 #   2. the LLM provider + API key for the agent LLM (one of openai, anthropic,
-#      gemini, azure; azure additionally needs AZURE_OPENAI_ENDPOINT)
+#      gemini, azure; azure additionally needs AZURE_OPENAI_ENDPOINT — an Azure
+#      AI Foundry project endpoint or an Azure OpenAI resource URL)
 #
 # Make runs each recipe line in its own shell, so prompted values can't be handed
 # to a later target directly. We persist the LLM inputs to a gitignored .demo.env
@@ -94,7 +95,10 @@ fi
 
 endpoint=""
 if [[ "$provider" == "azure" ]]; then
-  read -r -p "AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com): " endpoint
+  echo "    AZURE_OPENAI_ENDPOINT takes either shape:"
+  echo "      Azure AI Foundry (GPT + Claude): https://<resource>.services.ai.azure.com/api/projects/<project>"
+  echo "      Azure OpenAI (GPT only):         https://<resource>.openai.azure.com"
+  read -r -p "AZURE_OPENAI_ENDPOINT: " endpoint
   [[ -n "$endpoint" ]] || { echo "AZURE_OPENAI_ENDPOINT empty — abort" >&2; exit 1; }
 fi
 
@@ -104,7 +108,13 @@ case "$provider" in
   openai)    default_model=gpt-4.1 ;;
   anthropic) default_model=claude-sonnet-4-6 ;;
   gemini)    default_model=gemini-2.5-pro ;;
-  azure)     default_model=gpt-4.1 ;;
+  azure)
+    # Foundry can host Claude; an Azure OpenAI resource cannot.
+    case "$(printf '%s' "$endpoint" | tr '[:upper:]' '[:lower:]')" in
+      *.services.ai.azure.com*) default_model=claude-sonnet-4-6 ;;
+      *)                        default_model=gpt-4.1 ;;
+    esac
+    ;;
 esac
 read -r -p "LLM_MODEL (default $default_model): " model
 model="${model:-$default_model}"
