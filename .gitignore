@@ -34,6 +34,7 @@ pnpm-debug.log*
 .gen/
 
 docs/explainers/
+docs/superpowers/
 
 # presenter runbook — kept locally, not published
 docs/demo.md
