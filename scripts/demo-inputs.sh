@@ -3,7 +3,8 @@
 # long platform install + seeding unattended:
 #   1. the Curity license file (./license.json)
 #   2. the LLM provider + API key for the agent LLM (one of openai, anthropic,
-#      gemini, azure; azure additionally needs AZURE_OPENAI_ENDPOINT)
+#      gemini, azure; azure additionally needs AZURE_OPENAI_ENDPOINT — an Azure
+#      AI Foundry project endpoint or an Azure OpenAI resource URL)
 #
 # Make runs each recipe line in its own shell, so prompted values can't be handed
 # to a later target directly. We persist the LLM inputs to a gitignored .demo.env
@@ -15,6 +16,16 @@ set -euo pipefail
 LICENSE="${LICENSE_FILE:-license.json}"
 ENV_FILE="${DEMO_ENV_FILE:-.demo.env}"
 VALID_PROVIDERS="openai anthropic gemini azure"
+RENDER="$(dirname "${BASH_SOURCE[0]}")/render-gateway-config.sh"
+
+# check_llm PROVIDER MODEL ENDPOINT — run the gateway render's own input checks
+# (endpoint shape, provider name) without writing anything. The render first runs
+# at `make apply`, the LAST `make demo` phase; without this a mistyped endpoint
+# would be accepted here and fail only after the whole cluster was built.
+check_llm() {
+  LLM_PROVIDER="$1" LLM_MODEL="$2" AZURE_OPENAI_ENDPOINT="$3" RENDER_CHECK_ONLY=1 \
+    bash "$RENDER" >/dev/null
+}
 
 # 1. Curity license -----------------------------------------------------------
 if [[ -f "$LICENSE" ]]; then
@@ -48,6 +59,10 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 if [[ -n "$existing_key" ]]; then
+  check_llm "${existing_provider:-azure}" "${LLM_MODEL:-}" "$existing_endpoint" || {
+    echo "    $ENV_FILE is not a usable LLM configuration (above) — fix it, or delete it to re-enter." >&2
+    exit 1
+  }
   echo "==> Reusing LLM credentials from $ENV_FILE — provider=${existing_provider:-azure} (delete it to re-enter)."
   exit 0
 fi
@@ -56,6 +71,10 @@ fi
 # had AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY (no LLM_PROVIDER/LLM_API_KEY
 # at all). Reuse that too, exactly as before this feature.
 if [[ -n "$existing_endpoint" && -n "$existing_azure_key" ]]; then
+  check_llm azure "${LLM_MODEL:-}" "$existing_endpoint" || {
+    echo "    $ENV_FILE is not a usable LLM configuration (above) — fix it, or delete it to re-enter." >&2
+    exit 1
+  }
   echo "==> Reusing Azure OpenAI creds from $ENV_FILE (delete it to re-enter)."
   exit 0
 fi
@@ -94,7 +113,10 @@ fi
 
 endpoint=""
 if [[ "$provider" == "azure" ]]; then
-  read -r -p "AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com): " endpoint
+  echo "    AZURE_OPENAI_ENDPOINT takes either shape:"
+  echo "      Azure AI Foundry (GPT + Claude): https://<resource>.services.ai.azure.com/api/projects/<project>"
+  echo "      Azure OpenAI (GPT only):         https://<resource>.openai.azure.com"
+  read -r -p "AZURE_OPENAI_ENDPOINT: " endpoint
   [[ -n "$endpoint" ]] || { echo "AZURE_OPENAI_ENDPOINT empty — abort" >&2; exit 1; }
 fi
 
@@ -104,10 +126,17 @@ case "$provider" in
   openai)    default_model=gpt-4.1 ;;
   anthropic) default_model=claude-sonnet-4-6 ;;
   gemini)    default_model=gemini-2.5-pro ;;
-  azure)     default_model=gpt-4.1 ;;
+  azure)
+    # Foundry can host Claude; an Azure OpenAI resource cannot.
+    case "$(printf '%s' "$endpoint" | tr '[:upper:]' '[:lower:]')" in
+      *.services.ai.azure.com*) default_model=claude-sonnet-4-6 ;;
+      *)                        default_model=gpt-4.1 ;;
+    esac
+    ;;
 esac
 read -r -p "LLM_MODEL (default $default_model): " model
 model="${model:-$default_model}"
+check_llm "$provider" "$model" "$endpoint" || { echo "    nothing saved — re-run to try again." >&2; exit 1; }
 
 # Endpoints are URLs, keys are opaque vendor tokens, and the model is a short
 # identifier — none contain shell metacharacters — so a plain KEY=value file is

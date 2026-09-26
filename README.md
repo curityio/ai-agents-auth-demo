@@ -21,7 +21,7 @@ Built with:
   egress gateway**: both agents exchange for `aud=llm-gateway`/`scope=llm:invoke`
   and call its OpenAI-compatible `/llm` route, which holds the only upstream LLM
   provider key in the system — the agents never possess it. The provider itself is
-  pluggable (OpenAI, Anthropic, Gemini, Azure OpenAI) — see
+  pluggable (OpenAI, Anthropic, Gemini, Azure OpenAI/Foundry) — see
   [`docs/llm-providers.md`](docs/llm-providers.md).
 - **OpenTelemetry → Tempo → Grafana** — identity-decorated distributed tracing.
 - Modern OAuth standards: **RFC 8693** (token exchange), **RFC 9470** (step-up),
@@ -68,14 +68,14 @@ See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 | | Verified | Notes |
 |---|---|---|
 | **Host OS** | macOS with Docker Desktop | Linux is untested but nothing is Mac-specific beyond the `brew` hints. |
-| **LLM provider** | **Azure OpenAI** (`LLM_PROVIDER=azure`, the default) and **Anthropic** (`LLM_PROVIDER=anthropic`, `claude-sonnet-4-6`) | Both driven end to end — copilot answers, specialist restarts, `make smoke-llm`. The OpenAI and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
+| **LLM provider** | **Azure** (`LLM_PROVIDER=azure`, the default) — an **Azure AI Foundry** project (GPT + Claude, e.g. `claude-sonnet-4-6`) or an **Azure OpenAI** resource — and **Anthropic** (`LLM_PROVIDER=anthropic`, `claude-sonnet-4-6`) | All driven end to end — copilot answers, specialist restarts, `make smoke-llm` (Foundry with both Claude and GPT). The OpenAI and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
 | **Footprint** | Single-node KIND; give Docker about **30 GB of disk** | `make demo` takes about **10 minutes** end to end on a fresh machine, most of it is image builds; it shows one status line per phase (full output goes to `.demo-logs/`) with its duration, and ends with an *Installation complete* banner. Ports **80 and 443** on localhost must be free for the Istio ingress. |
 
 ## Prerequisites (macOS)
 
 You need **Docker running** (Docker Desktop), a few CLIs, a Curity
 developer license, and an API key for one supported LLM provider (OpenAI,
-Anthropic, Gemini, or Azure OpenAI).
+Anthropic, Gemini, or Azure OpenAI/Foundry).
 
 ```bash
 # 1. CLIs via Homebrew (Node 22+ is required; python3 is used only by the host-side
@@ -197,7 +197,7 @@ Makefile
 | [`docs/architecture.md`](docs/architecture.md) | System overview, topology, the two OBO chains, trust model, security boundaries. |
 | [`docs/design.md`](docs/design.md) | Module breakdown, interfaces, workflows, configuration & deployment model, decisions. |
 | [`docs/curity-seed.md`](docs/curity-seed.md) | Offline Curity setup checklist (clients, scopes, users, procedure). |
-| [`docs/llm-providers.md`](docs/llm-providers.md) | Switching the LLM vendor behind agentgateway's `/llm` route (OpenAI, Anthropic, Gemini, Azure OpenAI). |
+| [`docs/llm-providers.md`](docs/llm-providers.md) | Switching the LLM vendor behind agentgateway's `/llm` route (OpenAI, Anthropic, Gemini, Azure OpenAI/Foundry). |
 
 ## Troubleshooting
 

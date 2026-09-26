@@ -101,8 +101,9 @@ test: test-scripts ## Run all unit tests (vitest, via turbo) + the shell-script 
 	pnpm turbo run test
 
 .PHONY: test-scripts
-test-scripts: ## Run the shell-script contract tests (gateway-config render, Curity theme embed, user seeding, MCP discovery config, JWKS guard)
+test-scripts: ## Run the shell-script contract tests (gateway-config render, demo-inputs LLM check, Curity theme embed, user seeding, MCP discovery config, JWKS guard)
 	bash scripts/test-render-gateway-config.sh
+	bash scripts/test-demo-inputs.sh
 	bash scripts/test-embed-curity-theme.sh
 	bash scripts/test-seed-curity-users.sh
 	bash scripts/test-mcp-discovery-config.sh

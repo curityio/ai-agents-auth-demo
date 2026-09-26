@@ -51,7 +51,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="$(grep -o 'ghcr.io/agentgateway/agentgateway:[^ ]*' "$REPO_ROOT/k8s/workloads/agentgateway.yaml" | head -1)"
-PROVIDERS="openai anthropic gemini azure"
+# One render per fragment. azure appears twice: its endpoint's host picks the
+# fragment (azure-openai vs azure-foundry), so each gets its own endpoint.
+CASES="openai anthropic gemini azure-openai azure-foundry"
 DOCKER_TIMEOUT="${DOCKER_TIMEOUT:-30}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -163,22 +165,27 @@ docker start -a "$cid"
 '
 
 failed=0
-for p in $PROVIDERS; do
+for c in $CASES; do
+  case "$c" in
+    azure-openai)  p=azure; endpoint=https://validation-resource.openai.azure.com ;;
+    azure-foundry) p=azure; endpoint=https://validation-resource.services.ai.azure.com/api/projects/validation-project ;;
+    *)             p="$c";  endpoint=https://validation-resource.openai.azure.com ;;
+  esac
   cat > "$WORK/.demo.env" <<EOF
 LLM_PROVIDER=$p
 LLM_MODEL=validation-model
-AZURE_OPENAI_ENDPOINT=https://validation-resource.openai.azure.com
+AZURE_OPENAI_ENDPOINT=$endpoint
 EOF
   # -u the three provider env vars: the render script's precedence puts an
   # exported environment above .demo.env, so a caller running with e.g.
   # `LLM_PROVIDER=anthropic make validate-llm` would otherwise render (and
-  # "validate") anthropic on all four loop iterations regardless of the
+  # "validate") anthropic on every loop iteration regardless of the
   # controlled .demo.env just written above.
   env -u LLM_PROVIDER -u LLM_MODEL -u AZURE_OPENAI_ENDPOINT \
     bash "$WORK/scripts/render-gateway-config.sh" >/dev/null
 
-  cidfile="$TMP/$p.cid"
-  outfile="$TMP/$p.out"
+  cidfile="$TMP/$c.cid"
+  outfile="$TMP/$c.out"
   rm -f "$cidfile" "$outfile"
 
   # The gateway resolves $VARS at load; supply a dummy so validation reaches
@@ -202,31 +209,31 @@ EOF
   # BEFORE the JWKS-leniency branch, so a "jwks" substring elsewhere in the
   # output can never paper over a real schema break).
   if printf '%s' "$out" | grep -qiE 'unknown variant|missing field|invalid type|unknown field'; then
-    red "  FAIL $p"
+    red "  FAIL $c"
     printf '%s\n' "$out" | sed 's/^/       /'
     failed=1
   elif [ "$rc" -eq 0 ]; then
-    green "  OK   $p"
+    green "  OK   $c"
   elif [ "$rc" -eq 124 ] && printf '%s' "$out" | grep -qiE 'curity\.curity\.svc\.cluster\.local|jwks|agentgateway'; then
     # Schema parsed; the captured output proves the gateway actually ran and
     # got as far as the network fetch, which cannot succeed outside the
     # cluster — it never returned within the bound. A 124 with NO such output
     # (see the branch below) proves nothing and must not be treated as a pass.
-    green "  OK   $p (schema OK; timed out on the JWKS fetch, unreachable outside the cluster, as expected)"
+    green "  OK   $c (schema OK; timed out on the JWKS fetch, unreachable outside the cluster, as expected)"
   elif [ "$rc" -eq 124 ]; then
     # run_bounded's whole docker create+cp+start sequence timed out with no
     # output at all proving the gateway ever ran — e.g. a wedged Docker daemon,
     # or a cold `docker create` still pulling the image. Reporting this as a
     # pass would be worse than reporting nothing: it is exactly the failure
     # mode this validator exists to catch (CLAUDE.md-grade bug). Fail closed.
-    red "  FAIL $p (no output within ${DOCKER_TIMEOUT}s — the Docker daemon may be unresponsive or the image not cached; validation did not run)"
+    red "  FAIL $c (no output within ${DOCKER_TIMEOUT}s — the Docker daemon may be unresponsive or the image not cached; validation did not run)"
     failed=1
   elif printf '%s' "$out" | grep -qiE 'curity\.curity\.svc\.cluster\.local|jwks'; then
     # Schema parsed; the run got as far as the network fetch, which cannot
     # succeed outside the cluster.
-    green "  OK   $p (schema OK; JWKS fetch unreachable outside the cluster, as expected)"
+    green "  OK   $c (schema OK; JWKS fetch unreachable outside the cluster, as expected)"
   else
-    red "  FAIL $p"
+    red "  FAIL $c"
     printf '%s\n' "$out" | sed 's/^/       /'
     failed=1
   fi

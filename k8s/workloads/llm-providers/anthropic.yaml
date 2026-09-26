@@ -1,6 +1,6 @@
 # Anthropic. https://console.anthropic.com/settings/keys
 #
-# DO NOT add a `location:` here, however tempting it looks next to azure.yaml.
+# DO NOT add a `location:` here, however tempting it looks next to azure-openai.yaml.
 # agentgateway records whether the auth location was set explicitly
 # (http/auth/mod.rs, AppliedBackendAuthLocation.explicit) and only rewrites
 # Authorization: Bearer -> x-api-key, and injects `anthropic-version`, when it

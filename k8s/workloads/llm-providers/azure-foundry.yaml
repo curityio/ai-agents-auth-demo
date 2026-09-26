@@ -1,0 +1,24 @@
+# Azure AI Foundry. One resource serves BOTH GPT and Claude deployments;
+# LLM_MODEL (the DEPLOYMENT name) picks which. A Claude deployment's name must
+# start with "claude": agentgateway (v1.4.1 is_anthropic_model) routes on that
+# prefix, translating Chat Completions to Anthropic Messages at
+# /anthropic/v1/messages; any other name goes to
+# /api/projects/<projectName>/openai/v1/chat/completions. resourceName and
+# projectName are rendered from the PROJECT endpoint in AZURE_OPENAI_ENDPOINT.
+#
+# DO NOT add a `location:` here. Bearer <key> — the implicit default — is the
+# only header both families accept (measured 2026-09-26): Claude rejects
+# `api-key` and GPT rejects `x-api-key`. The opposite of azure-openai.yaml,
+# which REQUIRES `api-key`.
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+      backends:
+      - ai:
+          name: llm
+          provider:
+            azure:
+              resourceName: __AZURE_RESOURCE_NAME__
+              resourceType: foundry
+              projectName: __AZURE_PROJECT_NAME__
+              model: __LLM_MODEL__

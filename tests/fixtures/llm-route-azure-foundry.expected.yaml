@@ -1,0 +1,16 @@
+# Golden fixture for scripts/test-render-gateway-config.sh: the `llm` route's
+# backendAuth+backends for an Azure AI Foundry PROJECT endpoint
+# (https://my-foundry-resource.services.ai.azure.com/api/projects/my-project).
+# No `location:` on purpose — see k8s/workloads/llm-providers/azure-foundry.yaml.
+        backendAuth:
+          key:
+            value: $LLM_API_KEY
+      backends:
+      - ai:
+          name: llm
+          provider:
+            azure:
+              resourceName: my-foundry-resource
+              resourceType: foundry
+              projectName: my-project
+              model: claude-sonnet-4-6
