@@ -52,6 +52,15 @@ spire-server:
       # reviewable in git, not chart-generated.
       defaults:
         enabled: false
+    # With installAndUpgradeHooks disabled (above), chart <=0.30.0 rendered the
+    # webhook as `Ignore` and relied on the (disabled) post-install hook to flip
+    # it. 0.30.2 renders this value directly instead, so the chart default
+    # `Fail` makes the SAME `helm install` that creates the webhook reject its
+    # own ClusterSPIFFEIDs: the controller-manager isn't listening yet
+    # (`failed calling webhook "vclusterspiffeid.kb.io" … connection refused`).
+    # `Ignore` keeps the posture every demo cluster has actually run with.
+    validatingWebhookConfiguration:
+      failurePolicy: Ignore
 
   # Shared root CA. SPIRE's server CA is an INTERMEDIATE signed by the cluster's
   # single root, via the `disk` UpstreamAuthority plugin. The cert/key (the SPIRE
