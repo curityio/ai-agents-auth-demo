@@ -47,11 +47,21 @@ spire-server:
 
   controllerManager:
     identities:
-      # Don't materialize the chart's default ClusterSPIFFEID CRs. We ship our
-      # own in k8s/spire/identities/ so the identity set is explicit and
-      # reviewable in git, not chart-generated.
-      defaults:
-        enabled: false
+      # Our workload identities live in k8s/spire/identities/ so the set is
+      # explicit and reviewable in git. The chart renders one ClusterSPIFFEID
+      # per key under clusterSPIFFEIDs, each with its own `enabled` flag (an
+      # unknown sibling key such as `defaults:` is silently ignored).
+      clusterSPIFFEIDs:
+        # Catch-all fallback: every pod outside the SPIRE namespaces, same
+        # ns/sa template as ours. Left on, it hands our SPIFFE IDs to pods
+        # that don't carry the label our CRs select on.
+        default:
+          enabled: false
+        # Helm test pods only.
+        test-keys:
+          enabled: false
+        # oidc-discovery-provider stays ENABLED: it is the provider's own TLS
+        # SVID, and Curity fetches SPIRE's JWKS from it (CLAUDE.md fact #14).
     # With installAndUpgradeHooks disabled (above), chart <=0.30.0 rendered the
     # webhook as `Ignore` and relied on the (disabled) post-install hook to flip
     # it. 0.30.2 renders this value directly instead, so the chart default
