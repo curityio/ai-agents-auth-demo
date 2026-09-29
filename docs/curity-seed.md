@@ -17,9 +17,11 @@ user seed puts into Curity (§Accounts).
 ## What the demo expects
 
 ### Image / version
-- Curity Identity Server — the deployment pulls `curity.azurecr.io/curity/idsvr:latest`;
-  11.4.0 is the version the configmap (incl. the Token Issuance Authorizer) was
-  validated against.
+- Curity Identity Server — the deployment pins `curity.azurecr.io/curity/idsvr:11.4.3`
+  (tag + digest, in `k8s/curity/deployment.yaml`). 11.5.x is not supported yet: it
+  refuses to fetch the agents' CIMD documents from the in-cluster ingress address
+  unless `allowed-address-ranges` is set, and that setting breaks the 11.5 Admin UI's
+  ephemeral-client page until a fixed release ships.
 - Developer license file (`license.json`).
 - An LLM provider API key (seeded into the agentgateway only — see [`llm-providers.md`](llm-providers.md)).
 
