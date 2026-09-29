@@ -233,17 +233,12 @@ async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenRes
   if (oauthError === 'invalid_request' && /actor/i.test(parsed.error_description ?? '')) {
     throw new CurityAuthError(parsed.error_description ?? 'invalid actor_token', 'invalid_actor');
   }
-  // Curity sanitizes procedure-thrown NON-validation errors: a `fail('access_denied', msg)`
-  // inside a token procedure surfaces over the wire as `error=invalid_request` with the
-  // original code PREFIXED into the description (Curity server log: "Removing non-validation
-  // error from JSON response."). Without this branch the role-gate denial would degrade to a
-  // generic `exchange_failed` (HTTP 502) instead of the intended clean `access_denied` (403).
-  // The smoke test tolerates the same sanitization shape.
-  if (oauthError === 'invalid_request' && /access_denied/i.test(parsed.error_description ?? '')) {
-    throw new CurityAuthError(parsed.error_description ?? 'access_denied', 'access_denied');
-  }
-  // Same sanitization as access_denied: procedure `fail('invalid_scope', msg)` surfaces as
-  // `error=invalid_request` with `invalid_scope` prefixed into the description.
+  // Curity's 2-arg `exceptionFactory.badRequestException(code, msg)` maps `code` through the
+  // SDK ErrorCode enum; an OAuth code such as `invalid_scope` never matches, so the procedure's
+  // `failWithCode('invalid_scope', msg)` surfaces as `error=invalid_request` with the code
+  // PREFIXED into the description. (The role-gate denial no longer needs this: the procedure
+  // throws `forbiddenException`, which Curity renders as a real `error=access_denied`, handled
+  // by ERROR_MAP above.) 11.5.0's exact-code overload would retire this branch too.
   if (oauthError === 'invalid_request' && /invalid_scope/i.test(parsed.error_description ?? '')) {
     throw new CurityAuthError(parsed.error_description ?? 'invalid_scope', 'invalid_scope');
   }

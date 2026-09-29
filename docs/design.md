@@ -363,47 +363,75 @@ role-gate denial surfaces as a clean `access_denied` rather than a generic 502.
 authorization-code procedure `authorization-code.js` (which stamps the standard
 `acr` claim onto the login token — see §7), both are embedded as Base64 into the
 Curity configmap by `scripts/embed-curity-procedures.sh` (`make curity-procedures`).
-On each exchange the token-exchange procedure:
+On each exchange the token-exchange procedure runs its checks cheapest and most
+caller-attributable first — nothing touches the network or a signature until the
+request has passed policy:
 
-1. **Verifies the `actor_token`** (SPIFFE JWT-SVID) with **jose4j** against
-   **SPIRE's JWKS fetched at runtime** (`httpsGet()`) from the SPIRE OIDC
-   Discovery Provider — the resolver is cached across invocations and refetched on
-   an unknown `kid`, so a fresh cluster or SPIRE key rotation needs no snapshot —
-   requiring `aud = https://curity.localtest.me/oauth/v2/oauth-token` and a `sub`
-   under `spiffe://demo.curity.local/ns/`. (Curity's built-in
-   `getPresentedActorToken()` expects a server-issued actor, so the raw form param
-   is read directly.)
+1. **Checks the inputs:** `subject_token` (Curity-issued, already introspected),
+   `actor_token` present, and **exactly one** `audience` (read from
+   `context.getRequestedAudiences()`; RFC 8693 allows several, the demo issues to one).
 2. **Looks up a per-client policy** (`CLIENT_POLICY`) keyed by client ID
    (`context.getClient().getId()` — for the ephemeral agents this is their
-   `client_id` URL), with an `allowedActors` regex (the exact SPIFFE ID the
-   client may present) and a `perAudience` map.
+   `client_id` URL), with an `allowedActor` (the exact SPIFFE ID the client may
+   present, spelled with the same `SPIFFE_*` constants the `mayAct` map uses so the
+   two gates cannot drift) and a `perAudience` map.
 3. **Confines audience + scope:** the requested audience must be in `perAudience`;
    the issued scope is `requested ∩ subject ∩ policy(audience)`. **Scopes are
    keyed by audience** so a client can't pull a privileged scope under an
-   unprivileged audience.
-4. **Role gate:** if `ops:write` is requested and the subject lacks role `sre`
-   **or** `oncall`, fail `access_denied`. (Fine-grained per-tool role splitting —
+   unprivileged audience. **Role gate:** if `ops:write` is among the scopes this
+   *audience could grant* (`requested ∩ policy(audience)`) and the subject lacks role
+   `sre` **or** `oncall`, refuse with a real `error=access_denied` (HTTP 403, via
+   `exceptionFactory.forbiddenException`). The gate deliberately ignores whether the
+   subject token *holds* `ops:write`: the acr TIA (§3.2.1) strips it from a
+   password-only login, and narrowing on the subject would hand a role-less user a
+   read-only token that turns into an RFC 9470 step-up prompt downstream — a prompt
+   he can never satisfy. (Fine-grained per-tool role splitting —
    `set_deployment_image` for `sre` only — is applied by the gateway's HTTP-layer
    `authorization` rule and, authoritatively, at **mcp-ops**; see §3.5 and §3.7.1.)
-5. **Nests `act`:** if the subject token already carries an `act`, wrap it under
-   the new actor (`{sub: thisActor, act: priorChain}`); else `{sub: thisActor}`.
-   Innermost = oldest.
-5b. **Enforces and re-stamps `may_act`** (RFC 8693 §4.4). The subject token names
-   the single workload permitted to act for it; the procedure requires the verified
-   actor SVID to match before issuing, then stamps a **narrowed** `may_act` on the
-   issued token naming whoever legitimately presents it next (`perAudience.mayAct`).
-   This is a second, independent source of truth alongside `allowedActors`: that one
-   is server config keyed by the *requesting client*, this one is a grant carried in
-   the token and keyed by the *subject*, so a config mistake alone cannot widen
-   delegation. `act` records who **did** act (audit); `may_act` grants who **may**
-   act next (authorization). Terminal audiences (`llm-gateway`, `inspect-api`, `ops-api`)
-   carry none — nothing exchanges those onward — and an absent claim means
-   unconstrained, so tokens minted before the claim existed still work out their
-   lifetime. The login token's `may_act` (naming `agent-copilot`) is stamped by
-   `authorization-code.js`. Surfaced in OBO logs via `summarizeJwt().mayAct`.
+4. **Initializes the context** (`getInitializedContext`) with the narrowed
+   audience + scope. This is where Curity's own checks and the Token Issuance
+   Authorizers run.
+5. **Verifies the `actor_token`** (SPIFFE JWT-SVID) with **jose4j** against
+   **SPIRE's JWKS fetched at runtime** from the SPIRE OIDC Discovery Provider through
+   the `http-client-spiffe` facility (`fetchJwks()`), so TLS validates against the
+   server-truststore's `shared-root-ca` entry (the provider's SVID chains to the
+   demo's shared root; hostname verification is off on that client because the SAN
+   is the external name). The resolver is cached per worker thread and refetched on
+   an unknown `kid` **at most once per 30 s** (`JWKS_REFETCH_MIN_INTERVAL_MS`), so a
+   fresh cluster or SPIRE key rotation needs no snapshot while a forged `kid` cannot
+   make Curity hit SPIRE per request. Requires
+   `aud = https://curity.localtest.me/oauth/v2/oauth-token`; a provider outage is a
+   `server_error`, not an invalid actor. jose4j's own message goes to the Curity log
+   via `logger.warn`, the client sees a generic description. (Curity's built-in
+   `getPresentedActorToken()` expects a server-issued actor, so the raw form param
+   is read directly; only the *initialized* context exposes web-service clients,
+   which is why this step follows step 4.)
+6. **Matches the actor twice:** against the client's `allowedActor` (server config
+   keyed by the *requesting client*), then against the subject token's **`may_act`**
+   (RFC 8693 §4.4 — a grant carried in the token and keyed by the *subject*). Both
+   must agree, so a config mistake alone cannot widen delegation. Terminal audiences
+   (`llm-gateway`, `inspect-api`, `ops-api`) carry no `may_act` — nothing exchanges
+   those onward — and an absent claim means unconstrained, so tokens minted before
+   the claim existed still work out their lifetime. The login token's `may_act`
+   (naming `agent-copilot`) is stamped by `authorization-code.js`.
+7. **Issues the token:** nests `act` (if the subject token already carries one,
+   `{sub: thisActor, act: priorChain}`; innermost = oldest), stamps a **narrowed**
+   `may_act` naming whoever legitimately presents the token next
+   (`perAudience.mayAct`; `act` = who **did** act, `may_act` = who **may** act next),
+   and propagates `acr` and `roles` so step-up and the role gate work at every hop.
+   Surfaced in OBO logs via `summarizeJwt().mayAct`.
 
-6. **Propagates** `acr` and `roles` onto the issued token so step-up and the
-   role gate work at every hop of the chain.
+The policy is pinned on the host by `scripts/test-token-exchange-procedure.mjs`
+(`make test-scripts`), which loads the real file into a `node:vm` sandbox with the
+Nashorn globals stubbed; signature verification itself is exercised only by the
+live smoke scripts. Error-code plumbing worth knowing: Curity's 2-arg
+`badRequestException(code, msg)` never carries an OAuth code to the wire (the code
+is mapped through the SDK's `ErrorCode` enum and, on a miss, *prefixed* into
+`error_description`), so `invalid_scope`/`invalid_client` still arrive as
+`error=invalid_request` with the code in the description and `exchange.ts` keys on
+that prefix; `forbiddenException` is the one way on 11.4.x to emit a true
+`access_denied`. 11.5.0 adds an exact-code overload that would carry RFC 8693's
+`invalid_target` verbatim.
 
 The per-client policy as configured:
 
@@ -916,7 +944,7 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
 |---|---|---|
 | **SPIRE → Curity** (actor trust) | Procedure fetches SPIRE's JWKS at runtime from the OIDC Discovery Provider | No manual step — keys are fetched per `kid` and refetched on a cache miss, so SPIRE key rotation self-heals. |
 | **Procedure → Curity config** | `embed-curity-procedures.sh` Base64-injects the JS into the configmap | `make curity-procedures` (run automatically by `make apply`) |
-| **mkcert CA → Curity truststore** | `embed-mkcert-ca.sh` embeds the mkcert root CA (with its real key `<size>`) into the configmap's `<server-truststore>` | `make curity-truststore` (run by `make apply`); machine-specific, re-run after `make certs` |
+| **CAs → Curity truststore** | `embed-mkcert-ca.sh` embeds the mkcert root CA (CIMD fetch) AND the shared root CA (`certs/shared-ca/root-cert.pem`, for the SPIRE JWKS fetch), each with its real key `<size>`, into the configmap's `<server-truststore>` | `make curity-truststore` (run by `make apply`); machine-specific, re-run after `make certs` |
 | **Theme CSS → Curity config** | `embed-curity-theme.sh` Base64-embeds `k8s/curity/theme/{theme,custom}.css` into the configmap's `<themes><default-theme>` (Curity 11's config-native Look & Feel), so the login/consent pages carry the web app's palette | `make curity-theme` (run by `make apply`); pinned by `scripts/test-embed-curity-theme.sh` (`make test-scripts`). Apply to a running Curity via the `idsh load merge` path (§8) — no restart, no HSQLDB wipe |
 | **Curity → agent CIMD docs** | Curity dereferences each agent's `client_id` URL (metadata + JWKS) via the `cimd-fetch` http-client over the gateway | per token exchange (no manual refresh) |
 | **Agents → gateway PRM → Curity RFC 8414** (MCP authorization discovery) | each agent probes the gateway route (401), fetches its RFC 9728 document and Curity's authorization-server metadata, then exchanges at the discovered `token_endpoint` | per question (`MCP_DISCOVERY_TTL_SECONDS=0` in the manifests; code default 10 min); forced again on any 401 from the transport |
@@ -947,11 +975,11 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   every hop — so the standard OIDC claim flows end-to-end with no custom claim.
 - **Fetch the SPIRE JWKS at runtime** (rather than embedding a snapshot) — the
   token-exchange procedure runs on Nashorn and reaches the SPIRE OIDC Discovery
-  Provider over an in-cluster hop (`httpsGet()`, using Java interop for TLS with
-  the provider's own name), caches the jose4j resolver across invocations, and
-  refetches on an unknown `kid`. So a fresh cluster or a SPIRE key rotation
-  self-heals with no manual snapshot step (the earlier `make spire-jwks-snapshot`
-  tooling is gone).
+  Provider over an in-cluster hop through the `http-client-spiffe` facility
+  (truststore-validated TLS against the shared root CA), caches the jose4j
+  resolver per worker thread, and refetches on an unknown `kid` at most once per
+  30 s. So a fresh cluster or a SPIRE key rotation self-heals with no manual
+  snapshot step (the earlier `make spire-jwks-snapshot` tooling is gone).
 - **A2A step-up is message-encoded** because the A2A SDK swallows executor
   throws; the structured 401 challenge rides in the task message instead.
 - **No external policy engine (OPA/Cedar).** Authorization is expressed in
