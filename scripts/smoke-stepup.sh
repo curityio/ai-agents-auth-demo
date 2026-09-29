@@ -456,13 +456,13 @@ else
   RESP=$(exchange "$COPILOT_CLIENT_ID" "$(copilot_assertion)" "$SMOKE_TOKEN_BOB" "$COPILOT_SVID" "agent-specialist" "inspect:read ops:write")
   ERR=$(echo "$RESP" | jq -r '.error // empty')
   DESC=$(echo "$RESP" | jq -r '.error_description // empty')
-  # The role gate is (sre OR oncall); bob is developer. Curity surfaces the
-  # procedure fail() as access_denied directly, OR sanitized to invalid_request
-  # with the code in error_description.
-  if [[ "$ERR" == "access_denied" ]]; then
+  # The role gate is (sre OR oncall); bob is developer. The procedure throws
+  # exceptionFactory.forbiddenException, which Curity renders as a REAL
+  # error=access_denied (HTTP 403) — an invalid_request with the code prefixed
+  # into the description would mean the procedure regressed to the 2-arg
+  # badRequestException form (see token-exchange.js error helpers).
+  if [[ "$ERR" == "access_denied" ]] && [[ "$DESC" == *sre* || "$DESC" == *oncall* ]]; then
     green "  OK (Curity denied bob at role gate: error=$ERR description='$DESC')"
-  elif [[ "$ERR" == "invalid_request" ]] && [[ "$DESC" == *sre* || "$DESC" == *oncall* || "$DESC" == *access_denied* || "$DESC" == *role* ]]; then
-    green "  OK (Curity sanitized to invalid_request, description carries role/access_denied signal: '$DESC')"
   else
     red "  expected access_denied for bob lacking a write role, got: $(echo "$RESP" | redact)"
     exit 1

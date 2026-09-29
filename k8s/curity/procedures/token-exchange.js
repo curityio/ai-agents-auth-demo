@@ -25,28 +25,37 @@
 // Provider's JWKS endpoint, so the procedure always verifies actor_tokens
 // against SPIRE's CURRENT signing key. No embedded snapshot to go stale on a
 // fresh cluster or after SPIRE key rotation. The fetch is an in-cluster hop to
-// SPIRE's own provider over its cluster-DNS Service name; see httpsGet() for
-// the trust-all TLS rationale.
+// SPIRE's own provider over its cluster-DNS Service name, through the
+// `http-client-spiffe` facility — see fetchJwks(). The port is explicit because
+// the web-service client is built from the URI's port component.
 var SPIRE_JWKS_URL =
-  'https://spire-spiffe-oidc-discovery-provider.spire-server.svc.cluster.local/keys';
+  'https://spire-spiffe-oidc-discovery-provider.spire-server.svc.cluster.local:443/keys';
 
-// Cross-invocation cache: the jose4j verification resolver plus the set of kids
-// it covers. If Curity preserves procedure script state between calls this
-// avoids a fetch per exchange; if not, it harmlessly refetches each call.
-// Correctness never depends on persistence — see getResolver().
-var JWKS_CACHE = { resolver: null, kids: {} };
+// Cross-invocation cache: the jose4j verification resolver, the set of kids it
+// covers, and when it was last (re)built. Curity compiles a procedure once and
+// gives each worker thread its own global scope (Nashorn Bindings are
+// thread-local), so this is filled once per thread, needs no locking, and is
+// reset whenever a config commit rebuilds the procedure. Correctness never
+// depends on persistence — see getResolver().
+var JWKS_CACHE = { resolver: null, kids: {}, fetchedAt: 0 };
+
+// An unknown `kid` triggers a refetch so SPIRE key rotation self-heals — but
+// only once per window. Without this floor any authenticated client could make
+// Curity hit SPIRE's discovery provider once per request by sending a forged
+// `kid` (measured: one new TCP connection per call). SPIRE rotates JWT keys on
+// the order of hours, so a 30 s floor costs nothing on a real rotation.
+var JWKS_REFETCH_MIN_INTERVAL_MS = 30000;
 
 var SPIRE_TRUST_DOMAIN = 'spiffe://demo.curity.local';
-// `/ns/` (not `/ns/agents/sa/`) so MCP SVIDs (…/ns/mcp/sa/mcp-ops,
-// …/ns/mcp/sa/mcp-inspect) also pass the actor sub prefix check.
-// The exact-ID gate remains each client's `allowedActors` regex.
-var SPIRE_AGENT_PREFIX = SPIRE_TRUST_DOMAIN + '/ns/';
 var EXPECTED_ACTOR_AUD = 'https://curity.localtest.me/oauth/v2/oauth-token';
 
-// Workload SPIFFE IDs, named once so the `may_act` map below and the
-// `allowedActors` regexes can't drift apart. agent-copilot is absent on purpose:
-// it is the FIRST actor, so the only token naming it is the login token, stamped
-// by authorization-code.js rather than by any exchange here.
+// Workload SPIFFE IDs, named ONCE. Each client's `allowedActor` (who may present
+// the actor_token) and each audience's `mayAct` (who may present the ISSUED token
+// next) are both spelled with these, so the two gates cannot drift apart. The
+// actor gate is exact string equality — no regex, no prefix check.
+// agent-copilot never appears as a `mayAct` here: it is the FIRST actor, so the
+// only token naming it is the login token stamped by authorization-code.js.
+var SPIFFE_COPILOT = SPIRE_TRUST_DOMAIN + '/ns/agents/sa/agent-copilot';
 var SPIFFE_SPECIALIST = SPIRE_TRUST_DOMAIN + '/ns/agents/sa/agent-specialist';
 var SPIFFE_GATEWAY = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/agentgateway';
 var SPIFFE_MCP_OPS = SPIRE_TRUST_DOMAIN + '/ns/mcp/sa/mcp-ops';
@@ -78,8 +87,8 @@ var CLIENT_POLICY = {
   // agent-copilot and agent-specialist are CIMD ephemeral clients: their client
   // ID is the HTTPS URL Curity dereferenced for the metadata document, so the
   // policy is keyed by that exact URL (context.getClient().getId() returns it).
-  // The allowedActors SPIFFE regexes are unchanged — the workload identity that
-  // signs the actor_token is still the agent's K8s service account.
+  // `allowedActor` is still the workload identity that signs the actor_token —
+  // the agent's K8s service account — not the CIMD URL.
   'https://copilot.localtest.me/.well-known/oauth-client': {
     perAudience: {
       'mcp-gateway': { scopes: ['inspect:read'], mayAct: SPIFFE_GATEWAY },
@@ -92,24 +101,24 @@ var CLIENT_POLICY = {
       // subject_token. No next actor to name.
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-copilot$/]
+    allowedActor: SPIFFE_COPILOT
   },
   'https://specialist.localtest.me/.well-known/oauth-client': {
     perAudience: {
       'mcp-gateway': { scopes: ['inspect:read', 'ops:write'], mayAct: SPIFFE_GATEWAY },
       'llm-gateway': { scopes: ['llm:invoke'] }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/agents\/sa\/agent-specialist$/]
+    allowedActor: SPIFFE_SPECIALIST
   },
   // agentgateway: confidential client (named after the workload, NOT the
   // `mcp-gateway` audience it fronts) fanning out to the two MCP backends,
   // narrowing the broad aud=mcp-gateway caller token per tool-target.
-  'agentgateway': {
+  agentgateway: {
     perAudience: {
       'mcp-inspect': { scopes: ['inspect:read'], mayAct: SPIFFE_MCP_INSPECT },
       'mcp-ops': { scopes: ['ops:write'], mayAct: SPIFFE_MCP_OPS }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/agentgateway$/]
+    allowedActor: SPIFFE_GATEWAY
   },
   // MCPs are confidential clients exchanging to their backend API. Both are
   // terminal: {inspect,ops}-api consume the token, they never exchange onward.
@@ -117,55 +126,59 @@ var CLIENT_POLICY = {
     perAudience: {
       'ops-api': { scopes: ['ops:write'] }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/mcp-ops$/]
+    allowedActor: SPIFFE_MCP_OPS
   },
   'mcp-inspect': {
     perAudience: {
       'inspect-api': { scopes: ['inspect:read'] }
     },
-    allowedActors: [/^spiffe:\/\/demo\.curity\.local\/ns\/mcp\/sa\/mcp-inspect$/]
+    allowedActor: SPIFFE_MCP_INSPECT
   }
 };
 
-function fail(code, description) {
+/*
+ * Error helpers. How a procedure exception reaches the wire is NOT obvious:
+ *   - badRequestException(code, desc) runs `code` through the SDK ErrorCode enum
+ *     (uppercase names), so an OAuth code like 'invalid_scope' never matches and
+ *     Curity answers error=invalid_request with the code PREFIXED into
+ *     error_description ("invalid_scope no scope intersects…"). Clients key on
+ *     that prefix, so it is kept deliberately for invalid_scope/invalid_client.
+ *   - badRequestException(desc) (1-arg) is the clean error=invalid_request.
+ *   - forbiddenException(desc) is the only way on 11.4.x to emit a REAL
+ *     error=access_denied (HTTP 403). 11.5.0 adds an exact-code overload
+ *     (badRequestException(code, desc, true)) that could carry RFC 8693's
+ *     invalid_target verbatim — adopt it once the image moves.
+ */
+function invalidRequest(description) {
+  throw exceptionFactory.badRequestException(description);
+}
+
+function failWithCode(code, description) {
   throw exceptionFactory.badRequestException(code, description);
+}
+
+function accessDenied(description) {
+  throw exceptionFactory.forbiddenException(description);
 }
 
 /*
  * Read the `sub` out of an RFC 8693 §4.4 `may_act` claim.
  *
  * The claim identifies the parties permitted to act for the subject. We emit it
- * as `{ "sub": "<spiffe id>" }`, but on the way back IN the shape depends on how
- * Curity hydrated the introspected token: a Java Map, a JSON string, or a plain
- * JS object. Same hazard the `act` pass-through documents below — except `act`
- * is forwarded opaquely and this one has to be read into, so it needs the
- * explicit normalisation.
+ * as `{ "sub": "<spiffe id>" }`; on the way back IN, `getPresentedSubjectToken()`
+ * hands object claims to the script as a java.util.Map (Curity builds the token
+ * data with Attributes.asMap(), a LinkedHashMap per nested object — verified in
+ * the 11.4 source), so `.get('sub')` is the one shape to read. `act` is forwarded
+ * opaquely and never needs reading into.
  *
- * Returns null for absent/!unparseable, which callers treat as "no constraint".
+ * Returns null for an absent claim, which callers treat as "no constraint".
  */
 function mayActSub(raw) {
-  if (raw === null || typeof raw === 'undefined') {
+  if (raw === null || typeof raw === 'undefined' || typeof raw.get !== 'function') {
     return null;
   }
-  if (typeof raw === 'string') {
-    var parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      return null;
-    }
-    return parsed && parsed.sub ? String(parsed.sub) : null;
-  }
-  // Java Map (Nashorn exposes .get as a function) …
-  if (typeof raw.get === 'function') {
-    var fromMap = raw.get('sub');
-    return fromMap === null || typeof fromMap === 'undefined' ? null : String(fromMap);
-  }
-  // … or a plain object.
-  if (raw.sub !== null && typeof raw.sub !== 'undefined') {
-    return String(raw.sub);
-  }
-  return null;
+  var sub = raw.get('sub');
+  return sub === null || typeof sub === 'undefined' ? null : String(sub);
 }
 
 function setToArray(s) {
@@ -195,57 +208,22 @@ function claimToArray(v) {
   return setToArray(v);
 }
 
-// Fetch a URL over HTTPS and return the response body as a string. Uses a
-// per-connection trust-all TLS config — deliberate and scoped to THIS
-// connection only, never the JVM default: it is an in-cluster hop to SPIRE's
-// own discovery provider, and the provider's cert is issued for the external
-// name (oidc-discovery.demo.curity.local) so hostname verification could not
-// pass against the in-cluster Service FQDN regardless.
-function httpsGet(url) {
-  var SSLContext = Java.type('javax.net.ssl.SSLContext');
-  var X509TrustManager = Java.type('javax.net.ssl.X509TrustManager');
-  var HostnameVerifier = Java.type('javax.net.ssl.HostnameVerifier');
-  var URL = Java.type('java.net.URL');
-  var BufferedReader = Java.type('java.io.BufferedReader');
-  var InputStreamReader = Java.type('java.io.InputStreamReader');
+// Fetch SPIRE's JWKS through the `http-client-spiffe` facility (configmap
+// <facilities><http><client>): TLS is validated against Curity's server-truststore,
+// which carries the demo's shared root CA that the discovery provider's SVID
+// chains to. Hostname verification is disabled ON THAT CLIENT because the cert's
+// SAN is the external name (oidc-discovery.demo.curity.local), not the in-cluster
+// Service FQDN dialled here. Only the INITIALIZED procedure context exposes web
+// service clients, which is why the actor is verified after getInitializedContext().
+var SPIRE_JWKS_HTTP_CLIENT = 'http-client-spiffe';
 
-  var trustAll = new X509TrustManager({
-    checkClientTrusted: function (chain, authType) {},
-    checkServerTrusted: function (chain, authType) {},
-    getAcceptedIssuers: function () {
-      return Java.to([], 'java.security.cert.X509Certificate[]');
-    }
-  });
-  var ctx = SSLContext.getInstance('TLS');
-  ctx.init(null, Java.to([trustAll], 'javax.net.ssl.TrustManager[]'), null);
-
-  var conn = new URL(url).openConnection();
-  conn.setSSLSocketFactory(ctx.getSocketFactory());
-  conn.setHostnameVerifier(
-    new HostnameVerifier({
-      verify: function (hostname, session) {
-        return true;
-      }
-    })
-  );
-  conn.setRequestMethod('GET');
-  conn.setConnectTimeout(3000);
-  conn.setReadTimeout(3000);
-
-  var reader = null;
-  try {
-    reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), 'UTF-8'));
-    var body = '';
-    var line;
-    while ((line = reader.readLine()) !== null) {
-      body += line;
-    }
-    return body;
-  } finally {
-    if (reader !== null) {
-      reader.close();
-    }
+function fetchJwks(fullContext) {
+  var response = fullContext.getWebServiceClient(SPIRE_JWKS_HTTP_CLIENT, SPIRE_JWKS_URL).get();
+  var status = response.getStatusCode();
+  if (status !== 200) {
+    throw new Error('SPIRE JWKS endpoint answered HTTP ' + status);
   }
+  return String(response.getBody());
 }
 
 // Read the `kid` from a compact-JWS header WITHOUT verifying — used only to
@@ -264,14 +242,32 @@ function jwtHeaderKid(rawJwt) {
 
 // Return a jose4j verification key resolver covering `neededKid`. Reuses the
 // cached resolver when it already knows the kid; otherwise (re)fetches SPIRE's
-// JWKS and rebuilds. This refetch-on-unknown-kid is what makes the procedure
-// self-heal across SPIRE key rotation and fresh clusters with zero manual steps.
-// The provider emits clean keys (no `use` field), so no use-stripping is needed.
-function getResolver(neededKid) {
-  if (JWKS_CACHE.resolver && neededKid && JWKS_CACHE.kids[neededKid]) {
-    return JWKS_CACHE.resolver;
+// JWKS and rebuilds — at most once per JWKS_REFETCH_MIN_INTERVAL_MS. This
+// refetch-on-unknown-kid is what makes the procedure self-heal across SPIRE key
+// rotation and fresh clusters with zero manual steps. The provider emits clean
+// keys (no `use` field), so no use-stripping is needed.
+function getResolver(fullContext, neededKid) {
+  if (JWKS_CACHE.resolver !== null) {
+    if (neededKid && JWKS_CACHE.kids[neededKid]) {
+      return JWKS_CACHE.resolver;
+    }
+    if (Date.now() - JWKS_CACHE.fetchedAt < JWKS_REFETCH_MIN_INTERVAL_MS) {
+      // Unknown kid, but the key set was refreshed moments ago: hand back the
+      // current resolver and let jose4j refuse the token for lack of a key
+      // rather than refetching on the attacker's schedule.
+      return JWKS_CACHE.resolver;
+    }
   }
-  var body = httpsGet(SPIRE_JWKS_URL);
+  var body;
+  try {
+    body = fetchJwks(fullContext);
+  } catch (e) {
+    // Not the caller's fault: SPIRE's discovery provider is unreachable or
+    // broken. Surface it as a server error (→ OAuth server_error), never as an
+    // invalid actor_token, so the agents' OBO log shows the right culprit.
+    logger.warn('SPIRE JWKS fetch failed: ' + e);
+    throw exceptionFactory.internalServerException('SPIRE JWKS unavailable');
+  }
   var keySet = new Packages.org.jose4j.jwk.JsonWebKeySet(body);
   var keys = keySet.getJsonWebKeys();
   var resolver = new Packages.org.jose4j.keys.resolvers.JwksVerificationKeyResolver(keys);
@@ -284,105 +280,84 @@ function getResolver(neededKid) {
   }
   JWKS_CACHE.resolver = resolver;
   JWKS_CACHE.kids = kids;
+  JWKS_CACHE.fetchedAt = Date.now();
   return resolver;
 }
 
 // Verify a SPIFFE JWT-SVID using jose4j; returns a plain JS object with
-// { sub } on success or throws via `fail()` on any validation failure.
-function verifySpiffeSvid(rawJwt) {
-  if (!rawJwt) {
-    fail('invalid_request', 'actor_token is required');
-  }
-
-  var resolver, consumer, claims;
+// { sub } on success or throws (invalidRequest) on any validation failure.
+function verifySpiffeSvid(fullContext, rawJwt) {
+  var resolver = getResolver(fullContext, jwtHeaderKid(rawJwt));
+  var claims;
   try {
-    resolver = getResolver(jwtHeaderKid(rawJwt));
-    consumer = new Packages.org.jose4j.jwt.consumer.JwtConsumerBuilder()
+    claims = new Packages.org.jose4j.jwt.consumer.JwtConsumerBuilder()
       .setVerificationKeyResolver(resolver)
       .setExpectedAudience(EXPECTED_ACTOR_AUD)
       .setRequireSubject()
       .setRequireExpirationTime()
       .setAllowedClockSkewInSeconds(30)
-      .build();
-    claims = consumer.processToClaims(rawJwt);
+      .build()
+      .processToClaims(rawJwt);
   } catch (e) {
-    fail('invalid_request', 'actor_token signature/structure invalid: ' + e);
+    // Java exception text (class names, jose4j internals) belongs in the server
+    // log, not in an OAuth error_description handed to the client.
+    logger.warn('actor_token rejected: ' + e);
+    invalidRequest('actor_token is not a valid SPIFFE JWT-SVID for this token endpoint');
   }
-
-  var sub = String(claims.getSubject());
-  if (!sub || sub.indexOf(SPIRE_AGENT_PREFIX) !== 0) {
-    fail('invalid_request', 'actor sub must start with ' + SPIRE_AGENT_PREFIX);
-  }
-  return { sub: sub };
+  // Which workloads may act is decided by the caller against CLIENT_POLICY
+  // (exact SPIFFE ID); this function only establishes WHO signed the SVID.
+  return { sub: String(claims.getSubject()) };
 }
 
+/*
+ * Order of checks, cheapest and most caller-attributable first:
+ *   1. inputs present            (subject_token, actor_token, audience)
+ *   2. client policy             (CLIENT_POLICY, requested audience)
+ *   3. scope narrowing + role    (requested ∩ subject ∩ policy; ops:write role gate)
+ *   4. getInitializedContext     (Curity's own checks + Token Issuance Authorizers)
+ *   5. actor_token verification  (jose4j against SPIRE's JWKS — needs the web
+ *                                 service client only the initialized context has)
+ *   6. allowedActor + may_act    (who presented the SVID vs who was permitted to)
+ *   7. issue                     (act / may_act / acr / roles stamped on the token)
+ * Steps 1–3 need no network or crypto, so a malformed or over-reaching request
+ * costs nothing. Step 5 after 4 is a deliberate trade: a bad SVID is only found
+ * after the TIAs ran, which is harmless (nothing is issued, nothing persisted).
+ */
 function result(context) {
-  // 1. Subject token (Curity-issued, already introspected).
+  // 1. Inputs. The subject token is Curity-issued and already introspected; the
+  //    actor token is SPIRE-issued and verified by us in step 5.
   var subjectToken = context.getPresentedSubjectToken();
   if (subjectToken === null) {
-    fail('invalid_request', 'subject_token is required');
+    invalidRequest('subject_token is required');
   }
   var presentedDelegation = context.getPresentedSubjectTokenDelegation();
-
-  // 2. Actor token (SPIRE-issued; we verify the signature ourselves).
   var actorRaw = context.getRequest().getFormParameter('actor_token');
-  var actor = verifySpiffeSvid(actorRaw);
+  if (!actorRaw) {
+    invalidRequest('actor_token is required');
+  }
 
-  // 3. Per-client policy.
+  // 2. Per-client policy, keyed by client_id (the CIMD URL for the agents).
   var clientId = context.getClient().getId();
   var policy = CLIENT_POLICY[clientId];
   if (!policy) {
-    fail('invalid_client', 'client ' + clientId + ' is not configured for token exchange');
-  }
-  if (
-    !policy.allowedActors.some(function (re) {
-      return re.test(actor.sub);
-    })
-  ) {
-    fail(
-      'invalid_request',
-      'actor SPIFFE ID ' + actor.sub + ' is not on the allow-list for client ' + clientId
-    );
+    failWithCode('invalid_client', 'client ' + clientId + ' is not configured for token exchange');
   }
 
-  // 3b. RFC 8693 §4.4 `may_act`: the SUBJECT token names who is permitted to act
-  //     for it. This is a second, independent source of truth from the
-  //     `allowedActors` check above — that one is server-side config keyed by the
-  //     REQUESTING CLIENT, this one is a grant carried in the token itself and
-  //     keyed by the subject. Both must agree, so a client-config mistake alone
-  //     can't widen delegation, and the authority is verifiable by anyone holding
-  //     the token without reading Curity's configuration.
-  //
-  //     Enforce-if-present: terminal tokens (…→llm-gateway, →inspect-api, →ops-api)
-  //     carry no `may_act` because nothing exchanges them onward. Absent means
-  //     unconstrained, which keeps a token minted before this claim existed
-  //     working through its short lifetime rather than breaking mid-chain.
-  var expectedActor = mayActSub(subjectToken.get('may_act'));
-  if (expectedActor !== null && expectedActor !== actor.sub) {
-    fail(
-      'invalid_request',
-      'actor ' +
-        actor.sub +
-        ' is not authorized by the subject token may_act (' +
-        expectedActor +
-        ')'
-    );
+  //    Audience: RFC 8693 allows several `audience` values; this demo issues to
+  //    exactly one (the agents always send one). Look it up in the per-audience
+  //    map — its presence is the allow-list, its `scopes` array is the cap.
+  var audiences = setToArray(context.getRequestedAudiences());
+  if (audiences.length !== 1) {
+    invalidRequest('exactly one audience is required, got ' + audiences.length);
   }
-
-  // 4. Audience: single string requested via form param. Look it up in the
-  //    per-audience map — its presence is the allow-list, its `scopes` array
-  //    is the per-audience scope cap.
-  var requestedAudience = context.getRequest().getFormParameter('audience');
-  var audPolicy = requestedAudience ? policy.perAudience[requestedAudience] : null;
+  var requestedAudience = audiences[0];
+  var audPolicy = policy.perAudience[requestedAudience];
   if (!audPolicy) {
-    fail(
-      'invalid_request',
-      'audience ' + requestedAudience + ' not allowed for client ' + clientId
-    );
+    invalidRequest('audience ' + requestedAudience + ' not allowed for client ' + clientId);
   }
   var allowedScopesForAudience = audPolicy.scopes;
 
-  // 5. Scope narrowing: requested ∩ subject ∩ policy(audience). Keying scopes
+  // 3. Scope narrowing: requested ∩ subject ∩ policy(audience). Keying scopes
   //    by audience prevents the cross-product leak where a client could pull
   //    a privileged scope under an unprivileged audience.
   var subjectScopes = String(subjectToken.get('scope') || '')
@@ -391,27 +366,11 @@ function result(context) {
   var requestedSet = context.getRequestedScopes(); // Java Set<String>
   var requested = setToArray(requestedSet);
   if (requested.length === 0) requested = subjectScopes;
-  // 5a. Role gate — ops:write requires a WRITE role: `sre` OR `oncall`. This is the
-  //     coarse tier gate (may this user touch the ops write-tier at all). The finer
-  //     per-tool split (on-call may restart/scale; only sre may set_deployment_image)
-  //     is enforced downstream at mcp-ops, NOT at the agentgateway.
-  //     `subjectToken.get('roles')` may be a Java Set, JS array, space-delimited
-  //     string (e.g. "sre oncall"), or null. claimToArray() handles all four shapes;
-  //     setToArray alone would iterate a string character-by-character.
-  var subjectRoles = claimToArray(subjectToken.get('roles'));
-  if (
-    requested.indexOf('ops:write') !== -1 &&
-    subjectRoles.indexOf('sre') === -1 &&
-    subjectRoles.indexOf('oncall') === -1
-  ) {
-    fail('access_denied', "user lacks a write role ('sre' or 'oncall') for ops:write");
-  }
-
   var narrowed = requested.filter(function (s) {
     return subjectScopes.indexOf(s) !== -1 && allowedScopesForAudience.indexOf(s) !== -1;
   });
   if (narrowed.length === 0) {
-    fail(
+    failWithCode(
       'invalid_scope',
       'no scope intersects subject + policy for client ' +
         clientId +
@@ -419,22 +378,76 @@ function result(context) {
         requestedAudience
     );
   }
+  //    Role gate — ops:write requires a WRITE role: `sre` OR `oncall`. This is the
+  //    coarse tier gate (may this user touch the ops write-tier at all). The finer
+  //    per-tool split (on-call may restart/scale; only sre may set_deployment_image)
+  //    is enforced downstream at mcp-ops, NOT at the agentgateway.
+  //    It keys on requested ∩ policy(audience) — what this AUDIENCE could grant —
+  //    and deliberately NOT on the subject token's scopes: a scope the audience
+  //    never grants is dropped above and earns no role verdict (bob asking
+  //    mcp-gateway for ops:write just gets inspect:read, exactly like alice), but
+  //    a password-only bob whose token LACKS ops:write (the acr=mfa TIA withheld
+  //    it at login) must still be told "wrong role" here. Narrowing on the
+  //    subject instead would issue him a read-only token, the specialist's own
+  //    ops:write exchange would then fail invalid_scope, and the agent would
+  //    answer with an RFC 9470 step-up prompt he can never satisfy. Role is a
+  //    property of the user, not of the session's authentication level.
+  //    `subjectToken.get('roles')` may be a Java Set, JS array, space-delimited
+  //    string (e.g. "sre oncall"), or null. claimToArray() handles all four shapes;
+  //    setToArray alone would iterate a string character-by-character.
+  var subjectRoles = claimToArray(subjectToken.get('roles'));
+  var grantable = requested.filter(function (s) {
+    return allowedScopesForAudience.indexOf(s) !== -1;
+  });
+  if (
+    grantable.indexOf('ops:write') !== -1 &&
+    subjectRoles.indexOf('sre') === -1 &&
+    subjectRoles.indexOf('oncall') === -1
+  ) {
+    accessDenied("user lacks a write role ('sre' or 'oncall') for ops:write");
+  }
 
-  // 6. Initialize the procedure context with narrowed audience+scope, and
-  //    expose `actor_sub` as a context attribute so a token-claims mapper can
-  //    project it into the JWT's `act.sub` claim. If no mapper is wired, the
-  //    token still issues — it just won't carry `act.sub` until the mapper
-  //    is added (separate configmap change).
-  var subjectAttrs = context.subjectAttributes() || {};
-  var contextAttrs = context.contextAttributes() || {};
-  contextAttrs.actor_sub = actor.sub;
-
+  // 4. Initialize the procedure context with the narrowed audience+scope. This
+  //    is where Curity runs its own checks and the Token Issuance Authorizers
+  //    (e.g. `ops:write` requires acr=mfa). `act` is stamped directly on the
+  //    token data in step 7, so no actor attribute is needed here.
   var fullContext = context.getInitializedContext(
-    subjectAttrs,
-    contextAttrs,
+    context.subjectAttributes() || {},
+    context.contextAttributes() || {},
     [requestedAudience],
     narrowed
   );
+
+  // 5. Actor token: verify the SPIFFE JWT-SVID against SPIRE's live JWKS.
+  var actor = verifySpiffeSvid(fullContext, actorRaw);
+
+  // 6. Who presented the SVID vs who was permitted to — two independent gates.
+  //    6a. `allowedActor`: server-side config keyed by the REQUESTING CLIENT.
+  if (actor.sub !== policy.allowedActor) {
+    invalidRequest(
+      'actor SPIFFE ID ' + actor.sub + ' is not on the allow-list for client ' + clientId
+    );
+  }
+  //    6b. RFC 8693 §4.4 `may_act`: the SUBJECT token names who is permitted to act
+  //        for it — a grant carried in the token itself and keyed by the subject.
+  //        Both must agree, so a client-config mistake alone can't widen delegation,
+  //        and the authority is verifiable by anyone holding the token without
+  //        reading Curity's configuration.
+  //
+  //        Enforce-if-present: terminal tokens (…→llm-gateway, →inspect-api, →ops-api)
+  //        carry no `may_act` because nothing exchanges them onward. Absent means
+  //        unconstrained, which keeps a token minted before this claim existed
+  //        working through its short lifetime rather than breaking mid-chain.
+  var expectedActor = mayActSub(subjectToken.get('may_act'));
+  if (expectedActor !== null && expectedActor !== actor.sub) {
+    invalidRequest(
+      'actor ' +
+        actor.sub +
+        ' is not authorized by the subject token may_act (' +
+        expectedActor +
+        ')'
+    );
+  }
 
   // 7. Build the JWT claims map and inject `act` so the issued access
   //    token carries the OBO actor chain. `getDefaultAccessTokenData()`
@@ -489,15 +502,14 @@ function result(context) {
   }
 
   // Propagate `roles` so the user's role context survives EVERY hop of
-  // the delegation chain. The role gate (step 5a above) runs on every exchange
-  // that requests ops:write — but `roles` lives only on the user's login token.
+  // the delegation chain. The role gate (step 3 above) runs on every exchange
+  // that narrows to ops:write — but `roles` lives only on the user's login token.
   // Without re-emitting it here, the 2nd hop (agent-specialist -> mcp-ops) would
   // read an empty roles claim off the (agent-issued) subject token and falsely
   // deny a user who legitimately holds `sre`. Re-emit as an array, mirroring the
-  // acr propagation above. claimToArray handles Set/array/space-string/null.
-  var inboundRoles = claimToArray(subjectToken.get('roles'));
-  if (inboundRoles.length > 0) {
-    tokenData.roles = inboundRoles;
+  // acr propagation above (`subjectRoles` is already normalised).
+  if (subjectRoles.length > 0) {
+    tokenData.roles = subjectRoles;
   }
 
   var issuedAccessToken = fullContext

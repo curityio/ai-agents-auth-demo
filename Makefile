@@ -101,10 +101,12 @@ test: test-scripts ## Run all unit tests (vitest, via turbo) + the shell-script 
 	pnpm turbo run test
 
 .PHONY: test-scripts
-test-scripts: ## Run the shell-script contract tests (gateway-config render, demo-inputs LLM check, Curity theme embed, user seeding, MCP discovery config, JWKS guard)
+test-scripts: ## Run the shell-script contract tests (gateway-config render, demo-inputs LLM check, Curity theme + truststore embeds, token-exchange procedure policy, user seeding, MCP discovery config, JWKS guard)
 	bash scripts/test-render-gateway-config.sh
 	bash scripts/test-demo-inputs.sh
 	bash scripts/test-embed-curity-theme.sh
+	bash scripts/test-embed-mkcert-ca.sh
+	node scripts/test-token-exchange-procedure.mjs
 	bash scripts/test-seed-curity-users.sh
 	bash scripts/test-mcp-discovery-config.sh
 	bash scripts/test-jwks-guard.sh
@@ -298,7 +300,7 @@ curity-procedures: ## Embed k8s/curity/procedures/*.js as Base64 into the Curity
 	bash scripts/embed-curity-procedures.sh
 
 .PHONY: curity-truststore
-curity-truststore: ## Embed the local mkcert root CA into the Curity configmap's server-truststore (CIMD metadata fetch)
+curity-truststore: gen-ca ## Embed the mkcert root CA (CIMD metadata fetch) + the shared root CA (SPIRE JWKS fetch) into the Curity configmap's server-truststore
 	bash scripts/embed-mkcert-ca.sh
 
 .PHONY: curity-theme

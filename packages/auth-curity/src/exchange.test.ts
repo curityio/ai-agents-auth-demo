@@ -98,21 +98,6 @@ describe('exchangeToken', () => {
     await expect(exchangeToken(baseParams)).rejects.toMatchObject({ code: 'access_denied' });
   });
 
-  it('maps Curity-sanitized access_denied (invalid_request + access_denied-prefixed description)', async () => {
-    // Curity rewrites a procedure `fail('access_denied', msg)` to error=invalid_request
-    // with the code prefixed into the description. We must still classify it access_denied.
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          error: 'invalid_request',
-          error_description: "access_denied user lacks required role 'sre' for ops:write",
-        }),
-        { status: 400, headers: { 'content-type': 'application/json' } },
-      ),
-    );
-    await expect(exchangeToken(baseParams)).rejects.toMatchObject({ code: 'access_denied' });
-  });
-
   it('maps Curity-sanitized invalid_scope (invalid_request + invalid_scope-prefixed description)', async () => {
     // Same sanitization as access_denied: procedure `fail('invalid_scope', msg)` becomes
     // error=invalid_request with the code prefixed into the description.

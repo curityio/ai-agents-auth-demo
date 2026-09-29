@@ -160,8 +160,24 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 14. **The token-exchange procedure fetches SPIRE's JWKS at runtime** from the
     SPIRE OIDC Discovery Provider (`spire-spiffe-oidc-discovery-provider.spire-server`),
     so a fresh cluster or SPIRE key rotation needs **no** manual snapshot — the
-    procedure refetches on an unknown `kid`. (Historically this was an embedded
-    snapshot refreshed via `make spire-jwks-snapshot`; that tooling is gone.)
+    procedure refetches on an unknown `kid`, **at most once per 30 s** (a forged
+    `kid` used to open one new connection to SPIRE per request). The fetch goes
+    through the `http-client-spiffe` facility, whose TLS validates against the
+    server-truststore's `shared-root-ca` entry (embedded by `make curity-truststore`
+    from `certs/shared-ca/root-cert.pem`; the provider's SVID chains to that root),
+    so **`make gen-ca` must have run before `make curity-truststore`** — the Make
+    target depends on it. Only the *initialized* procedure context exposes web
+    service clients, so the actor SVID is verified AFTER `getInitializedContext`
+    (policy and scope narrowing first, then TIAs, then crypto). Procedure globals
+    are **per worker thread** (Nashorn Bindings are thread-local): the JWKS cache
+    warms once per thread and needs no locking. The policy is unit-tested on the
+    host by `scripts/test-token-exchange-procedure.mjs` (`make test-scripts`).
+    Error plumbing: `exceptionFactory.badRequestException(code, msg)` can NOT put
+    an OAuth code on the wire (11.4.x maps `code` through the SDK `ErrorCode` enum
+    and prefixes it into the description on a miss — which is what `exchange.ts`
+    keys on for `invalid_scope`); `forbiddenException` is the one true
+    `error=access_denied`, and the role gate uses it. (Historically the JWKS was an
+    embedded snapshot refreshed via `make spire-jwks-snapshot`; that tooling is gone.)
 
 15. **Curity's users are seeded automatically: the HSQLDB is FILE-based, not
     in-memory, and an init container writes the personas into it before idsvr
@@ -241,7 +257,8 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       (that only reaches the Node app pods). The mkcert root CA is embedded into the
       configmap's `<server-truststore>` by `make curity-truststore`
       (`scripts/embed-mkcert-ca.sh`, sentinel-delimited, machine-specific → re-run
-      after `make certs`). `make apply` runs it. The `<server-certificate>` MUST
+      after `make certs`; the same script embeds the shared root CA for the SPIRE
+      JWKS fetch, fact #14). `make apply` runs it. The `<server-certificate>` MUST
       declare the cert's real key `<size>` — ConfD validates it and CrashLoops on a
       mismatch (`keystore-element was invalid: Key size … Expected 2048, found 3072`);
       mkcert CAs are typically 3072-bit, so the embed script reads the size from the
@@ -469,16 +486,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `ndots:1` alone does NOT fix it. In-cluster backends (single small A records) are
     unaffected.
 
-25. **`may_act` (RFC 8693 §4.4) is enforced BEHIND `allowedActors`, which makes naive
+25. **`may_act` (RFC 8693 §4.4) is enforced BEHIND `allowedActor`, which makes naive
     negative tests worthless.** The exchange procedure stamps `may_act` on every issued
     token naming the single workload permitted to present it next (`perAudience.mayAct`
     in `token-exchange.js`; the login token's is stamped by `authorization-code.js`), and
     enforces the subject token's `may_act` against the verified actor SVID. Gotchas:
-    - **Gate ordering.** `allowedActors` (step 3) runs *before* the `may_act` check
-      (step 3b). Because the `mayAct` map mirrors each consuming client's `allowedActors`,
+    - **Gate ordering.** `allowedActor` (step 6a) runs *before* the `may_act` check
+      (step 6b). Because the `mayAct` map mirrors each consuming client's `allowedActor`,
       the two gates agree on every happy path — so "present the wrong SVID" is refused by
-      `allowedActors` and proves NOTHING about `may_act`. To exercise it you need a case
-      where `allowedActors` PASSES and only `may_act` objects: take an
+      `allowedActor` and proves NOTHING about `may_act`. To exercise it you need a case
+      where `allowedActor` PASSES and only `may_act` objects: take an
       `aud=agent-specialist` token (its `may_act` names the specialist) and replay it as
       the **copilot** with the copilot's own SVID. Verified 2026-08-05: refused with
       `actor … is not authorized by the subject token may_act (…)`. That case was
@@ -1193,9 +1210,9 @@ make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, n
 make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
 make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
-make curity-truststore     # re-embed the mkcert root CA for the CIMD metadata fetch
+make curity-truststore     # re-embed the mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch); depends on gen-ca
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
-make test-scripts    # shell-script contract tests (gateway-config render, demo-inputs LLM check, theme embed, user seeding, MCP discovery config, JWKS guard)
+make test-scripts    # contract tests (gateway-config render, demo-inputs LLM check, theme + truststore embeds, token-exchange procedure policy, user seeding, MCP discovery config, JWKS guard)
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)
 make doctor          # read-only Docker + KIND disk audit
 make clean           # full teardown
