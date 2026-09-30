@@ -258,7 +258,14 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       configmap's `<server-truststore>` by `make curity-truststore`
       (`scripts/embed-mkcert-ca.sh`, sentinel-delimited, machine-specific → re-run
       after `make certs`; the same script embeds the shared root CA for the SPIRE
-      JWKS fetch, fact #14). `make apply` runs it. The `<server-certificate>` MUST
+      JWKS fetch, fact #14). `make apply` runs it. **Both anchors go ONLY into the
+      rendered copy `.gen/curity-configmap.yaml`, which is what `make apply` applies;
+      the tracked `k8s/curity/configmap.yaml` keeps the sentinels EMPTY** (pinned by
+      `scripts/test-embed-mkcert-ca.sh`). Embedding in place left git dirty after every
+      `make clean` + `make demo`, which mints a new shared root. ConfD boots fine
+      with the truststore empty (verified 2026-09-29), so `kubectl apply`-ing the
+      tracked file directly fails silently at RUNTIME instead: every CIMD fetch
+      (→ agent `invalid_client`) and SPIRE JWKS fetch fails TLS. The `<server-certificate>` MUST
       declare the cert's real key `<size>` — ConfD validates it and CrashLoops on a
       mismatch (`keystore-element was invalid: Key size … Expected 2048, found 3072`);
       mkcert CAs are typically 3072-bit, so the embed script reads the size from the
@@ -894,7 +901,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       Curity CrashLoops (per fact #15 the users come back by themselves — consent
       grants and sessions do not).
     - **Validate offline before applying, in ~25s.** Boot the SAME pinned image in a
-      scratch namespace with the candidate configmap + the license secret, then read the
+      scratch namespace with the candidate configmap (the rendered
+      `.gen/curity-configmap.yaml`, so the truststore is populated — fact #19) + the
+      license secret, then read the
       config back out of CDB: `printf 'show configuration profiles profile token-service
       settings authorization-server token-issuance-authorizers\nexit\n' | /opt/idsvr/bin/idsh`.
       "ConfD started" alone is NOT proof the block was accepted — query it. This also
@@ -1210,7 +1219,7 @@ make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, n
 make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
 make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
-make curity-truststore     # re-embed the mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch); depends on gen-ca
+make curity-truststore     # render .gen/curity-configmap.yaml = tracked configmap + mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch); depends on gen-ca
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
 make test-scripts    # contract tests (gateway-config render, demo-inputs LLM check, theme + truststore embeds, token-exchange procedure policy, user seeding, MCP discovery config, JWKS guard)
 make seed-agent-key  # (re)generate the agent-copilot RSA keypair (private_key_jwt)

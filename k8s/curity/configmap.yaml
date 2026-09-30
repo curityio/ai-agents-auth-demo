@@ -4,6 +4,10 @@
 # config has a lot of details (HTTPS server config, plugin instances, key
 # material). Treat this as a placeholder you will replace with output from
 # your local Curity admin UI exported via `request-info`.
+#
+# Do NOT `kubectl apply` this file directly: its <server-truststore> is empty on
+# purpose (the trust anchors are machine-specific). `make apply` applies the
+# rendered copy, .gen/curity-configmap.yaml (`make curity-truststore`).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -684,83 +688,15 @@ data:
               <keystore>data:application/p12;aes,v:S.TDNOZXVxVzVqQ09UeXl2YQ==.8tBqJMExMVdn_M4Yq2634Q==.5vUO1TVH6YXP3_4kTmAzoqIuiLHtQLh_IqZSKmrPeyNS7h5Y7cYaZThjQ_sUNmj3bvPYJI4l4ovvj1KnQFhAv-bflMNKoulbryqrUOnRkFySpS12VnnpLAHTpqTnyAN-y1qRmqICQ2edxbcOMIcwhfzm1-7WlpIvPFpYuWCoTJQHCDm72vu_WIgpI2abDpqvoaZnjwnr8zl6iAGpAIE8y2xEpx4Qw5Rqsnht2aADX90lpDILZo9BlBWE8f6HCUsrvE_sIbKXZtW5OZ7kCzFnmELPO806vlbKK0BgA2mSjD4UEFB47J2Nm9uNSJG6s_wVZGkGzhDCYA1ZkppYWM7VD-KdIqkMwuqkj_VqO5ARTM_5xvVSvFBcqiVW6tWSB-1JQ-op_OnXcztwLqG3dB-JUhIub0Z6O2qi_MAXTQETsq0ZajiKSbMTi0g6v4APqK-8m9beyTlXdh0nHesFYAaElZP53all_-vWHtHShyPs3rinilyRzfF0c0cZ0uTCfFm265qVWqxZpSzSFJn3znZ-g4y_IeYXeO5OT8vCQj6OQ5su20f-NDERryfIyFwlYUPRSO6-ZrKDdBXDBf6OG-Jxr831pbvgYufds3P5x8rXAwqsjU8f2Prp1ri8rzppv9BqD0J3-2N_4EASbPpopA2q2Gjg9x4PZ9g4w2jfQ7_6iAXUGy8WdJfry8RJvrE4lTTWprv7RQGxWJCBSkuuzAn_E3DZ510y8TIb02EW5BubBS3LvHA2gf8e2218ettZl4dgTg_LSHfHDiCJuWARPZcmOwfT4KPNT0BLYAonFWVOI92aARTBe3TGQYDWuPaDNAKCTUViII7gtnYUNjl0XGRXgdAF8r4xH_xxM0jjaxFbSiiVVaGDT66PK8b-gxZFe7Xik7qQ_C3hGWWy_uyuz4Pvnsvt6fdlWYzs2MnIu_bEQEx1mLt-nT-YSQq0TchQDXIkOkyZtB1u0dBNMqR1GHX9bhcC5zHv99nBBzeg-o9FlrzW5KASKog1YFnkclwr6CtbuRfCL0htoRKJgIoxm32h-jse5lFkd0BAmmfenKQ6GJB9UC_ONdfUokfkjccR9OZRWLkBYHK8oqkUFK-G2ZNGDYO-PqCP1F-Qf6nFvmBPIOVu5CJndhnwMvrDG0mY7h4ukEtMRoMYW4KTf3lYW271Fu597h74M3TkgdmFWLtj8rlDuwPvgKWc946aRIXUo-o_vhQ9hK77V8ux2WRIGndCCie6mSxBtfIMp2eV_G2d5Nb64AUdbNg0zQJ5ODu7Z9_m5n8SvgaEF7olcgaNYe1XwedPOBRzLbb1yBPY3TPB87gR9jlzDmjI7bzRKj5xjgzy3JKfWni26EqAkrad1HxW0pohRymkVGNg93SyQIItzNTRDK5Du_aXerwjpmjY7Ezul5o6f4q9tYOJs-D1FEp3DxXisk6nAYYnPxrAbVO5sxx4mnC2X2lpt3ecKlWK41wJmbYO0zS2F-ehCzmGi8mu0seh-G1x5CnhR_zE_3xo_NcTeqNYh7S0PSKCJrcd0aBjwjl-SvyM6xI-9_9JabU639eqNKLHzlwdfM3Q42fJSZDwzJigWYzYW-qS0DZC7F4zFhEhv13pHw8myFWkcnIdsw8oRSmbOOruE_3K7L9zKSn61JWpL8JdO5jjaQDf-8suAeaI3ICJYJTVclbQ4lt9AKJrxlwyFJ_IUNXoN55Ca6HK7kqvRh0RfxxuyNfCte53H5HOw9n-CikhAX2Iaqrzo46SYD5K2LCF1TsQvNctQoY9R2VAKGcBVzQq4qoMjVzdZ2qD7eF7hFgjWsRIBTaZ4lwZL_Of5u52_KekbPff6ro5RqzJVRB2LRmq71BsDcjcaDevalr5uG_psZZjAdj9D4sHReXnKYmhq2PE1fuJrPFL3xoT0yaLE5BZpkSWZOrgaGoORR_aJU7qTB-eLDx_suiviLkEn8ZZ16S7PMVNWtsu2liqNBd_J6awS_piqU3uU5le6oYfWvJ3cgw-lYY95Zd5XnHpUgT9i31dqMuY6BaeryoKAZigmEvlU9iAiZ--1_r_TxzCuy-1ZntUZoMmFUSQ3ZebzvGUGfnHboG4ozHYnkkfJ1LlUJG3UlaTMcWLNvy7AaPpBWzSs4VaCpTrW3WLOVs1REPN4ucPmulJWWSp3uXxEzqx8rGTt0eC5gcSwtC8h7pYtu8UgInEg_Oxj9ECwfN7KkBtiBcHFzjIrqK-VcSJ7Avv1Kip0enYqXAACzBtm_Exhp7kN0-HWwx_EHtX8_pMJ-G2S0ts7SM1ef3rMa8WgIVA-wJf9yBuBp--8SpPBQXixx41LpR-TCMaJvK3xkC506xeznl1ThUIOIv9JFuVTBgB_wO__XW7ZYR7YzyPlAaksp2ATMdoeeBtHjFTk3a_8UrERaRBamt41eaxzKMB5iA5o8FwVhi9KDzLqUC23c8lhR8GCG6WE3ccY4WJiMSieIQ8tTtPXKt4W42um3ynZGPcb0MIEKf-sMtQs7Bo-FW_4ZOlGpdVmxqw9JqNrjhb_y0BUirF6W25j9Z_k856OpDL2ke_ja81DM97HS6rgVmlvCdh2lgRVJOn3xUGWpiAqLaVHIHKTAk3OdNny2GIY-u1NbKNqbAV6NtpusEdkK8Bb92z9l0WDMNEQRLLORIJe9uHjcoEaul1QtZKI8OW5ytUGcgq5YWY7fbopNJoZrxFaf4xV3bF0gXFR1XVxIQ7C3KfgU9sJ3avCpEPvEO8yF89yyneoxDyNDE46CCZjmD4Of3dI1YvtO9GyunSfEK_USMzWFL6hcgsRiOkC8colFHetHmtW4Pzbb2KbRuPYbOVGbuIBOkBlbEckjBWQyFCLWoxTHkhlJPAA50Mc7mqWL3hIt0Bdp82MtVkZ4FiDylNPafg4nhaXYPIbWoe5-2FwOo5KYturPVZVVXO85olYTm4RPc5JRZC0rEeYxmraBtckEOvfVpQzVWOkbhT-V3BXzwTiJECH_vGPjqFj2MDXb-V7q3HJ8bIg0WVnmhRq17rOIC_5WgPLjsgtbgxViDRoxp0-bOhGo_LkkE8N3UVOiCB0NqkIIaVt73RDYqOJEvtN_vBuLUKMi-bwKAVxFAF-I9OFnanO3g6nnlaZokdMuc1tFbgu0gdjDK6hbuNdwBs4E3Iz0on2xsv50NuKrPiiaXMVt7S6Is1c_LDhEha_wsAMhUhBkbvJsJnOhnRiIE3nu3jixXGOKiDpItSuoMEzoc1Q1XL5oe4Tbf8nl1FmRkPss4j_oWWVrpSVMZu0FqicCPQCyx85keRhca2LLnCv0FoZu3ZWta8teNGkzrkY9v_YDR7R9CnxunkVuW_VZNsqAuT3Uz0AOPRG8KLpFFaKj7jdOiGit9jWHEVhQy30nvVd_QJf9X0PjcOK3L99xTjhekAB4In3qoYZk7Zz8K7gysFRh2exfQKRRShhmQrJsqBkMwbRNGzV-Y4DpF59xYPLarlX6ONOY-MDgodQwbX40kGv-tFSidEf4oF9R1ce_y5TRqCW5FjaIXPM5jzhZmwXJhLDNI_ceJvnt7PQPjq0WMdWE67hTI-09iCLsUleuxRABh6zqMu5aU3lP_u7TI2pnOIATodPUJ25st4L1Du9EVuGyg9AYHn3-qbuL83KXuUse2fhn51C6ry.L_zTAhu8h3DfwfJ3H2nJ7OuzclCRuhNTNGpGyUTgxuA=</keystore>
             </server-keystore>
              <!-- Trust anchors for outbound HTTPS clients with <use-truststore>true</use-truststore>
-                 (i.e. cimd-fetch). The mkcert root CA PEM is embedded by
-                 `make curity-truststore` (scripts/embed-mkcert-ca.sh) between the
-                 sentinels below — it is machine-specific, so re-run after `make certs`. -->
+                 (cimd-fetch: the mkcert root CA; http-client-spiffe: the shared root CA).
+                 Both are machine-specific, so the sentinels below stay EMPTY in git:
+                 `make curity-truststore` (scripts/embed-mkcert-ca.sh) fills them in the
+                 rendered copy, .gen/curity-configmap.yaml, which is what `make apply` applies.
+                 ConfD boots with them empty, but Curity then trusts neither fetch target. -->
             <server-truststore>
               <!-- BEGIN_MKCERT_CA -->
-              <server-certificate>
-                <id>mkcert-root-ca</id>
-                <size>3072</size>
-                <keystore>-----BEGIN CERTIFICATE-----
-    MIIFEzCCA3ugAwIBAgIQTT8wWFjv9RldWcoiwfYFSDANBgkqhkiG9w0BAQsFADCB
-    oTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMTswOQYDVQQLDDJzdXJl
-    bkBTdXJlbi1NYWNCb29rLVByby0yLmxvY2FsIChTdXJlbmRyYSBLaGF0YW5hKTFC
-    MEAGA1UEAww5bWtjZXJ0IHN1cmVuQFN1cmVuLU1hY0Jvb2stUHJvLTIubG9jYWwg
-    KFN1cmVuZHJhIEtoYXRhbmEpMB4XDTI1MDMxODExMDUwMVoXDTM1MDMxODExMDUw
-    MVowgaExHjAcBgNVBAoTFW1rY2VydCBkZXZlbG9wbWVudCBDQTE7MDkGA1UECwwy
-    c3VyZW5AU3VyZW4tTWFjQm9vay1Qcm8tMi5sb2NhbCAoU3VyZW5kcmEgS2hhdGFu
-    YSkxQjBABgNVBAMMOW1rY2VydCBzdXJlbkBTdXJlbi1NYWNCb29rLVByby0yLmxv
-    Y2FsIChTdXJlbmRyYSBLaGF0YW5hKTCCAaIwDQYJKoZIhvcNAQEBBQADggGPADCC
-    AYoCggGBALXhisEBrD1eO5Te+oRHlYADmUfo4wEvSPGsEdmYhnI+MAlUhrTsWW9T
-    sYBIA9WsEuE9bdCAEo7avGIUwhmlVzmzoNWKMjzs3yLHykJ1OJcjlCl/t6DkS5t9
-    b8UddnCPatAo4Cl8Tgk3D7SPwCPKeL9PvBGPxy49lBwn8fI4Cyq8cMoNxS6v6zZH
-    JwpPDRvBklcDzYZTvt/em5BumCdp0wQ0OyTej83t80OmcuAxDa9SmJg9TGbTGIY3
-    PHRBSE9ZzujBoff12cZHkM/qJ1rlrtmJwj533t6U8IU40u8iAX9c9FT421ljN+YK
-    DDMa+k24Xn7AnNTHEsJiMyk2Di/mPZpzzbQCK+aDcsJCaRICgnINpWU2jt1N++Qf
-    uM4EdyRcuyTO6bY0xqDMeVbov035smPn+Ij1VYeweelJoFTx5+7pkYY7Mq5KobtQ
-    FeHnm2tpNpxZM2xE3YXktP25QHRCPqmLLfWe1iP6KMLrlhMyVhleOyThdSNXt8NS
-    1o3KzUfOpQIDAQABo0UwQzAOBgNVHQ8BAf8EBAMCAgQwEgYDVR0TAQH/BAgwBgEB
-    /wIBADAdBgNVHQ4EFgQU58E1+7v8r/aY/KrEUrxHyVAvxnswDQYJKoZIhvcNAQEL
-    BQADggGBAE8CZFDwWzs+k1SoOyaXdouVWbAHrt0fVi/CIzoZyHAdSHUkPvmDB3W7
-    koK2bJ4F9c9jfESWsHkuq6r3ZRAjP2oo2/ZSyAwlhcxD4p42u2zfmDJc44xWL3Ge
-    qgYjqMuZh6IXHKdnaz7fPsrHeyy7i5oiKMF4gW+vHlQomI0NK3I+kxlDUBvYa3MM
-    zytdbesCNRLRYcEawPK7ELPjW/txOtY4vEqS1XMwdDKMVJxo41IfhnxXJjBzChT5
-    zLT177GyRvOFGXw9BvGfSIHsdsjIOvWY9W6e9Vx3a8pAY2dlc/eEAi6K3Gk+OQcB
-    7AQH9FkWR3dqiQtlfCI9EiRLQtfHjEByT5h5W0XEOe4W31sUeucFNccPdlPO/gyM
-    pJnpZTyw9G1kkazZ6LVkrLBK9Vku3thOikBh0712PxDAf8SeoXgmPt5DbGiYVsx2
-    PzfGAQSmZy0THutAjIFlIit/IAmFiRZC+i25z0R0qTwZ12HgFBDjAfgmKv5KJ+f8
-    uLFpdFRrTw==
-    -----END CERTIFICATE-----</keystore>
-              </server-certificate>
               <!-- END_MKCERT_CA -->
               <!-- BEGIN_SHARED_ROOT_CA -->
-              <server-certificate>
-                <id>shared-root-ca</id>
-                <size>4096</size>
-                <keystore>-----BEGIN CERTIFICATE-----
-    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
-    DVSz1okDFQ==
-    -----END CERTIFICATE-----</keystore>
-              </server-certificate>
               <!-- END_SHARED_ROOT_CA -->
             </server-truststore>
           </ssl>

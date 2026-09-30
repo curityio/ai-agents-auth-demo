@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Embed the TWO trust anchors Curity needs into the configmap's server-truststore:
+# Render the Curity configmap with the TWO trust anchors Curity needs embedded in
+# its server-truststore:
 #
 #   mkcert-root-ca  — the machine-local mkcert root CA. Curity's `cimd-fetch`
 #                     HTTP client trusts it when dereferencing each agent's CIMD
@@ -12,13 +13,18 @@
 #                     truststore validation (hostname verification stays off:
 #                     the SAN is the external name, not the Service FQDN).
 #
-# Both CAs are machine-specific (mkcert -install / gen-shared-ca.sh), so this is
-# an out-of-band embed step — re-run after `make certs` / `make gen-ca` / on a new
-# machine. Sentinel-delimited injection: BEGIN_MKCERT_CA / BEGIN_SHARED_ROOT_CA.
+# Both CAs are machine-specific (mkcert -install / gen-shared-ca.sh), so they never
+# go into git: the tracked configmap ($SOURCE) keeps the sentinels EMPTY, and this
+# script writes a filled copy to $OUT (gitignored .gen/), which `make apply`
+# applies. $SOURCE is only read — a `make clean` + `make demo` cycle mints a new
+# shared root, and embedding it in place used to leave the tracked file dirty.
+# Re-run after `make certs` / `make gen-ca` / on a new machine (`make apply` does).
+# Sentinel-delimited injection: BEGIN_MKCERT_CA / BEGIN_SHARED_ROOT_CA.
 
 set -euo pipefail
 
-CONFIGMAP="${CONFIGMAP:-k8s/curity/configmap.yaml}"
+SOURCE="${SOURCE:-k8s/curity/configmap.yaml}"
+OUT="${OUT:-.gen/curity-configmap.yaml}"
 MKCERT_CAROOT="${MKCERT_CAROOT:-$(mkcert -CAROOT 2>/dev/null || true)}"
 SHARED_CA_PEM="${SHARED_CA_PEM:-certs/shared-ca/root-cert.pem}"
 
@@ -41,11 +47,19 @@ key_size() {
   printf '%s' "${size:-2048}"
 }
 
+# Build into a temp file next to $OUT and move it into place only once both
+# entries are in, so a failed run never leaves a half-rendered configmap for
+# `make apply` to push.
+mkdir -p "$(dirname "$OUT")"
+CONFIGMAP="$(mktemp "$OUT.XXXXXX")"
+trap 'rm -f "$CONFIGMAP"' EXIT
+cp "$SOURCE" "$CONFIGMAP"
+
 # embed <sentinel> <entry-id> <pem-file>
 embed() {
   local sentinel="$1" id="$2" pem_file="$3" size
   size="$(key_size "$pem_file")"
-  echo "==> Embedding $pem_file (RSA $size-bit) as <server-certificate> $id into $CONFIGMAP"
+  echo "==> Embedding $pem_file (RSA $size-bit) as <server-certificate> $id into $OUT"
   python3 - "$CONFIGMAP" "$(cat "$pem_file")" "$size" "$sentinel" "$id" <<'PY'
 import sys, re, pathlib
 path = pathlib.Path(sys.argv[1])
@@ -85,4 +99,6 @@ PY
 
 embed MKCERT_CA mkcert-root-ca "$MKCERT_CAROOT/rootCA.pem"
 embed SHARED_ROOT_CA shared-root-ca "$SHARED_CA_PEM"
-echo "OK"
+mv "$CONFIGMAP" "$OUT"
+trap - EXIT
+echo "==> Rendered $SOURCE + trust anchors -> $OUT"

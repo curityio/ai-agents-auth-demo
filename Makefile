@@ -300,7 +300,11 @@ curity-procedures: ## Embed k8s/curity/procedures/*.js as Base64 into the Curity
 	bash scripts/embed-curity-procedures.sh
 
 .PHONY: curity-truststore
-curity-truststore: gen-ca ## Embed the mkcert root CA (CIMD metadata fetch) + the shared root CA (SPIRE JWKS fetch) into the Curity configmap's server-truststore
+# The procedures + theme are embedded into the TRACKED configmap (deterministic
+# from tracked sources); the trust anchors are machine-specific, so they go only
+# into the rendered copy. It copies the tracked file, hence the dependency on the
+# two in-place embeds: without it a parallel make could render stale procedures.
+curity-truststore: gen-ca curity-procedures curity-theme ## Render .gen/curity-configmap.yaml: the tracked Curity configmap + this machine's mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch)
 	bash scripts/embed-mkcert-ca.sh
 
 .PHONY: curity-theme
@@ -341,7 +345,8 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	# Curity (sole token issuer). Config BEFORE the deployment so the pod finds it
 	# on first start. The `curity-license` secret is created separately by
 	# `make seed-license` (run by `make demo` / `make seed-secrets`) from ./license.json.
-	kubectl apply -f k8s/curity/configmap.yaml
+	# The RENDERED copy (curity-truststore): the tracked file has an empty truststore.
+	kubectl apply -f .gen/curity-configmap.yaml
 	# The persona seeder the Curity pod's init container runs (see deployment.yaml).
 	# Its inputs are the curity-demo-users Secret from `make seed-users`.
 	kubectl -n $(NS_CURITY) create configmap curity-users-init-script \
