@@ -6,6 +6,10 @@
 # fetch SPIRE's JWKS through the `http-client-spiffe` facility with a real
 # truststore instead of trust-all TLS). Each entry declares the key <size> read
 # from its cert, the run is idempotent, and a configmap missing a sentinel fails.
+#
+# The anchors are machine-specific, so they land ONLY in the rendered copy ($OUT,
+# .gen/ in real use): the source is never written, a failed run leaves no output
+# behind, and the TRACKED configmap must keep both sentinel regions empty.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,38 +46,54 @@ data:
       </facilities>
     </config>
 YAML
+cp "$TMP/configmap.yaml" "$TMP/source-before.yaml"
 
-CONFIGMAP="$TMP/configmap.yaml" MKCERT_CAROOT="$TMP/caroot" SHARED_CA_PEM="$TMP/shared/root-cert.pem" \
-  bash "$REPO_ROOT/scripts/embed-mkcert-ca.sh" >/dev/null
+# render [shared-ca-pem] — tracked-shaped source in, rendered copy out.
+render() {
+  SOURCE="$TMP/configmap.yaml" OUT="$TMP/gen/out.yaml" \
+    MKCERT_CAROOT="$TMP/caroot" SHARED_CA_PEM="${1:-$TMP/shared/root-cert.pem}" \
+    bash "$REPO_ROOT/scripts/embed-mkcert-ca.sh" >/dev/null 2>&1
+}
+OUTF="$TMP/gen/out.yaml"
 
-grep -q "<id>mkcert-root-ca</id>" "$TMP/configmap.yaml" || fail "mkcert-root-ca entry missing"
-grep -q "<id>shared-root-ca</id>" "$TMP/configmap.yaml" || fail "shared-root-ca entry missing"
+render || fail "render failed"
+[[ -f "$OUTF" ]] || fail "no rendered configmap at OUT (its directory should be created)"
+diff -q "$TMP/source-before.yaml" "$TMP/configmap.yaml" >/dev/null || fail "the SOURCE configmap was modified"
+
+grep -q "<id>mkcert-root-ca</id>" "$OUTF" || fail "mkcert-root-ca entry missing"
+grep -q "<id>shared-root-ca</id>" "$OUTF" || fail "shared-root-ca entry missing"
 # size follows its own cert, per entry
-awk '/BEGIN_MKCERT_CA/,/END_MKCERT_CA/' "$TMP/configmap.yaml" | grep -q "<size>2048</size>" \
+awk '/BEGIN_MKCERT_CA/,/END_MKCERT_CA/' "$OUTF" | grep -q "<size>2048</size>" \
   || fail "mkcert entry should declare size 2048"
-awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$TMP/configmap.yaml" | grep -q "<size>3072</size>" \
+awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$OUTF" | grep -q "<size>3072</size>" \
   || fail "shared-root entry should declare size 3072"
 # PEM body lands at exactly 4 spaces so YAML strips it to column 0 (Curity's parser is whitespace-sensitive)
-awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$TMP/configmap.yaml" | grep -q "^    -----END CERTIFICATE-----</keystore>" \
+awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$OUTF" | grep -q "^    -----END CERTIFICATE-----</keystore>" \
   || fail "shared-root PEM END marker not at the 4-space column"
 # the two certs are distinct
-m="$(awk '/BEGIN_MKCERT_CA/,/END_MKCERT_CA/' "$TMP/configmap.yaml" | grep -A1 "BEGIN CERTIFICATE" | tail -1)"
-s="$(awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$TMP/configmap.yaml" | grep -A1 "BEGIN CERTIFICATE" | tail -1)"
+m="$(awk '/BEGIN_MKCERT_CA/,/END_MKCERT_CA/' "$OUTF" | grep -A1 "BEGIN CERTIFICATE" | tail -1)"
+s="$(awk '/BEGIN_SHARED_ROOT_CA/,/END_SHARED_ROOT_CA/' "$OUTF" | grep -A1 "BEGIN CERTIFICATE" | tail -1)"
 [[ "$m" != "$s" ]] || fail "both entries embed the same certificate"
 
-cp "$TMP/configmap.yaml" "$TMP/first.yaml"
-CONFIGMAP="$TMP/configmap.yaml" MKCERT_CAROOT="$TMP/caroot" SHARED_CA_PEM="$TMP/shared/root-cert.pem" \
-  bash "$REPO_ROOT/scripts/embed-mkcert-ca.sh" >/dev/null
-diff -q "$TMP/first.yaml" "$TMP/configmap.yaml" >/dev/null || fail "second run was not idempotent"
+cp "$OUTF" "$TMP/first.yaml"
+render || fail "second render failed"
+diff -q "$TMP/first.yaml" "$OUTF" >/dev/null || fail "second run was not idempotent"
 
-printf '<config><facilities/></config>\n' > "$TMP/no-sentinel.yaml"
-if CONFIGMAP="$TMP/no-sentinel.yaml" MKCERT_CAROOT="$TMP/caroot" SHARED_CA_PEM="$TMP/shared/root-cert.pem" \
-  bash "$REPO_ROOT/scripts/embed-mkcert-ca.sh" >/dev/null 2>&1; then
-  fail "a configmap without the sentinels should be rejected"
-fi
-if CONFIGMAP="$TMP/configmap.yaml" MKCERT_CAROOT="$TMP/caroot" SHARED_CA_PEM="$TMP/does-not-exist.pem" \
-  bash "$REPO_ROOT/scripts/embed-mkcert-ca.sh" >/dev/null 2>&1; then
-  fail "a missing shared root CA should be rejected (run make gen-ca)"
-fi
+# A failed run must neither clobber the previous render nor leave temp files.
+render "$TMP/does-not-exist.pem" && fail "a missing shared root CA should be rejected (run make gen-ca)"
+diff -q "$TMP/first.yaml" "$OUTF" >/dev/null || fail "a failed run changed the previous render"
+printf '<config><facilities/></config>\n' > "$TMP/configmap.yaml"
+render && fail "a configmap without the sentinels should be rejected"
+diff -q "$TMP/first.yaml" "$OUTF" >/dev/null || fail "a failed run changed the previous render"
+[[ "$(ls "$TMP/gen")" == "out.yaml" ]] || fail "a failed run left temp files: $(ls "$TMP/gen")"
 
-green "OK: embed-mkcert-ca embeds mkcert + shared root CAs with per-cert sizes, is idempotent, and fails closed"
+# The TRACKED configmap carries no machine-specific trust anchor: both sentinel
+# regions are empty, so a `make demo` on any machine leaves git clean.
+TRACKED="$REPO_ROOT/k8s/curity/configmap.yaml"
+for sentinel in MKCERT_CA SHARED_ROOT_CA; do
+  grep -q "BEGIN_$sentinel" "$TRACKED" || fail "tracked configmap lost the BEGIN_$sentinel sentinel"
+  inner="$(awk "/BEGIN_$sentinel/{f=1;next} /END_$sentinel/{f=0} f" "$TRACKED")"
+  [[ -z "$inner" ]] || fail "tracked configmap has content between the $sentinel sentinels (commit the empty form; make apply renders .gen/curity-configmap.yaml)"
+done
+
+green "OK: embed-mkcert-ca renders mkcert + shared root CAs into OUT only (per-cert sizes, idempotent, fails closed), tracked truststore is empty"
