@@ -273,6 +273,28 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     - **Curity must resolve the agent hosts.** `*.localtest.me` → 127.0.0.1 = the
       pod itself; `scripts/cluster-routing.sh` now also adds a hostAlias on the
       **curity** deployment for `copilot/specialist.localtest.me` → istio-ingress.
+    - **…and since Curity 11.5 it must be ALLOWED to fetch that address.** 11.5
+      resolves the `client_id` host just before the metadata fetch
+      (`SpecialUseHosts.classifyResolved`) and refuses RFC 6890 special-use ranges.
+      The hostAlias target is a ClusterIP in `10.0.0.0/8`, so every agent exchange
+      failed `403 invalid_client "The host of https://copilot.localtest.me/... is a
+      special-use address, which must not be fetched"` — surfaced in the UI as
+      *Couldn't load an answer from the copilot*. Fixed by listing all three
+      RFC 1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) as
+      `<allowed-address-ranges>` in the `<ephemeral-client>` block, so it works
+      on whatever Service CIDR a cluster uses (KIND's is `10.96.0.0/16`; k3s,
+      EKS, OpenShift differ). Deliberately wide for a demo: it also admits pod
+      and node IPs, but `client-id-restrictions` still pins the fetch to
+      `*.localtest.me`, which is loopback outside the cluster (still refused).
+      `cluster-routing.sh` (so `make routing`/`routing-check`/`status`) fails if
+      the ingress ClusterIP is outside those ranges, reading them from the
+      configmap. Loopback stays governed by `<localhost-allowed/>`. **The image
+      is pinned to 11.5.1 for this reason:** 11.5.0's Admin UI had no field for the
+      leaf and its ephemeral-client page failed to render once it was set (backend
+      commit `IS-11537` never reached `curity-web-ui`); 11.5.1 fixes that, and
+      pre-11.5 images reject the leaf outright (ConfD CrashLoop). Set it in the
+      configmap or with `idsh` (fact #33; `delete` the leaf-list first —
+      `load merge` appends to it).
     - **Each agent self-hosts** `GET /.well-known/oauth-client` + `/.well-known/jwks.json`
       (server.ts), deriving its public JWK from the PKCS8 key (`packages/auth-curity`
       `createCimdIdentity`). Keys are seeded by `make seed-agent-key` /
