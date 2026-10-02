@@ -35,7 +35,7 @@ spec:
       # the files are owned by idsvr. A restart re-runs it with the SAME secrets.
       initContainers:
         - name: seed-users
-          image: curity.azurecr.io/curity/idsvr:11.4.3@sha256:fc11182c732e88eca08db0007966438e2481daafd6192e9a197fbd86837e2bfe
+          image: curity.azurecr.io/curity/idsvr:11.5.1@sha256:ec305e379f26d7f42486dad82ef32b6a16d82408ba9c1d00f143f584a259051d
           imagePullPolicy: IfNotPresent
           command: ["bash", "/scripts/curity-users-init.sh"]
           envFrom:
@@ -50,18 +50,18 @@ spec:
       containers:
         - name: idsvr
           # PINNED, deliberately (and the init container above must match).
-          # `latest` is now 11.5.x, which refuses to fetch a CIMD client_id that
-          # resolves to a private address; in-cluster the agent hosts resolve to
-          # the istio-ingress ClusterIP, so every agent exchange fails
-          # `invalid_client "... is a special-use address"`. The 11.5 fix
-          # (<allowed-address-ranges> on <ephemeral-client>) is held back until a
-          # release also fixes the Admin UI's ephemeral-client page, which does
-          # not render once that leaf is set. 11.4.3 has no such leaf, so do not
-          # add it while this pin stands - ConfD would refuse the whole config.
-          # The digest is included because tags can be rebuilt in place; change
-          # tag and digest together.
+          # 11.5+ refuses to fetch a CIMD client_id that resolves to a private
+          # address; in-cluster the agent hosts resolve to the istio-ingress
+          # ClusterIP, so the configmap's <ephemeral-client> MUST carry
+          # <allowed-address-ranges> (else every agent exchange fails
+          # `invalid_client "... is a special-use address"`). 11.5.1 is the first
+          # release whose Admin UI renders the ephemeral-client page with that
+          # leaf set. Pre-11.5 images have no such leaf - ConfD would refuse the
+          # whole config - so do not roll back below 11.5.1 without removing it.
+          # The digest (multi-arch index) is included because tags can be
+          # rebuilt in place; change tag and digest together.
           # Public images are not freely pullable; check Curity's docs for access.
-          image: curity.azurecr.io/curity/idsvr:11.4.3@sha256:fc11182c732e88eca08db0007966438e2481daafd6192e9a197fbd86837e2bfe
+          image: curity.azurecr.io/curity/idsvr:11.5.1@sha256:ec305e379f26d7f42486dad82ef32b6a16d82408ba9c1d00f143f584a259051d
           imagePullPolicy: IfNotPresent
           ports:
             - name: admin

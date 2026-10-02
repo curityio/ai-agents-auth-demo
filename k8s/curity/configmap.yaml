@@ -573,6 +573,24 @@ data:
                   <scope>ops:write</scope>
                   <scope>llm:invoke</scope>
                 </scopes>
+                <!-- Curity 11.5+ resolves the client_id (and jwks_uri) host before
+                     fetching it and refuses RFC 6890 special-use addresses ("The host
+                     of ... is a special-use address, which must not be fetched").
+                     In-cluster, copilot/specialist.localtest.me resolve - via the
+                     hostAlias scripts/cluster-routing.sh writes - to the istio-ingress
+                     ClusterIP, which is always a private address.
+                     All three RFC 1918 ranges, so it works whatever Service CIDR the
+                     cluster uses (KIND/minikube/Docker Desktop 10.96.0.0/12, k3s
+                     10.43.0.0/16, EKS 10.100.0.0/16 or 172.20.0.0/16, OpenShift
+                     172.30.0.0/16, ...). Demo trade-off: this also admits pod and node
+                     IPs, but client-id-restrictions below still limits the fetch to
+                     *.localtest.me, and publicly those names are loopback (refused).
+                     In production, list only the ranges that host CIMD documents.
+                     cluster-routing.sh fails if the ingress IP falls outside these.
+                     Not settable in the 11.5 Admin UI - edit it here or via idsh. -->
+                <allowed-address-ranges>10.0.0.0/8</allowed-address-ranges>
+                <allowed-address-ranges>172.16.0.0/12</allowed-address-ranges>
+                <allowed-address-ranges>192.168.0.0/16</allowed-address-ranges>
                 <!-- Mandatory: restrict the dereferenceable client_id hosts. The two
                      agents publish their CIMD documents under *.localtest.me. -->
                 <client-id-restrictions>

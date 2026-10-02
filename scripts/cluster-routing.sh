@@ -146,6 +146,33 @@ if [[ -z "$INGRESS_IP" ]]; then
 fi
 echo "    $INGRESS_NS/$INGRESS_SVC = $INGRESS_IP"
 
+# Curity 11.5+ refuses to fetch a CIMD client_id whose host resolves to a
+# special-use address unless the address is inside <allowed-address-ranges>
+# (k8s/curity/configmap.yaml). The CIMD hostAlias below points the agent hosts
+# at $INGRESS_IP, so it must be covered — otherwise every agent exchange fails
+# `invalid_client "... is a special-use address, which must not be fetched"`.
+# The ranges are read from the configmap so there is one source of truth.
+CURITY_CONFIGMAP="${CURITY_CONFIGMAP:-k8s/curity/configmap.yaml}"
+if ! python3 - "$INGRESS_IP" "$CURITY_CONFIGMAP" <<'PY'
+import ipaddress, re, sys
+ip = ipaddress.ip_address(sys.argv[1])
+ranges = re.findall(r"<allowed-address-ranges>([^<]+)</allowed-address-ranges>",
+                    open(sys.argv[2]).read())
+if any(ip in ipaddress.ip_network(r.strip(), strict=False) for r in ranges):
+    sys.exit(0)
+# An address that is not special-use at all (e.g. GKE's 34.118.224.0/20) needs no entry.
+if ip.is_global:
+    sys.exit(0)
+print(f"ERROR: ingress ClusterIP {ip} is not in Curity's <allowed-address-ranges> "
+      f"{ranges or '(none)'} in {sys.argv[2]}.\n"
+      f"       Curity 11.5+ will refuse the agents' CIMD fetch. Add this cluster's "
+      f"Service CIDR there, then `make apply`.", file=sys.stderr)
+sys.exit(1)
+PY
+then
+  exit 1
+fi
+
 if [[ "$MODE" == "check" ]]; then
   verify_routing
   exit $?
