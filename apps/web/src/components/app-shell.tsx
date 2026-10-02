@@ -101,7 +101,14 @@ export function AppShell({
   children,
 }: AppShellProps) {
   return (
-    <div className="flex flex-col">
+    // On a display taller than the page (the signed-out persona page on a tall
+    // monitor) the slack has to go somewhere: under the footer reads as a
+    // footer with a huge bottom margin, above it as a void under the cards. So
+    // the footer is pinned (min-h-screen + flex-1) and the signed-out content is
+    // centred in the space above it, splitting the slack. Signed in, the panels
+    // grow as answers arrive, so centring would make the hero jump; it stays
+    // top-aligned and the page is taller than any screen anyway.
+    <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-4 sm:gap-6">
@@ -132,7 +139,9 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl px-6 py-10">
+      <main
+        className={`mx-auto w-full max-w-5xl flex-1 px-6 py-10 ${signedIn ? '' : 'flex flex-col justify-center'}`}
+      >
         {/* Hero */}
         <section className="relative animate-fade-in-up overflow-hidden rounded-3xl">
           <div className="mesh-hero-enterprise animate-gradient-pan bg-[length:200%_200%] px-7 py-9 sm:px-10 sm:py-11 lg:py-8">
