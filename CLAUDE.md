@@ -453,7 +453,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     `AZURE_OPENAI_ENDPOINT` for azure, whose host picks the fragment:
     `*.services.ai.azure.com/api/projects/<p>` → Azure AI Foundry, serving GPT and
     Claude from one resource; `*.openai.azure.com` → Azure OpenAI) and splices the matching fragment from
-    `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure-openai,azure-foundry}.yaml`
+    `k8s/workloads/llm-providers/{openai,anthropic,gemini,azure-openai,azure-foundry,local}.yaml`
     into `.gen/agentgateway-config.yaml` (gitignored) between `# BEGIN_LLM_PROVIDER` /
     `# END_LLM_PROVIDER` sentinels — editing the tracked
     `agentgateway-config.yaml`'s `llm` route between those markers has NO effect,
@@ -462,7 +462,19 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     authorization posture of this hop cannot vary with the provider. **The gateway
     pins `model:`**, which overrides whatever the client sends, so agents have no
     `LLM_MODEL` to configure and instead send the constant
-    `model-pinned-at-gateway` (`packages/agent-runtime/src/llm.ts`). `buildLlm` has
+    `model-pinned-at-gateway` (`packages/agent-runtime/src/llm.ts`). **`LLM_PROVIDER=local`
+    is an OpenAI-compatible server on the Docker host** (Ollama by default): the
+    `local.yaml` fragment is agentgateway's `custom` provider + `hostOverride` rendered
+    from `LLM_LOCAL_HOST` (`host:port`, default `host.docker.internal:11434`), with NO
+    `backendAuth` (no vendor key; `seed-llm-secret` is a no-op and the pod's Secret
+    ref is `optional: true`) and NO `backendTLS` — with `hostOverride` set the gateway
+    attaches no default TLS policy, so the hop is plain HTTP and the fragment is for a
+    loopback-equivalent host only. `localhost`/`127.0.0.1` is refused at render: inside
+    the pod that is the pod (fact #5). Pods resolve `host.docker.internal` through
+    CoreDNS on Docker Desktop (verified 2026-10-16; the `V4Only` resolver of fact #24
+    picks its A record). `qwen2.5:7b` is the default because the agents need tool
+    calling; a model without it loops or answers in prose. Verified end to end on
+    2026-10-16 (`make smoke-llm` + both agents' loops). `buildLlm` has
     exactly ONE path — no direct-to-vendor mode exists; reintroducing one would put
     a static vendor key back in the agent's environment and bypass the `llm:invoke`
     scope check, which is the property this demo argues against. Two traps, both
@@ -1228,7 +1240,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 ```bash
 make tools-check     # preflight: node>=22, pnpm, docker, kind, kubectl, helm, mkcert, python3 (host-side embed/render/smoke scripts)
 make demo            # stand up the full platform on a fresh KIND cluster; one status line per phase, each phase's output in .demo-logs/NN-<phase>.log (DEMO_VERBOSE=1 streams it all)
-make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key
+make seed-secrets    # interactive: license, demo users, web/mcp secrets, agent RSA keypairs, LLM provider key (none for LLM_PROVIDER=local)
 make seed-users      # alice/bob/carol + stable TOTP secrets → curity-demo-users Secret (fact #15); the cards print via `make users` only
 make users           # re-print the persona cards (username/role/password/otpauth + QR) from .demo-users.env; `make demo` ends with it
 make configure-llm   # switch LLM provider after editing .demo.env

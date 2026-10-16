@@ -29,7 +29,7 @@ FOUNDRY_EP=https://r.services.ai.azure.com/api/projects/p
 # run STDIN — runs demo-inputs from the throwaway tree; sets RC and OUT.
 run() {
   if OUT="$(cd "$WORK" && printf '%b' "$1" \
-      | env -u LLM_PROVIDER -u LLM_MODEL -u LLM_API_KEY -u AZURE_OPENAI_ENDPOINT -u AZURE_OPENAI_API_KEY \
+      | env -u LLM_PROVIDER -u LLM_MODEL -u LLM_API_KEY -u AZURE_OPENAI_ENDPOINT -u AZURE_OPENAI_API_KEY -u LLM_LOCAL_HOST \
         LICENSE_FILE=license.json DEMO_ENV_FILE="$ENV_FILE" bash scripts/demo-inputs.sh 2>&1)"; then
     RC=0
   else
@@ -74,6 +74,22 @@ expect "legacy AZURE_*-only .demo.env is still reused" 0 "Reusing Azure OpenAI c
 printf 'LLM_PROVIDER=anthropic\nLLM_MODEL=claude-sonnet-4-6\nLLM_API_KEY=%s\n' "$KEY" > "$ENV_FILE"
 run ""
 expect "non-azure .demo.env is reused" 0 "Reusing LLM credentials"
+
+# local: no key is asked for; the host defaults to the Docker host; the saved file
+# is reusable without a key.
+rm -f "$ENV_FILE"
+run "local\n\n\n"
+expect "prompt accepts local with defaults and asks for no key" 0 "model=qwen2.5:7b"
+grep -q '^LLM_LOCAL_HOST=host.docker.internal:11434$' "$ENV_FILE" && green "OK   local saves the default host" \
+  || { red "FAIL local did not save LLM_LOCAL_HOST"; failed=1; }
+grep -q '^LLM_API_KEY=' "$ENV_FILE" && { red "FAIL local must not save an LLM_API_KEY line"; failed=1; } \
+  || green "OK   local saves no key"
+run ""
+expect "key-less local .demo.env is reused" 0 "Reusing LLM"
+
+rm -f "$ENV_FILE"
+run "local\nlocalhost:11434\n\n"
+expect "prompt refuses a localhost host (the pod's own loopback)" 1 "host.docker.internal"
 
 [ ! -e "$WORK/.gen/agentgateway-config.yaml" ] && green "OK   the check writes no rendered config" \
   || { red "FAIL the check wrote .gen/agentgateway-config.yaml"; failed=1; }

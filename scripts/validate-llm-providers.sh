@@ -53,7 +53,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="$(grep -o 'ghcr.io/agentgateway/agentgateway:[^ ]*' "$REPO_ROOT/k8s/workloads/agentgateway.yaml" | head -1)"
 # One render per fragment. azure appears twice: its endpoint's host picks the
 # fragment (azure-openai vs azure-foundry), so each gets its own endpoint.
-CASES="openai anthropic gemini azure-openai azure-foundry"
+CASES="openai anthropic gemini azure-openai azure-foundry local"
 DOCKER_TIMEOUT="${DOCKER_TIMEOUT:-30}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -181,7 +181,7 @@ EOF
   # `LLM_PROVIDER=anthropic make validate-llm` would otherwise render (and
   # "validate") anthropic on every loop iteration regardless of the
   # controlled .demo.env just written above.
-  env -u LLM_PROVIDER -u LLM_MODEL -u AZURE_OPENAI_ENDPOINT \
+  env -u LLM_PROVIDER -u LLM_MODEL -u AZURE_OPENAI_ENDPOINT -u LLM_LOCAL_HOST \
     bash "$WORK/scripts/render-gateway-config.sh" >/dev/null
 
   cidfile="$TMP/$c.cid"

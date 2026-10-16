@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Render k8s/workloads/agentgateway-config.yaml with the LLM provider block
 # selected by .demo.env, into .gen/agentgateway-config.yaml. LLM_PROVIDER=azure
-# picks azure-openai.yaml or azure-foundry.yaml from AZURE_OPENAI_ENDPOINT's host.
+# picks azure-openai.yaml or azure-foundry.yaml from AZURE_OPENAI_ENDPOINT's host;
+# LLM_PROVIDER=local renders LLM_LOCAL_HOST (host:port) into local.yaml's hostOverride.
 #
 # The provider is chosen at config-ASSEMBLY time rather than by an env var at
 # gateway runtime because agentgateway expands $VARS in values only — each
@@ -25,6 +26,7 @@ die() { printf '\033[31mrender-gateway-config: %s\033[0m\n' "$*" >&2; exit 1; }
 _env_provider="${LLM_PROVIDER:-}"
 _env_model="${LLM_MODEL:-}"
 _env_endpoint="${AZURE_OPENAI_ENDPOINT:-}"
+_env_local_host="${LLM_LOCAL_HOST:-}"
 
 # shellcheck disable=SC1091
 [ -f "$REPO_ROOT/.demo.env" ] && . "$REPO_ROOT/.demo.env"
@@ -45,6 +47,7 @@ else
   model="${_env_model:-${LLM_MODEL:-}}"
 fi
 AZURE_OPENAI_ENDPOINT="${_env_endpoint:-${AZURE_OPENAI_ENDPOINT:-}}"
+LLM_LOCAL_HOST="${_env_local_host:-${LLM_LOCAL_HOST:-}}"
 
 # Back-compat: a .demo.env written before this feature only had AZURE_*.
 if [ -z "$provider" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ]; then
@@ -56,9 +59,9 @@ fi
 # rather than quietly rendering a provider nobody chose.
 provider="$(printf '%s' "${provider:-azure}" | tr '[:upper:]' '[:lower:]')"
 
-case " openai anthropic gemini azure " in
+case " openai anthropic gemini azure local " in
   *" $provider "*) ;;
-  *) die "unknown LLM_PROVIDER '$provider' (expected one of: openai anthropic gemini azure)" ;;
+  *) die "unknown LLM_PROVIDER '$provider' (expected one of: openai anthropic gemini azure local)" ;;
 esac
 
 # azure: AZURE_OPENAI_ENDPOINT's host picks the resource type, and with it the
@@ -104,6 +107,20 @@ if [ "$provider" = "azure" ]; then
     die "could not derive the Azure resource name from '$AZURE_OPENAI_ENDPOINT'"
 fi
 
+# local: an OpenAI-compatible server reached by host:port over plain HTTP. The
+# default is Ollama on the Docker host. `localhost`/127.0.0.1 is refused: inside
+# the gateway pod that is the pod itself (the same trap as CLAUDE.md fact #5).
+local_host=""
+if [ "$provider" = "local" ]; then
+  local_host="${LLM_LOCAL_HOST:-host.docker.internal:11434}"
+  printf '%s' "$local_host" | grep -qE '^[A-Za-z0-9.-]+:[0-9]+$' || \
+    die "LLM_LOCAL_HOST must be host:port with no scheme or path, e.g. host.docker.internal:11434 (got '$local_host')"
+  case "$local_host" in
+    localhost:*|127.*|0.0.0.0:*)
+      die "LLM_LOCAL_HOST '$local_host' is the gateway POD's own loopback, not your machine — use host.docker.internal:<port> (Docker Desktop) or the host's LAN address" ;;
+  esac
+fi
+
 # Default model per fragment. bash 3.2 on macOS has no associative arrays.
 # Per Azure resource type because an Azure OpenAI resource cannot host Claude.
 if [ -z "$model" ]; then
@@ -113,6 +130,7 @@ if [ -z "$model" ]; then
     gemini)        model=gemini-2.5-pro ;;
     azure-openai)  model=gpt-4.1 ;;
     azure-foundry) model=claude-sonnet-4-6 ;;
+    local)         model=qwen2.5:7b ;;
   esac
 fi
 
@@ -134,7 +152,7 @@ fi
 
 mkdir -p "$(dirname "$OUT")"
 
-SRC="$SRC" FRAGMENT="$FRAGMENT" OUT="$OUT" MODEL="$model" RESOURCE_NAME="$resource_name" PROJECT_NAME="$project_name" \
+SRC="$SRC" FRAGMENT="$FRAGMENT" OUT="$OUT" MODEL="$model" RESOURCE_NAME="$resource_name" PROJECT_NAME="$project_name" LOCAL_HOST="$local_host" \
 python3 - <<'PY'
 import os, re, sys
 
@@ -148,6 +166,7 @@ body = body.strip("\n")
 body = body.replace("__LLM_MODEL__", os.environ["MODEL"])
 body = body.replace("__AZURE_RESOURCE_NAME__", os.environ["RESOURCE_NAME"])
 body = body.replace("__AZURE_PROJECT_NAME__", os.environ["PROJECT_NAME"])
+body = body.replace("__LLM_LOCAL_HOST__", os.environ["LOCAL_HOST"])
 
 pattern = re.compile(r"( *)# BEGIN_LLM_PROVIDER\n.*?\n( *)# END_LLM_PROVIDER", re.DOTALL)
 if not pattern.search(src):

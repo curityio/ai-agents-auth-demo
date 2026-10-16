@@ -17,7 +17,7 @@ cp .demo.env.example .demo.env
 Edit `.demo.env`:
 
 ```sh
-LLM_PROVIDER=azure           # openai | anthropic | gemini | azure
+LLM_PROVIDER=azure           # openai | anthropic | gemini | azure | local
 LLM_MODEL=claude-sonnet-4-6  # on azure: the deployment name
 LLM_API_KEY=...
 # azure only — a Foundry PROJECT endpoint (GPT + Claude) or an Azure OpenAI resource (GPT)
@@ -25,9 +25,10 @@ AZURE_OPENAI_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<pro
 ```
 
 **`azure` is the default** — both in this file and at the `make demo` prompt —
-because it is the provider this demo is developed against. It and `anthropic`
-are the two verified end to end (§3). For any other provider, delete the
-`AZURE_OPENAI_ENDPOINT` line. Because azure requires that endpoint, a tree with
+because it is the provider this demo is developed against. It, `anthropic` and
+`local` are verified end to end (§3). For any other provider, delete the
+`AZURE_OPENAI_ENDPOINT` line. `local` needs no key at all — see
+[§2.2](#22-local-models-ollama). Because azure requires that endpoint, a tree with
 no `.demo.env` at all now fails the render with a message naming the missing
 variable, rather than quietly falling back to a provider nobody chose.
 
@@ -38,7 +39,7 @@ make seed-llm-secret configure-llm
 ```
 
 `seed-llm-secret` writes `LLM_API_KEY` into the `agentgateway-llm` Secret (ns
-`mcp`); `configure-llm` re-renders the gateway config from `.demo.env`, updates
+`mcp`) and is a no-op for `local`; `configure-llm` re-renders the gateway config from `.demo.env`, updates
 the `agentgateway-config` ConfigMap, and restarts the gateway deployment so the
 new provider block takes effect. Both steps are required — rendering alone
 updates a gitignored file on disk but leaves the running ConfigMap, and
@@ -70,7 +71,7 @@ transitional.
 
 ---
 
-## 2. The four providers
+## 2. The five providers
 
 | `LLM_PROVIDER` | Get a key | Example `LLM_MODEL` | Extra variable |
 | --- | --- | --- | --- |
@@ -78,12 +79,13 @@ transitional.
 | `anthropic` | https://console.anthropic.com/settings/keys | `claude-sonnet-4-6` | — |
 | `gemini` | https://aistudio.google.com/apikey | `gemini-2.5-pro` | — |
 | `azure` | an Azure AI Foundry resource (GPT + Claude) or an Azure OpenAI resource (GPT only) — see [§2.1](#21-azure-two-resource-types) | the **deployment name**, e.g. `claude-sonnet-4-6` or `gpt-4.1` | `AZURE_OPENAI_ENDPOINT` — its host picks the resource type |
+| `local` | none — an OpenAI-compatible server on this machine, Ollama by default — see [§2.2](#22-local-models-ollama) | `qwen2.5:7b` (must support tool calling) | `LLM_LOCAL_HOST` — `host:port`, default `host.docker.internal:11434` |
 
 Each row is a fragment in `k8s/workloads/llm-providers/` (`azure` has two,
 `azure-openai.yaml` and `azure-foundry.yaml`),
 supplying the `backendAuth` policy and the `backends` block for the gateway's
 `/llm` route — see [§5](#5-adding-a-provider-agentgateway-supports-natively)
-for the shape.
+for the shape. `local.yaml` is the exception with no `backendAuth` block.
 
 ### 2.1 Azure: two resource types
 
@@ -142,11 +144,65 @@ the other breaks whichever family the copied header does not suit, and
 Gemini is not offered on Azure; Google's hosted Gemini is Vertex AI, which is not
 shipped here (see §5).
 
+### 2.2 Local models (Ollama)
+
+`LLM_PROVIDER=local` points the gateway's `/llm` route at any server that speaks
+OpenAI Chat Completions on plain HTTP: Ollama, vLLM, LM Studio, llama.cpp's
+server. Ollama is the documented path:
+
+```bash
+brew install ollama          # or https://ollama.com/download
+ollama serve                 # listens on 127.0.0.1:11434 (the app does this itself)
+ollama pull qwen2.5:7b
+```
+
+```sh
+# .demo.env
+LLM_PROVIDER=local
+LLM_MODEL=qwen2.5:7b
+LLM_LOCAL_HOST=host.docker.internal:11434   # optional; this is the default
+```
+
+then `make configure-llm` (no `seed-llm-secret`: there is no key). What the
+fragment does and why:
+
+- **It is agentgateway's `custom` provider plus `hostOverride`.** `ollama` as a
+  named provider key is xDS-only at this pin and fails standalone config load
+  ([§4](#4-why-only-four)); `custom` with a `completions` format sends
+  `/v1/chat/completions`, which Ollama serves, and the gateway still pins
+  `model:` so the agents' placeholder model name is replaced as for every other
+  provider.
+- **Plain HTTP, by construction.** With `hostOverride` set the gateway attaches
+  no default `backendTLS` policy (`proxy/httpproxy.rs`, v1.5.0), and the fragment
+  adds none. That is right for a loopback-equivalent Docker host and wrong for a
+  remote box over a real network — for that, add a `backendTLS` block to the
+  fragment (and `backendAuth` if the server checks a key).
+- **`LLM_LOCAL_HOST` is where the gateway POD reaches the server**, so it is
+  `host:port` with no scheme or path, and `localhost`/`127.0.0.1` is refused at
+  render time: inside the pod that is the pod (the same trap as CLAUDE.md fact
+  #5). On Docker Desktop `host.docker.internal` resolves through CoreDNS to the
+  host (verified from a pod on 2026-10-16: A record `192.168.65.254`, which the
+  gateway's `V4Only` resolver of fact #24 picks over the AAAA) and reaches a
+  server bound to the host's loopback. On Linux KIND, add the Docker host as a
+  node `extraHost` or use the host's LAN address.
+- **The model must do tool calling.** Both agents are tool-using loops; a model
+  without native tool support answers in prose and never calls anything.
+  `qwen2.5:7b` is the default because it is the smallest Ollama model that
+  calls tools reliably (verified: the copilot's `list_pods` turn and the
+  specialist's `restart_deployment` → `get_deployment` loop, §3). `gpt-oss:20b`
+  and `llama3.1:8b` also support tools.
+- **No vendor key, same authorization.** The gateway still validates the
+  caller's `aud=llm-gateway` token and requires `llm:invoke` — those rules sit
+  outside the generated region and do not vary with the provider ([§7](#7-what-does-not-change)).
+  What disappears is only the server-side key swap. `make seed-llm-secret`
+  skips the `agentgateway-llm` Secret for `local`, and the gateway pod's
+  reference to it is `optional: true` so the pod starts without it.
+
 ---
 
 ## 3. Which is verified
 
-**Azure (both resource types) and Anthropic are exercised end to end.**
+**Azure (both resource types), Anthropic and local (Ollama) are exercised end to end.**
 
 - **Azure OpenAI** is the provider driven through the whole stack during
   development: seeded, deployed, and used to actually answer a chat turn from
@@ -170,6 +226,17 @@ shipped here (see §5).
   confirms the Chat Completions → Messages translation, the implicit Bearer key and
   `anthropic-version` on Foundry ([§2.1](#21-azure-two-resource-types)).
 
+- **Local (Ollama `qwen2.5:7b`)** was verified on 2026-10-16 against the
+  running cluster after `make configure-llm` with `LLM_PROVIDER=local`:
+  `make smoke-llm` passed (its `[2/3]` round-trip answered `model: qwen2.5:7b`),
+  the copilot answered a `list_pods` read question in 7 s, and a restart with
+  an `acr=mfa` token from a scripted TOTP login went through the specialist
+  (`restart_deployment` → `get_deployment`) in 11 s. Every gateway `/llm` span
+  in the restart's trace carried `gen_ai.provider.name=custom`,
+  `gen_ai.request.model=qwen2.5:7b`, `gen_ai.usage.*` and
+  `endpoint=host.docker.internal:11434`, so the token accounting of CLAUDE.md
+  fact #29 holds on the `custom` provider too.
+
 The other two — OpenAI and Gemini — are **schema-validated only**.
 `make validate-llm` renders each fragment and runs it through agentgateway's
 own `--validate-only` config check against the exact pinned image
@@ -178,9 +245,9 @@ well-formed provider block. Neither has been exercised against its
 live vendor. Say so plainly rather than implying otherwise: a fragment that
 loads cleanly can still have the wrong path prefix or the wrong auth header and
 only fail when a real request reaches the vendor. Every fragment here was
-derived from the agentgateway v1.4.1 source (`crates/llm/src/*.rs`), not from
-the published docs, which is the strongest available mitigation short of
-driving all four live — see [§4](#4-why-only-four).
+derived from the agentgateway source (`crates/llm/src/*.rs`, v1.4.1; `local`
+from v1.5.0), not from the published docs, which is the strongest available
+mitigation short of driving all five live — see [§4](#4-why-only-four).
 
 ---
 
@@ -213,14 +280,15 @@ That is not a typo or a missing feature flag — it is a real gap between the
 docs and this pinned version, discovered by actually trying it, not by reading
 a changelog. If you land on this page searching that error text, this is why:
 reach the vendor through `custom` + `hostOverride` instead (see
-[§6](#6-reaching-groq--openrouter--ollama--vllm)), and re-check on any
+[§6](#6-reaching-groq--openrouter--vllm-and-other-openai-compatible-vendors)), and re-check on any
 agentgateway version bump — the eight-key list is a property of v1.4.1–v1.5.0,
 not a permanent architectural limit.
 
-This is also why the four shipped providers are exactly OpenAI, Anthropic,
-Gemini, and Azure OpenAI: they're the ones with a real native provider key at
-this pin, so no fragment here needs `custom`, `hostOverride`, or a `formats`
-block.
+This is also why OpenAI, Anthropic, Gemini and Azure ship as native fragments:
+they're the ones with a real native provider key at this pin. `local`
+([§2.2](#22-local-models-ollama)) is the one fragment built on `custom` +
+`hostOverride` + a `formats` block, and it is the template for any other
+OpenAI-compatible vendor ([§6](#6-reaching-groq--openrouter--vllm-and-other-openai-compatible-vendors)).
 
 ---
 
@@ -232,14 +300,15 @@ Bedrock and Vertex both have native keys at v1.4.1 (`bedrock` needs `region`;
 design standardized on. To add one:
 
 1. Write `k8s/workloads/llm-providers/<provider>.yaml`, following the shape of
-   the existing four fragments: a `backendAuth` block and a `backends: - ai:`
+   the existing native fragments: a `backendAuth` block and a `backends: - ai:`
    block with `name: llm` (keep the backend's local label `llm` — it's what
    keeps `mcp.target`-style telemetry stable across a provider switch) and the
    provider-specific fields.
 2. Add the provider's name to the `case` statement in
    `scripts/render-gateway-config.sh` (default model, any provider-specific
    rendered value).
-3. Add the name to `PROVIDERS` in `scripts/validate-llm-providers.sh`.
+3. Add the name to `CASES` in `scripts/validate-llm-providers.sh`, and a golden
+   fixture under `tests/fixtures/` for `scripts/test-render-gateway-config.sh`.
 4. Run `make validate-llm`.
 
 **The Anthropic `location` trap is the worked example of what to watch for.**
@@ -269,14 +338,14 @@ gate the route (CLAUDE.md fact #29).
 
 ---
 
-## 6. Reaching Groq / OpenRouter / Ollama / vLLM
+## 6. Reaching Groq / OpenRouter / vLLM and other OpenAI-compatible vendors
 
 Every OpenAI-compatible endpoint that isn't one of the eight native keys —
-Groq, OpenRouter, Together AI, DeepSeek, Mistral, xAI, a self-hosted vLLM, or
-Ollama — is reachable through agentgateway's `custom` provider plus
-`hostOverride`. This is a **documented extension point that was deliberately
-not built** for the first version of this feature, to keep it small; it is one
-fragment and one `.demo.env` variable, not new machinery:
+Groq, OpenRouter, Together AI, DeepSeek, Mistral, xAI, a self-hosted vLLM —
+is reachable the way `local` already is: agentgateway's `custom` provider plus
+`hostOverride`. `k8s/workloads/llm-providers/local.yaml` is the working
+template; what a hosted vendor adds back is the key and TLS, both of which the
+local fragment deliberately leaves out:
 
 ```yaml
         backendAuth:
@@ -293,18 +362,18 @@ fragment and one `.demo.env` variable, not new machinery:
               - type: completions
                 path: /openai/v1/chat/completions
           hostOverride: api.groq.com:443
+          policies:
+            backendTLS: {}
 ```
 
-Adding this for real means: a fifth fragment
-(`k8s/workloads/llm-providers/custom.yaml` or a per-vendor variant), a new
-`.demo.env` variable for the host (Groq's `api.groq.com:443` and a local
-Ollama's `localhost:11434` are both just a `hostOverride` string), and the same
-`case`/`PROVIDERS` wiring as [§5](#5-adding-a-provider-agentgateway-supports-natively).
-Ollama specifically is worth calling out: it's one of the thirteen presets
-that fails as a *named* provider key at v1.4.1 ([§4](#4-why-only-four)), but it
-serves an OpenAI-compatible `/v1/chat/completions` surface, so it's reachable
-through this same `custom` route — the failure in §4 is about the shorthand
-`{ollama: {}}` key, not about Ollama itself being unreachable.
+`backendTLS` is needed because `hostOverride` suppresses the gateway's default
+TLS policy ([§2.2](#22-local-models-ollama)); without it the gateway speaks
+plaintext to port 443. Adding one for real is a fragment, a `case` entry for
+its default model in `scripts/render-gateway-config.sh`, a `CASES` entry in
+`scripts/validate-llm-providers.sh`, and `make validate-llm` — the same wiring
+as [§5](#5-adding-a-provider-agentgateway-supports-natively). A self-hosted
+vLLM on a LAN box is the `local` fragment with `LLM_LOCAL_HOST=<box>:8000`, as
+long as plain HTTP is acceptable on that network.
 
 ---
 

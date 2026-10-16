@@ -3,8 +3,9 @@
 # long platform install + seeding unattended:
 #   1. the Curity license file (./license.json)
 #   2. the LLM provider + API key for the agent LLM (one of openai, anthropic,
-#      gemini, azure; azure additionally needs AZURE_OPENAI_ENDPOINT — an Azure
-#      AI Foundry project endpoint or an Azure OpenAI resource URL)
+#      gemini, azure, local; azure additionally needs AZURE_OPENAI_ENDPOINT — an
+#      Azure AI Foundry project endpoint or an Azure OpenAI resource URL; local
+#      needs no key and takes LLM_LOCAL_HOST, default Ollama on the Docker host)
 #
 # Make runs each recipe line in its own shell, so prompted values can't be handed
 # to a later target directly. We persist the LLM inputs to a gitignored .demo.env
@@ -15,15 +16,15 @@ set -euo pipefail
 
 LICENSE="${LICENSE_FILE:-license.json}"
 ENV_FILE="${DEMO_ENV_FILE:-.demo.env}"
-VALID_PROVIDERS="openai anthropic gemini azure"
+VALID_PROVIDERS="openai anthropic gemini azure local"
 RENDER="$(dirname "${BASH_SOURCE[0]}")/render-gateway-config.sh"
 
-# check_llm PROVIDER MODEL ENDPOINT — run the gateway render's own input checks
+# check_llm PROVIDER MODEL ENDPOINT LOCAL_HOST — run the gateway render's own input checks
 # (endpoint shape, provider name) without writing anything. The render first runs
 # at `make apply`, the LAST `make demo` phase; without this a mistyped endpoint
 # would be accepted here and fail only after the whole cluster was built.
 check_llm() {
-  LLM_PROVIDER="$1" LLM_MODEL="$2" AZURE_OPENAI_ENDPOINT="$3" RENDER_CHECK_ONLY=1 \
+  LLM_PROVIDER="$1" LLM_MODEL="$2" AZURE_OPENAI_ENDPOINT="$3" LLM_LOCAL_HOST="${4:-}" RENDER_CHECK_ONLY=1 \
     bash "$RENDER" >/dev/null
 }
 
@@ -49,6 +50,7 @@ existing_provider=""
 existing_key=""
 existing_endpoint=""
 existing_azure_key=""
+existing_local_host=""
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$ENV_FILE" 2>/dev/null || true
@@ -56,14 +58,20 @@ if [[ -f "$ENV_FILE" ]]; then
   existing_key="${LLM_API_KEY:-}"
   existing_endpoint="${AZURE_OPENAI_ENDPOINT:-}"
   existing_azure_key="${AZURE_OPENAI_API_KEY:-}"
+  existing_local_host="${LLM_LOCAL_HOST:-}"
 fi
 
-if [[ -n "$existing_key" ]]; then
-  check_llm "${existing_provider:-azure}" "${LLM_MODEL:-}" "$existing_endpoint" || {
+# A key makes the file usable; so does LLM_PROVIDER=local, which has none.
+if [[ -n "$existing_key" || "$existing_provider" == "local" ]]; then
+  check_llm "${existing_provider:-azure}" "${LLM_MODEL:-}" "$existing_endpoint" "$existing_local_host" || {
     echo "    $ENV_FILE is not a usable LLM configuration (above) — fix it, or delete it to re-enter." >&2
     exit 1
   }
-  echo "==> Reusing LLM credentials from $ENV_FILE — provider=${existing_provider:-azure} (delete it to re-enter)."
+  if [[ -n "$existing_key" ]]; then
+    echo "==> Reusing LLM credentials from $ENV_FILE — provider=${existing_provider:-azure} (delete it to re-enter)."
+  else
+    echo "==> Reusing LLM configuration from $ENV_FILE — provider=local (delete it to re-enter)."
+  fi
   exit 0
 fi
 
@@ -79,7 +87,7 @@ if [[ -n "$existing_endpoint" && -n "$existing_azure_key" ]]; then
   exit 0
 fi
 
-read -r -p "LLM_PROVIDER [openai|anthropic|gemini|azure] (default azure): " provider
+read -r -p "LLM_PROVIDER [openai|anthropic|gemini|azure|local] (default azure): " provider
 provider="$(printf '%s' "${provider:-azure}" | tr '[:upper:]' '[:lower:]')"
 case " $VALID_PROVIDERS " in
   *" $provider "*) ;;
@@ -89,26 +97,36 @@ case " $VALID_PROVIDERS " in
     ;;
 esac
 
-# `read -s` echoes nothing, so a half-pasted or empty-clipboard key looks exactly
-# like a correct one until the gateway 401s much later. Strip stray whitespace (a
-# trailing newline is the usual clipboard artefact) and confirm what landed, with
-# enough of the key visible to recognise it but not enough to be worth reading out
-# of terminal scrollback.
-read -r -s -p "LLM_API_KEY: " key; echo
-key="$(printf '%s' "$key" | tr -d '[:space:]')"
-[[ -n "$key" ]] || { echo "LLM_API_KEY empty — abort" >&2; exit 1; }
-key_len=${#key}
-if [[ "$key_len" -ge 12 ]]; then
-  key_masked="${key:0:2}$(printf '%*s' "$((key_len - 6))" '' | tr ' ' '*')${key: -4}"
+key=""
+local_host=""
+if [[ "$provider" == "local" ]]; then
+  # No key: a local server authenticates nobody. The host is where the GATEWAY
+  # POD reaches it — host.docker.internal is the Docker host on Docker Desktop;
+  # localhost would be the pod itself.
+  read -r -p "LLM_LOCAL_HOST (host:port, default host.docker.internal:11434): " local_host
+  local_host="${local_host:-host.docker.internal:11434}"
 else
-  key_masked="$(printf '%*s' "$key_len" '' | tr ' ' '*')"
-fi
-echo "    got $key_masked ($key_len chars)"
-# Every provider we support issues keys far longer than this; a short one is
-# almost always a truncated paste, and it is much cheaper to question it here
-# than to debug a 401 after the whole cluster is up.
-if [[ "$key_len" -lt 20 ]]; then
-  echo "    WARNING: that is short for an API key — check the paste was complete." >&2
+  # `read -s` echoes nothing, so a half-pasted or empty-clipboard key looks exactly
+  # like a correct one until the gateway 401s much later. Strip stray whitespace (a
+  # trailing newline is the usual clipboard artefact) and confirm what landed, with
+  # enough of the key visible to recognise it but not enough to be worth reading out
+  # of terminal scrollback.
+  read -r -s -p "LLM_API_KEY: " key; echo
+  key="$(printf '%s' "$key" | tr -d '[:space:]')"
+  [[ -n "$key" ]] || { echo "LLM_API_KEY empty — abort" >&2; exit 1; }
+  key_len=${#key}
+  if [[ "$key_len" -ge 12 ]]; then
+    key_masked="${key:0:2}$(printf '%*s' "$((key_len - 6))" '' | tr ' ' '*')${key: -4}"
+  else
+    key_masked="$(printf '%*s' "$key_len" '' | tr ' ' '*')"
+  fi
+  echo "    got $key_masked ($key_len chars)"
+  # Every provider we support issues keys far longer than this; a short one is
+  # almost always a truncated paste, and it is much cheaper to question it here
+  # than to debug a 401 after the whole cluster is up.
+  if [[ "$key_len" -lt 20 ]]; then
+    echo "    WARNING: that is short for an API key — check the paste was complete." >&2
+  fi
 fi
 
 endpoint=""
@@ -126,6 +144,7 @@ case "$provider" in
   openai)    default_model=gpt-4.1 ;;
   anthropic) default_model=claude-sonnet-4-6 ;;
   gemini)    default_model=gemini-2.5-pro ;;
+  local)     default_model=qwen2.5:7b ;;
   azure)
     # Foundry can host Claude; an Azure OpenAI resource cannot.
     case "$(printf '%s' "$endpoint" | tr '[:upper:]' '[:lower:]')" in
@@ -136,7 +155,7 @@ case "$provider" in
 esac
 read -r -p "LLM_MODEL (default $default_model): " model
 model="${model:-$default_model}"
-check_llm "$provider" "$model" "$endpoint" || { echo "    nothing saved — re-run to try again." >&2; exit 1; }
+check_llm "$provider" "$model" "$endpoint" "$local_host" || { echo "    nothing saved — re-run to try again." >&2; exit 1; }
 
 # Endpoints are URLs, keys are opaque vendor tokens, and the model is a short
 # identifier — none contain shell metacharacters — so a plain KEY=value file is
@@ -146,10 +165,14 @@ check_llm "$provider" "$model" "$endpoint" || { echo "    nothing saved — re-r
   {
     echo "LLM_PROVIDER=$provider"
     echo "LLM_MODEL=$model"
-    echo "LLM_API_KEY=$key"
+    if [[ "$provider" == "local" ]]; then
+      echo "LLM_LOCAL_HOST=$local_host"
+    else
+      echo "LLM_API_KEY=$key"
+    fi
     if [[ "$provider" == "azure" ]]; then
       echo "AZURE_OPENAI_ENDPOINT=$endpoint"
     fi
   } > "$ENV_FILE"
 )
-echo "==> Saved LLM credentials to $ENV_FILE (gitignored) — provider=$provider model=$model."
+echo "==> Saved LLM configuration to $ENV_FILE (gitignored) — provider=$provider model=$model."
