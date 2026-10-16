@@ -146,9 +146,10 @@ shipped here (see §5).
 
 ### 2.2 Local models (Ollama)
 
-`LLM_PROVIDER=local` points the gateway's `/llm` route at any server that speaks
-OpenAI Chat Completions on plain HTTP: Ollama, vLLM, LM Studio, llama.cpp's
-server. Ollama is the documented path:
+`LLM_PROVIDER=local` points the gateway's `/llm` route at **Ollama** on this
+machine, over plain HTTP. (The fragment is a generic OpenAI Chat Completions
+backend, so other local servers would likely work, but only Ollama is supported
+and verified — see [§6](#6-reaching-groq--openrouter-and-other-openai-compatible-servers).)
 
 ```bash
 brew install ollama          # or https://ollama.com/download
@@ -280,7 +281,7 @@ That is not a typo or a missing feature flag — it is a real gap between the
 docs and this pinned version, discovered by actually trying it, not by reading
 a changelog. If you land on this page searching that error text, this is why:
 reach the vendor through `custom` + `hostOverride` instead (see
-[§6](#6-reaching-groq--openrouter--vllm-and-other-openai-compatible-vendors)), and re-check on any
+[§6](#6-reaching-groq--openrouter-and-other-openai-compatible-servers)), and re-check on any
 agentgateway version bump — the eight-key list is a property of v1.4.1–v1.5.0,
 not a permanent architectural limit.
 
@@ -288,7 +289,7 @@ This is also why OpenAI, Anthropic, Gemini and Azure ship as native fragments:
 they're the ones with a real native provider key at this pin. `local`
 ([§2.2](#22-local-models-ollama)) is the one fragment built on `custom` +
 `hostOverride` + a `formats` block, and it is the template for any other
-OpenAI-compatible vendor ([§6](#6-reaching-groq--openrouter--vllm-and-other-openai-compatible-vendors)).
+OpenAI-compatible vendor ([§6](#6-reaching-groq--openrouter-and-other-openai-compatible-servers)).
 
 ---
 
@@ -338,11 +339,11 @@ gate the route (CLAUDE.md fact #29).
 
 ---
 
-## 6. Reaching Groq / OpenRouter / vLLM and other OpenAI-compatible vendors
+## 6. Reaching Groq / OpenRouter and other OpenAI-compatible servers
 
 Every OpenAI-compatible endpoint that isn't one of the eight native keys —
-Groq, OpenRouter, Together AI, DeepSeek, Mistral, xAI, a self-hosted vLLM —
-is reachable the way `local` already is: agentgateway's `custom` provider plus
+Groq, OpenRouter, Together AI, DeepSeek, Mistral, xAI, or a self-hosted server
+such as vLLM or LM Studio — is reachable the way `local` already is: agentgateway's `custom` provider plus
 `hostOverride`. `k8s/workloads/llm-providers/local.yaml` is the working
 template; what a hosted vendor adds back is the key and TLS, both of which the
 local fragment deliberately leaves out:
@@ -371,9 +372,10 @@ TLS policy ([§2.2](#22-local-models-ollama)); without it the gateway speaks
 plaintext to port 443. Adding one for real is a fragment, a `case` entry for
 its default model in `scripts/render-gateway-config.sh`, a `CASES` entry in
 `scripts/validate-llm-providers.sh`, and `make validate-llm` — the same wiring
-as [§5](#5-adding-a-provider-agentgateway-supports-natively). A self-hosted
-vLLM on a LAN box is the `local` fragment with `LLM_LOCAL_HOST=<box>:8000`, as
-long as plain HTTP is acceptable on that network.
+as [§5](#5-adding-a-provider-agentgateway-supports-natively). A different local
+server on this Mac (LM Studio, vLLM, llama.cpp) is most likely just
+`LLM_LOCAL_HOST=host.docker.internal:<its port>` with the `local` fragment, but
+none of them has been run here — Ollama is the only supported local server.
 
 ---
 

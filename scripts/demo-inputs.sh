@@ -104,9 +104,9 @@ if [[ "$provider" == "local" ]]; then
   # POD reaches it — host.docker.internal is the Docker host on Docker Desktop;
   # localhost would be the pod itself. Say so BEFORE asking: a first-time user
   # has no other way to know what this value is.
-  echo "    LLM_LOCAL_HOST is where the GATEWAY POD reaches your model server (host:port, plain HTTP)."
-  echo "      On Docker Desktop that is host.docker.internal:<port> — Ollama listens on 11434,"
-  echo "      LM Studio on 1234, vLLM on 8000. Press Enter for Ollama."
+  echo "    LLM_LOCAL_HOST is where the GATEWAY POD reaches Ollama (host:port, plain HTTP)."
+  echo "      On Docker Desktop that is host.docker.internal:11434 — Ollama's default port."
+  echo "      Press Enter unless you moved Ollama to another port (OLLAMA_HOST)."
   read -r -p "LLM_LOCAL_HOST (default host.docker.internal:11434): " local_host
   local_host="${local_host:-host.docker.internal:11434}"
 else
@@ -170,10 +170,10 @@ if [[ "$provider" == "local" && "$local_host" == host.docker.internal:* ]]; then
     if printf '%s' "$models" | grep -qF "\"$model\""; then
       echo "    model $model is available at localhost:$port."
     else
-      echo "    WARNING: a server answers at localhost:$port but does not list model '$model' — for Ollama run: ollama pull $model" >&2
+      echo "    WARNING: Ollama answers at localhost:$port but does not list model '$model' — run: ollama pull $model" >&2
     fi
   else
-    echo "    WARNING: nothing answered at localhost:$port — start your model server (Ollama: 'ollama serve' + 'ollama pull $model') before asking the copilot anything." >&2
+    echo "    WARNING: nothing answered at localhost:$port — start Ollama ('ollama serve', then 'ollama pull $model') before asking the copilot anything." >&2
   fi
 fi
 

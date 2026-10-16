@@ -1,5 +1,6 @@
-# Local model: any OpenAI-compatible server on the Docker host — Ollama by
-# default (host.docker.internal:11434), also vLLM / LM Studio / llama.cpp.
+# Local model: Ollama on the Docker host (host.docker.internal:11434). The
+# fragment is a generic OpenAI-compatible backend, but only Ollama is supported
+# and verified; see docs/llm-providers.md §6 for other servers.
 # LLM_LOCAL_HOST (host:port, no scheme) is rendered into hostOverride.
 #
 # No backendAuth: a local server has no vendor key, so there is nothing to swap
