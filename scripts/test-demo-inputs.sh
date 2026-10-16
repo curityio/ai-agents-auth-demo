@@ -91,6 +91,14 @@ rm -f "$ENV_FILE"
 run "local\nlocalhost:11434\n\n"
 expect "prompt refuses a localhost host (the pod's own loopback)" 1 "host.docker.internal"
 
+# The host prompt explains what the value is before asking for it (a first-time
+# user has no other way to know), and an unreachable server is a WARNING, not a
+# refusal — starting Ollama after `make demo` is legitimate. Port 1 never listens.
+rm -f "$ENV_FILE"
+run "local\nhost.docker.internal:1\n\n"
+expect "host prompt explains where the gateway pod reaches the server" 0 "GATEWAY POD"
+expect "unreachable local server is a warning, not a refusal" 0 "WARNING: nothing answered"
+
 [ ! -e "$WORK/.gen/agentgateway-config.yaml" ] && green "OK   the check writes no rendered config" \
   || { red "FAIL the check wrote .gen/agentgateway-config.yaml"; failed=1; }
 

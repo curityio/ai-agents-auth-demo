@@ -102,8 +102,12 @@ local_host=""
 if [[ "$provider" == "local" ]]; then
   # No key: a local server authenticates nobody. The host is where the GATEWAY
   # POD reaches it — host.docker.internal is the Docker host on Docker Desktop;
-  # localhost would be the pod itself.
-  read -r -p "LLM_LOCAL_HOST (host:port, default host.docker.internal:11434): " local_host
+  # localhost would be the pod itself. Say so BEFORE asking: a first-time user
+  # has no other way to know what this value is.
+  echo "    LLM_LOCAL_HOST is where the GATEWAY POD reaches your model server (host:port, plain HTTP)."
+  echo "      On Docker Desktop that is host.docker.internal:<port> — Ollama listens on 11434,"
+  echo "      LM Studio on 1234, vLLM on 8000. Press Enter for Ollama."
+  read -r -p "LLM_LOCAL_HOST (default host.docker.internal:11434): " local_host
   local_host="${local_host:-host.docker.internal:11434}"
 else
   # `read -s` echoes nothing, so a half-pasted or empty-clipboard key looks exactly
@@ -156,6 +160,22 @@ esac
 read -r -p "LLM_MODEL (default $default_model): " model
 model="${model:-$default_model}"
 check_llm "$provider" "$model" "$endpoint" "$local_host" || { echo "    nothing saved — re-run to try again." >&2; exit 1; }
+
+# local: probe the server from HERE (host.docker.internal is this machine) so a
+# missing server or model is seen now rather than at the first question in the
+# UI. A WARNING, not a refusal — starting Ollama after `make demo` is legitimate.
+if [[ "$provider" == "local" && "$local_host" == host.docker.internal:* ]]; then
+  port="${local_host##*:}"
+  if models="$(curl -sS -m 3 "http://localhost:$port/v1/models" 2>/dev/null)"; then
+    if printf '%s' "$models" | grep -qF "\"$model\""; then
+      echo "    model $model is available at localhost:$port."
+    else
+      echo "    WARNING: a server answers at localhost:$port but does not list model '$model' — for Ollama run: ollama pull $model" >&2
+    fi
+  else
+    echo "    WARNING: nothing answered at localhost:$port — start your model server (Ollama: 'ollama serve' + 'ollama pull $model') before asking the copilot anything." >&2
+  fi
+fi
 
 # Endpoints are URLs, keys are opaque vendor tokens, and the model is a short
 # identifier — none contain shell metacharacters — so a plain KEY=value file is
