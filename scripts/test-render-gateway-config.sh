@@ -32,7 +32,7 @@ failed=0
 render() {
   printf '%s\n' "$@" > "$WORK/.demo.env"
   rm -f "$WORK/.gen/agentgateway-config.yaml"
-  if RENDER_OUT="$(env -u LLM_PROVIDER -u LLM_MODEL -u AZURE_OPENAI_ENDPOINT \
+  if RENDER_OUT="$(env -u LLM_PROVIDER -u LLM_MODEL -u AZURE_OPENAI_ENDPOINT -u LLM_LOCAL_HOST \
       bash "$WORK/scripts/render-gateway-config.sh" 2>&1)"; then
     RENDER_RC=0
   else
@@ -112,6 +112,11 @@ golden "azure / Foundry project endpoint" llm-route-azure-foundry.expected.yaml 
 golden "azure / Foundry project endpoint, trailing slash" llm-route-azure-foundry.expected.yaml \
   LLM_PROVIDER=azure LLM_MODEL=claude-sonnet-4-6 "AZURE_OPENAI_ENDPOINT=$FOUNDRY_EP/"
 
+golden "local / default host" llm-route-local.expected.yaml \
+  LLM_PROVIDER=local LLM_MODEL=qwen2.5:7b
+golden "local / explicit host" llm-route-local.expected.yaml \
+  LLM_PROVIDER=local LLM_MODEL=qwen2.5:7b LLM_LOCAL_HOST=host.docker.internal:11434
+
 # --- refusals --------------------------------------------------------------
 refused "Foundry resource URL without a project" "needs the PROJECT endpoint" \
   LLM_PROVIDER=azure "AZURE_OPENAI_ENDPOINT=https://my-foundry-resource.services.ai.azure.com"
@@ -132,6 +137,17 @@ refused "internal fragment name azure-foundry is not a provider" "unknown LLM_PR
 refused "internal fragment name azure-openai is not a provider" "unknown LLM_PROVIDER" \
   LLM_PROVIDER=azure-openai "AZURE_OPENAI_ENDPOINT=$OPENAI_EP"
 
+refused "local host with a scheme" "host:port" \
+  LLM_PROVIDER=local LLM_LOCAL_HOST=http://host.docker.internal:11434
+refused "local host with a path" "host:port" \
+  LLM_PROVIDER=local LLM_LOCAL_HOST=host.docker.internal:11434/v1
+refused "local host without a port" "host:port" \
+  LLM_PROVIDER=local LLM_LOCAL_HOST=host.docker.internal
+refused "local host on localhost (the pod's own loopback)" "host.docker.internal" \
+  LLM_PROVIDER=local LLM_LOCAL_HOST=localhost:11434
+refused "local host on 127.0.0.1 (the pod's own loopback)" "host.docker.internal" \
+  LLM_PROVIDER=local LLM_LOCAL_HOST=127.0.0.1:11434
+
 # --- default model ---------------------------------------------------------
 renders_model "Foundry defaults to claude-sonnet-4-6" claude-sonnet-4-6 \
   LLM_PROVIDER=azure "AZURE_OPENAI_ENDPOINT=$FOUNDRY_EP"
@@ -141,6 +157,8 @@ renders_model "Foundry honours an explicit GPT deployment" gpt-4.1 \
   LLM_PROVIDER=azure LLM_MODEL=gpt-4.1 "AZURE_OPENAI_ENDPOINT=$FOUNDRY_EP"
 renders_model "anthropic still renders (allow-list regression guard)" claude-sonnet-4-6 \
   LLM_PROVIDER=anthropic
+renders_model "local defaults to qwen2.5:7b" qwen2.5:7b \
+  LLM_PROVIDER=local
 
 # The rendered config keeps the tracing fields that name a DENIED tool call. The
 # HTTP-layer `authorization` rule refuses before the MCP layer runs, so the red

@@ -168,6 +168,10 @@ spec:
                 secretKeyRef:
                   name: agentgateway-llm
                   key: LLM_API_KEY
+                  # LLM_PROVIDER=local has no vendor key and no Secret; every
+                  # other fragment references $LLM_API_KEY and the gateway
+                  # still fails config load, loudly, if it is unset.
+                  optional: true
           ports:
             - containerPort: 8080
           volumeMounts:

@@ -1,0 +1,14 @@
+# Golden fixture for scripts/test-render-gateway-config.sh: the `llm` route's
+# backends block for LLM_PROVIDER=local (an OpenAI-compatible server on the
+# Docker host, e.g. Ollama). No backendAuth: a local server has no vendor key,
+# so the key swap does not happen on this provider. No backendTLS: with
+# hostOverride set agentgateway adds none, so the hop is plain HTTP.
+      backends:
+      - ai:
+          name: llm
+          provider:
+            custom:
+              model: qwen2.5:7b
+              formats:
+              - type: completions
+          hostOverride: host.docker.internal:11434

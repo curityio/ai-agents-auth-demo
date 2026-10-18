@@ -21,7 +21,8 @@ Built with:
   egress gateway**: both agents exchange for `aud=llm-gateway`/`scope=llm:invoke`
   and call its OpenAI-compatible `/llm` route, which holds the only upstream LLM
   provider key in the system — the agents never possess it. The provider itself is
-  pluggable (OpenAI, Anthropic, Gemini, Azure OpenAI/Foundry) — see
+  pluggable (OpenAI, Anthropic, Gemini, Azure OpenAI/Foundry, or a local model via
+  Ollama) — see
   [`docs/llm-providers.md`](docs/llm-providers.md).
 - **OpenTelemetry → Tempo → Grafana** — identity-decorated distributed tracing.
 - Modern OAuth standards: **RFC 8693** (token exchange), **RFC 9470** (step-up),
@@ -68,19 +69,21 @@ See [`docs/architecture.md`](docs/architecture.md) for the full picture.
 | | Verified | Notes |
 |---|---|---|
 | **Host OS** | macOS with Docker Desktop | Linux is untested but nothing is Mac-specific beyond the `brew` hints. |
-| **LLM provider** | **Azure** (`LLM_PROVIDER=azure`, the default) — an **Azure AI Foundry** project (GPT + Claude, e.g. `claude-sonnet-4-6`) or an **Azure OpenAI** resource and **Anthropic** (`LLM_PROVIDER=anthropic`, `claude-sonnet-4-6`) | All driven end to end — copilot answers, specialist restarts, `make smoke-llm` (Foundry with both Claude and GPT). The OpenAI and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
+| **LLM provider** | **Azure** (`LLM_PROVIDER=azure`, the default) — an **Azure AI Foundry** project (GPT + Claude, e.g. `claude-sonnet-4-6`) or an **Azure OpenAI** resource, **Anthropic** (`LLM_PROVIDER=anthropic`, `claude-sonnet-4-6`) and a **local model** (`LLM_PROVIDER=local`, Ollama `qwen2.5:7b` on the Docker host, no key) | All driven end to end — copilot answers, specialist restarts, `make smoke-llm` (Foundry with both Claude and GPT; Ollama on 2026-10-16). The OpenAI and Gemini fragments are schema-validated against the pinned agentgateway image only, not driven against the live vendor — see [`docs/llm-providers.md`](docs/llm-providers.md#3-which-is-verified). |
 | **Footprint** | Single-node KIND; give Docker about **20 GB of disk** | `make demo` takes about **10 minutes** end to end on a fresh machine, most of it is image builds; it shows one status line per phase (full output goes to `.demo-logs/`) with its duration, and ends with an *Installation complete* banner. Ports **80 and 443** on localhost must be free for the Istio ingress. |
 
 ## Prerequisites (macOS)
 
 You need **Docker running** (Docker Desktop), a few CLIs, a Curity
-developer license, and an API key for one supported LLM provider (OpenAI,
-Anthropic, Gemini, or Azure OpenAI/Foundry).
+developer license, and an LLM: either an API key for a hosted provider (OpenAI,
+Anthropic, Gemini, or Azure OpenAI/Foundry) or Ollama running on this Mac.
 
 ```bash
 # 1. CLIs via Homebrew (Node 22+ is required; python3 is used only by the host-side
-#    embed/render/smoke scripts; qrencode is optional and turns the TOTP URIs into QR codes).
+#    embed/render/smoke scripts; qrencode is optional and turns the TOTP URIs into QR codes;
+#    ollama is only needed for the local-model provider).
 brew install node kind kubectl helm mkcert python qrencode
+brew install ollama      # optional: LLM_PROVIDER=local
 
 # 2. pnpm — NO separate install. It ships with Node via corepack:
 corepack enable          # provisions the repo-pinned pnpm (9.15.0)
@@ -93,8 +96,15 @@ Two things `make tools-check` can't check for — have them ready before `make d
 
 - **Curity developer license** — free from the [Curity developer portal](https://developer.curity.io);
   save it as `./license.json` at the repo root (gitignored).
-- **An LLM provider API key** — the agents' reasoning runs on it, so without it
-  they can't respond. Pick one of `openai`, `anthropic`, `gemini` or `azure` when prompted
+- **An LLM** — the agents' reasoning runs on it, so without one they can't
+  respond. Either:
+  - **an API key for a hosted provider** — pick `openai`, `anthropic`, `gemini` or
+    `azure` when prompted and paste the key; or
+  - **Ollama for a local model** — no key needed. `brew install ollama`, start it
+    (the Ollama app, or `ollama serve`), then `ollama pull qwen2.5:7b`; pick `local`
+    when prompted and accept the defaults. The prompt checks that Ollama answers
+    and has the model.
+
   Switching provider later, run `make configure-llm` — see
   [`docs/llm-providers.md`](docs/llm-providers.md).
 
@@ -116,7 +126,7 @@ cd ai-agents-auth-demo
 cp /path/to/your/curity-license.json ./license.json
 
 make demo            # one command, end to end. Prompts up front for the license
-                     # file + LLM provider key, then runs unattended:
+                     # file + LLM provider (API key, or local Ollama), then runs unattended:
                      # kind + Istio Ambient + SPIRE + telemetry, seeds every
                      # secret, builds/loads images, applies manifests, wires routing.
 

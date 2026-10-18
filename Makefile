@@ -462,8 +462,9 @@ seed-web-secret: ## Create web-secrets (autogen AUTH_SECRET + web client secret 
 	  $(call restart_if_exists,$(NS_WEB),web)
 
 .PHONY: seed-llm-secret
-seed-llm-secret: ## Create the agentgateway LLM provider secret (from .demo.env if present, else prompt)
+seed-llm-secret: ## Create the agentgateway LLM provider secret (from .demo.env if present, else prompt; no-op for LLM_PROVIDER=local)
 	@if [ -f .demo.env ]; then . ./.demo.env; fi; \
+	  if [ "$${LLM_PROVIDER:-}" = local ]; then echo "LLM_PROVIDER=local: no vendor key, skipping agentgateway-llm secret"; exit 0; fi; \
 	  k="$${LLM_API_KEY:-$$AZURE_OPENAI_API_KEY}"; \
 	  if [ -z "$$k" ]; then read -r -s -p "LLM_API_KEY: " k; echo; fi; \
 	  test -n "$$k" || { echo "LLM_API_KEY empty — abort"; exit 1; }; \

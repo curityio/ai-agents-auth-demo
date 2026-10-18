@@ -1,0 +1,22 @@
+# Local model: Ollama on the Docker host (host.docker.internal:11434). The
+# fragment is a generic OpenAI-compatible backend, but only Ollama is supported
+# and verified; see docs/llm-providers.md §6 for other servers.
+# LLM_LOCAL_HOST (host:port, no scheme) is rendered into hostOverride.
+#
+# No backendAuth: a local server has no vendor key, so there is nothing to swap
+# in; the gateway still requires the caller's llm:invoke token (outside the
+# sentinels). No backendTLS: with hostOverride set agentgateway attaches no
+# default TLS policy (httpproxy.rs, v1.5.0), so this hop is plain HTTP — fine
+# for a loopback-equivalent Docker host, not for a remote box. The `custom`
+# provider's default completions path is /v1/chat/completions (llm/mod.rs),
+# which is what Ollama serves. `ollama` as a NAMED provider key is xDS-only
+# and fails standalone config load (CLAUDE.md fact #22) — hence `custom`.
+      backends:
+      - ai:
+          name: llm
+          provider:
+            custom:
+              model: __LLM_MODEL__
+              formats:
+              - type: completions
+          hostOverride: __LLM_LOCAL_HOST__
