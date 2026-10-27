@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
+import { withProcessDpop } from '@ai-agents-demo/agent-runtime';
 import { verifyJwt, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import type { Config } from './config.js';
 import { peekLastExchange } from './mcp-ops-client.js';
@@ -84,7 +85,8 @@ async function fetchDownstreamChain(
 ): Promise<ChainHop[]> {
   try {
     const fetchUrl = includeRaw ? `${url}?raw=1` : url;
-    const r = await fetch(fetchUrl, { headers: { authorization: `Bearer ${bearer}` } });
+    // Both walks hit the gateway with a DPoP-bound token: present it with a proof.
+    const r = await withProcessDpop()(fetchUrl, { headers: { authorization: `Bearer ${bearer}` } });
     if (!r.ok) return [];
     const body = (await r.json()) as { chain?: ChainHop[] };
     return body.chain ?? [];

@@ -1,4 +1,5 @@
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
+import { processDpopKey } from '@ai-agents-demo/agent-runtime';
 import { SpiffeJwtSvidSource } from '@ai-agents-demo/spiffe';
 import { getCimdIdentity } from './cimd-identity.js';
 import { SVID_AUDIENCE, SVID_FILE } from './spiffe-constants.js';
@@ -49,6 +50,8 @@ export async function obtainInspectToken(opts: {
     actorToken: svid.jwt,
     audience: cfg.mcpInspectAudience,
     scope,
+    // RFC 9449: bind to this process's key; openMcpToolset presents it with proofs.
+    dpop: await processDpopKey(),
   });
   lastInspectExchange = { accessToken: result.accessToken, at: Date.now() };
   return result.accessToken;

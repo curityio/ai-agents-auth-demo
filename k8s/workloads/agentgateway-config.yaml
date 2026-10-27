@@ -95,7 +95,12 @@ binds:
       - path:
           exact: /.well-known/oauth-protected-resource/inspect/mcp
       policies:
+        # RFC 9449: the agents present a DPoP-bound token as `Authorization: DPoP …`;
+        # unbound tokens (MCP Inspector, smoke scripts) still come as Bearer. Only the
+        # header is parsed here — agentgateway verifies no proof; the shim does.
         mcpAuthentication:
+          authorizationLocation:
+            expression: 'request.headers["authorization"].startsWith("DPoP ") ? request.headers["authorization"].stripPrefix("DPoP ") : request.headers["authorization"].stripPrefix("Bearer ")'
           issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
           audiences:
           - mcp-gateway
@@ -111,6 +116,13 @@ binds:
             - inspect:read
             bearerMethodsSupported:
             - header
+            # RFC 9728 §2: the proof algorithms this resource accepts (ES256 is what the agents sign).
+            dpopSigningAlgValuesSupported:
+            - ES256
+            - ES384
+            - RS256
+            - PS256
+            - EdDSA
         # Read tier: inspect:read required for every inspect tool (mirrors the
         # ops tier's ops:write invariant). Reads are unprivileged — no role gate.
         mcpAuthorization:
@@ -139,6 +151,12 @@ binds:
                 # Static per-route audience (see header: mcp.* is unavailable here).
                 # The shim derives the scope from this audience; NO x-target-scope.
                 x-target-audience: '"mcp-inspect"'
+                # RFC 9449 inputs for the shim, which enforces DPoP for a bound token: the
+                # proof (undefined → omitted), the method, and this route's PUBLIC URL —
+                # static, like the audience, so a caller cannot choose what it is checked against.
+                x-dpop-proof: 'request.headers["dpop"]'
+                x-dpop-htm: 'request.method'
+                x-dpop-htu: '"https://mcp-gateway.localtest.me/inspect/mcp"'
                 # W3C trace context for the extAuthz callout. agentgateway v1.4.x
                 # did not propagate to extAuthz on its own, so forward it explicitly.
                 # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
@@ -158,6 +176,9 @@ binds:
           request:
             set:
               authorization: '"Bearer " + extauthz.token'
+            # The proof was for the gateway; the MCP server never sees it.
+            remove:
+            - dpop
       backends:
       - mcp:
           targets:
@@ -181,7 +202,10 @@ binds:
       - path:
           exact: /.well-known/oauth-protected-resource/ops/mcp
       policies:
+        # Bearer or DPoP scheme (see the inspect route).
         mcpAuthentication:
+          authorizationLocation:
+            expression: 'request.headers["authorization"].startsWith("DPoP ") ? request.headers["authorization"].stripPrefix("DPoP ") : request.headers["authorization"].stripPrefix("Bearer ")'
           issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
           audiences:
           - mcp-gateway
@@ -197,6 +221,13 @@ binds:
             - ops:write
             bearerMethodsSupported:
             - header
+            # RFC 9728 §2: the proof algorithms this resource accepts (ES256 is what the agents sign).
+            dpopSigningAlgValuesSupported:
+            - ES256
+            - ES384
+            - RS256
+            - PS256
+            - EdDSA
             # NON-STANDARD, demo-local (RFC 9470 step-up): the ACR this tier needs.
             # agentgateway flattens extra keys into the document and snake_cases
             # them (types/agent.rs ResourceMetadata::to_rfc_json), so this becomes
@@ -276,6 +307,9 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                x-dpop-proof: 'request.headers["dpop"]'
+                x-dpop-htm: 'request.method'
+                x-dpop-htu: '"https://mcp-gateway.localtest.me/ops/mcp"'
                 # W3C trace context for the extAuthz callout. agentgateway v1.4.x
                 # did not propagate to extAuthz on its own, so forward it explicitly.
                 # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
@@ -295,6 +329,9 @@ binds:
           request:
             set:
               authorization: '"Bearer " + extauthz.token'
+            # The proof was for the gateway; the MCP server never sees it.
+            remove:
+            - dpop
       backends:
       - mcp:
           targets:
@@ -362,7 +399,11 @@ binds:
       - path:
           pathPrefix: /inspect/last-token
       policies:
+        # Bearer or DPoP scheme, as on the /mcp routes: the agents' chain walk sends
+        # the same DPoP-bound token here.
         jwtAuth:
+          location:
+            expression: 'request.headers["authorization"].startsWith("DPoP ") ? request.headers["authorization"].stripPrefix("DPoP ") : request.headers["authorization"].stripPrefix("Bearer ")'
           providers:
           - issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
             audiences:
@@ -378,6 +419,9 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-inspect"'
+                x-dpop-proof: 'request.headers["dpop"]'
+                x-dpop-htm: 'request.method'
+                x-dpop-htu: '"https://mcp-gateway.localtest.me/inspect/last-token"'
                 # W3C trace context for the extAuthz callout. agentgateway v1.4.x
                 # did not propagate to extAuthz on its own, so forward it explicitly.
                 # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
@@ -397,6 +441,9 @@ binds:
           request:
             set:
               authorization: '"Bearer " + extauthz.token'
+            # The proof was for the gateway; the MCP server never sees it.
+            remove:
+            - dpop
         urlRewrite:
           path:
             full: /last-token
@@ -408,7 +455,11 @@ binds:
       - path:
           pathPrefix: /ops/last-token
       policies:
+        # Bearer or DPoP scheme, as on the /mcp routes: the agents' chain walk sends
+        # the same DPoP-bound token here.
         jwtAuth:
+          location:
+            expression: 'request.headers["authorization"].startsWith("DPoP ") ? request.headers["authorization"].stripPrefix("DPoP ") : request.headers["authorization"].stripPrefix("Bearer ")'
           providers:
           - issuer: https://curity.localtest.me/oauth/v2/oauth-anonymous
             audiences:
@@ -424,6 +475,9 @@ binds:
               addRequestHeaders:
                 x-caller-authorization: '"Bearer " + jwt.rawToken.unredacted()'
                 x-target-audience: '"mcp-ops"'
+                x-dpop-proof: 'request.headers["dpop"]'
+                x-dpop-htm: 'request.method'
+                x-dpop-htu: '"https://mcp-gateway.localtest.me/ops/last-token"'
                 # W3C trace context for the extAuthz callout. agentgateway v1.4.x
                 # did not propagate to extAuthz on its own, so forward it explicitly.
                 # (v1.5.0 injects its own `ExtAuthz` client span into the callout,
@@ -443,6 +497,9 @@ binds:
           request:
             set:
               authorization: '"Bearer " + extauthz.token'
+            # The proof was for the gateway; the MCP server never sees it.
+            remove:
+            - dpop
         urlRewrite:
           path:
             full: /last-token

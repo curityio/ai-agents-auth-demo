@@ -13,7 +13,11 @@ export {
   type CimdMetadataDocument,
   type CreateCimdIdentityParams,
 } from './cimd.js';
-export { buildIdentityAttributes, decorateSpanWithIdentity } from './identity-span.js';
+export {
+  buildIdentityAttributes,
+  decorateSpanWithIdentity,
+  upstreamVerifiedIdentityAttributes,
+} from './identity-span.js';
 export { buildExchangeAttributes, type ExchangeSpanInput } from './exchange-span.js';
 export {
   oboLog,
@@ -25,3 +29,16 @@ export {
   type OboLogEvent,
   type JwtSummary,
 } from './obo-log.js';
+export {
+  createDpopKey,
+  createDpopProof,
+  verifyDpopProof,
+  accessTokenHash,
+  cnfJkt,
+  tokenCnfJkt,
+  DpopProofError,
+  DpopReplayCache,
+  type DpopKey,
+  type DpopProofInput,
+  type VerifyDpopProofOptions,
+} from './dpop.js';

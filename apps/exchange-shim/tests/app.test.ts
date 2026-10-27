@@ -158,3 +158,46 @@ describe('exchange-shim app', () => {
     expect((await fetch(`${baseUrl}/nope`)).status).toBe(404);
   });
 });
+
+describe('DPoP at the shim', () => {
+  it('answers a bound token without a proof with 401 + a DPoP challenge (RFC 9449 §7.1)', async () => {
+    const { createDpopKey } = await import('@ai-agents-demo/auth-curity');
+    const key = await createDpopKey();
+    const token =
+      [{ alg: 'none' }, { sub: 'alice', aud: 'mcp-gateway', cnf: { jkt: key.jkt } }]
+        .map((o) => Buffer.from(JSON.stringify(o)).toString('base64url'))
+        .join('.') + '.';
+    const r = await fetch(`${baseUrl}/exchange`, {
+      method: 'POST',
+      headers: {
+        'x-caller-authorization': `Bearer ${token}`,
+        'x-target-audience': 'mcp-inspect',
+        'x-dpop-htm': 'POST',
+        'x-dpop-htu': 'https://mcp-gateway.localtest.me/inspect/mcp',
+      },
+    });
+    expect(r.status).toBe(401);
+    expect(r.headers.get('www-authenticate')).toMatch(/^DPoP .*error="invalid_dpop_proof"/);
+  });
+
+  it('accepts a bound token with a valid proof forwarded in x-dpop-proof', async () => {
+    const { createDpopKey, createDpopProof } = await import('@ai-agents-demo/auth-curity');
+    const key = await createDpopKey();
+    const htu = 'https://mcp-gateway.localtest.me/inspect/mcp';
+    const token =
+      [{ alg: 'none' }, { sub: 'alice', aud: 'mcp-gateway', cnf: { jkt: key.jkt } }]
+        .map((o) => Buffer.from(JSON.stringify(o)).toString('base64url'))
+        .join('.') + '.';
+    const r = await fetch(`${baseUrl}/exchange`, {
+      method: 'POST',
+      headers: {
+        'x-caller-authorization': `Bearer ${token}`,
+        'x-target-audience': 'mcp-inspect',
+        'x-dpop-proof': await createDpopProof(key, { htm: 'POST', htu, accessToken: token }),
+        'x-dpop-htm': 'POST',
+        'x-dpop-htu': htu,
+      },
+    });
+    expect(r.status).toBe(200);
+  });
+});

@@ -142,6 +142,9 @@ importers:
       '@ai-agents-demo/spiffe':
         specifier: workspace:*
         version: link:../../packages/spiffe
+      '@opentelemetry/api':
+        specifier: ^1.9.0
+        version: 1.9.0
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -456,6 +459,9 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
+      jose:
+        specifier: ^5.9.6
+        version: 5.10.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

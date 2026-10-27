@@ -6,6 +6,8 @@ export interface ExchangeSpanInput {
   clientId: string;
   audience: string;
   scope: string;
+  /** Set when the exchange binds the token (RFC 9449); only the public thumbprint is read. */
+  dpop?: { jkt: string };
 }
 
 /**
@@ -32,6 +34,9 @@ export function buildExchangeAttributes(input: ExchangeSpanInput): Attributes {
     'auth.exchange.grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
     'auth.exchange.token_endpoint': input.tokenEndpoint,
   };
+  // The thumbprint of a PUBLIC key: safe to export, and it is what the bound
+  // token's cnf.jkt (auth.cnf_jkt on the receiver's span) must equal.
+  if (input.dpop) attrs['auth.exchange.dpop_jkt'] = input.dpop.jkt;
   try {
     const u = new URL(input.tokenEndpoint);
     attrs['server.address'] = u.hostname;

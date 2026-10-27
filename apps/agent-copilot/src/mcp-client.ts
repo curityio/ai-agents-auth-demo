@@ -1,7 +1,7 @@
 import { decodeJwt } from 'jose';
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
 import { SpiffeJwtSvidSource } from '@ai-agents-demo/spiffe';
-import { openMcpToolset, type McpToolset } from '@ai-agents-demo/agent-runtime';
+import { openMcpToolset, processDpopKey, type McpToolset } from '@ai-agents-demo/agent-runtime';
 import { TokenExchangeCache } from './token-exchange-cache.js';
 import { getCimdIdentity } from './cimd-identity.js';
 import { SVID_AUDIENCE, SVID_FILE } from './spiffe-constants.js';
@@ -118,6 +118,8 @@ export async function obtainMcpToken(opts: {
     actorToken: svid.jwt,
     audience: cfg.mcpInspectAudience,
     scope,
+    // RFC 9449: bind to this process's key; openMcpToolset presents it with proofs.
+    dpop: await processDpopKey(),
   });
 
   exchangeCache.set(key, {

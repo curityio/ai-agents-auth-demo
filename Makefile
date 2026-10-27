@@ -560,10 +560,14 @@ status: ## Show pod health across every demo namespace
 # The suites of `make smoke`, in order. scripts/run-smoke.sh runs each as a
 # `make <suite>` with its output in .smoke-logs/ and prints one line per suite.
 # The first two are preconditions: the run stops if either fails.
-SMOKE_SUITES := routing-check jwks-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz
+SMOKE_SUITES := routing-check jwks-check smoke-mcp-discovery smoke-obo smoke-a2a smoke-stepup smoke-llm smoke-mcp-protocol smoke-gateway-authz smoke-dpop
 
 smoke: ## Run all auth/authz smoke tests. Needs SMOKE_TOKEN_ALICE_MFA (alice, acr=mfa); one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
 	@bash scripts/run-smoke.sh $(SMOKE_SUITES)
+
+.PHONY: smoke-dpop
+smoke-dpop: ## Smoke: DPoP (RFC 9449) on agent→gateway: bound exchange, proofs accepted, Bearer replay / wrong-route / replayed proof refused. Needs SMOKE_SUBJECT_TOKEN.
+	bash scripts/smoke-dpop.sh
 
 .PHONY: smoke-mcp-discovery
 smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway. Needs no token.

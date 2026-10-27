@@ -12,6 +12,7 @@
     "@ai-agents-demo/auth-curity": "workspace:*",
     "@ai-agents-demo/otel-bootstrap": "workspace:*",
     "@ai-agents-demo/spiffe": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
     "express": "^4.21.2"
   },
   "devDependencies": {

@@ -66,3 +66,11 @@ describe('obtainMcpToken cache bypass', () => {
     expect(exchangeToken).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('obtainMcpToken DPoP binding', () => {
+  it('binds the mcp-gateway token to the process DPoP key (the one openMcpToolset signs proofs with)', async () => {
+    const { processDpopKey } = await import('@ai-agents-demo/agent-runtime');
+    await obtainMcpToken({ ...base, subjectSub: 'alice-dpop-test' });
+    expect(exchangeToken.mock.calls[0]![0].dpop).toBe(await processDpopKey());
+  });
+});

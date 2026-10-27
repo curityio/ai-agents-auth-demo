@@ -1,4 +1,5 @@
 import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
+import { processDpopKey } from '@ai-agents-demo/agent-runtime';
 import { SpiffeJwtSvidSource } from '@ai-agents-demo/spiffe';
 import { StepUpRequiredError } from '@ai-agents-demo/a2a-helpers';
 import { getCimdIdentity } from './cimd-identity.js';
@@ -71,6 +72,8 @@ export async function obtainOpsToken(opts: {
     actorToken: svid.jwt,
     audience: cfg.mcpOpsAudience,
     scope,
+    // RFC 9449: bind to this process's key; openMcpToolset presents it with proofs.
+    dpop: await processDpopKey(),
   });
   if (opts.recordLastExchange !== false) {
     lastExchange = { sub: subjectSub, accessToken: result.accessToken, at: Date.now() };
