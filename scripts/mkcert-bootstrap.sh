@@ -12,8 +12,6 @@ HOSTS=(
   "grafana.localtest.me"
   "copilot.localtest.me"
   "specialist.localtest.me"
-  "mcp-ops.localtest.me"
-  "mcp-inspect.localtest.me"
   "mcp-gateway.localtest.me"
 )
 

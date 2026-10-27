@@ -33,8 +33,6 @@ HOST_CURITY_ADMIN ?= curity-admin.localtest.me
 HOST_GRAFANA      ?= grafana.localtest.me
 HOST_COPILOT      ?= copilot.localtest.me
 HOST_SPECIALIST   ?= specialist.localtest.me
-HOST_MCP_OPS      ?= mcp-ops.localtest.me
-HOST_MCP_INSPECT      ?= mcp-inspect.localtest.me
 HOST_MCP_GATEWAY  ?= mcp-gateway.localtest.me
 
 CERT_DIR ?= certs
@@ -377,9 +375,14 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	kubectl apply -f k8s/workloads/ops-api.yaml
 	# Edge gateway routes (Gateway + VirtualServices + Curity DestinationRule).
 	kubectl apply -f k8s/istio/gateway-edge.yaml
+	# The edge no longer routes straight to the MCP servers; `apply` doesn't prune,
+	# so drop the old VirtualServices on a cluster that still has them.
+	kubectl -n istio-ingress delete virtualservice mcp-ops mcp-inspect --ignore-not-found
 	# MCP L7 authz now runs at the agentgateway (k8s/workloads/agentgateway*.yaml),
 	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
-	# was removed in favour of it.
+	# was removed in favour of it. What remains at the mesh is L4: only the
+	# agentgateway (and the BFF's /spiffe-id fetch) may connect to the MCP servers.
+	kubectl apply -f k8s/istio/mcp-l4-authz.yaml
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
 	# mTLS identity + the token's audience/scope. Its RequestAuthentication points
 	# istiod at Curity's in-cluster JWKS URL, so no JWKS snapshot step is needed —
@@ -563,7 +566,7 @@ smoke: ## Run all auth/authz smoke tests. Needs SMOKE_TOKEN_ALICE_MFA (alice, ac
 	@bash scripts/run-smoke.sh $(SMOKE_SUITES)
 
 .PHONY: smoke-mcp-discovery
-smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway + origin 401 challenges. Needs no token.
+smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway. Needs no token.
 	bash scripts/smoke-mcp-discovery.sh
 
 .PHONY: smoke-obo
@@ -667,8 +670,6 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '    %-41s https://$(HOST_CURITY)/oauth/v2/oauth-anonymous/.well-known/openid-configuration\n' 'Curity OIDC discovery'
 	@printf '    %-41s https://$(HOST_COPILOT)/.well-known/oauth-client\n'              'Copilot ai-agent client metadata (CIMD)'
 	@printf '    %-41s https://$(HOST_SPECIALIST)/.well-known/oauth-client\n'           'Specialist ai-agent client metadata'
-	@printf '    %-41s https://$(HOST_MCP_OPS)/.well-known/oauth-protected-resource\n'  'mcp-ops resource metadata'
-	@printf '    %-41s https://$(HOST_MCP_INSPECT)/.well-known/oauth-protected-resource\n'  'mcp-inspect resource metadata'
 	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/inspect/mcp\n' 'agentgateway PRM (read tier)'
 	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/ops/mcp\n' 'agentgateway PRM (write tier)'
 	@printf '    %-41s https://$(HOST_CURITY)/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous\n' 'Curity RFC 8414 metadata'

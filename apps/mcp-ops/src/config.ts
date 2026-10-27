@@ -102,9 +102,11 @@ export function loadConfig(): Config {
     targetNamespace: process.env.TARGET_NAMESPACE ?? 'prod',
     toolRequiredRoles: parseToolRequiredRoles(process.env.TOOL_REQUIRED_ROLES),
     requiredAcr: process.env.REQUIRED_ACR ?? 'mfa',
+    // The agentgateway route's RFC 9728 document: this server has no public host
+    // of its own, so its 401 challenges point where a client can actually go.
     resourceMetadataUrl:
       process.env.RESOURCE_METADATA_URL ??
-      'https://mcp-ops.localtest.me/.well-known/oauth-protected-resource',
+      'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/ops/mcp',
     curityTokenEndpoint: required('CURITY_TOKEN_ENDPOINT'),
     clientId: process.env.CURITY_CLIENT_ID ?? 'mcp-ops',
     clientSecret: required('CURITY_CLIENT_SECRET'),

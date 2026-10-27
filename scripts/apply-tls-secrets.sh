@@ -21,8 +21,6 @@ grafana.localtest.me|telemetry|grafana-tls
 grafana.localtest.me|istio-ingress|grafana-tls
 copilot.localtest.me|istio-ingress|copilot-tls
 specialist.localtest.me|istio-ingress|specialist-tls
-mcp-ops.localtest.me|istio-ingress|mcp-ops-tls
-mcp-inspect.localtest.me|istio-ingress|mcp-inspect-tls
 mcp-gateway.localtest.me|istio-ingress|mcp-gateway-tls
 "
 

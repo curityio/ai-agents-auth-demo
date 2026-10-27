@@ -31,9 +31,11 @@ export function loadConfig(): Config {
     curityJwksUri: required('CURITY_JWKS_URI'),
     expectedAudience: process.env.EXPECTED_AUDIENCE ?? 'mcp-inspect',
     requiredScopes: (process.env.REQUIRED_SCOPES ?? 'inspect:read').split(/\s+/).filter(Boolean),
+    // The agentgateway route's RFC 9728 document: this server has no public host
+    // of its own, so its 401 challenges point where a client can actually go.
     resourceMetadataUrl:
       process.env.RESOURCE_METADATA_URL ??
-      'https://mcp-inspect.localtest.me/.well-known/oauth-protected-resource',
+      'https://mcp-gateway.localtest.me/.well-known/oauth-protected-resource/inspect/mcp',
     // The immediate (outermost) actor calling mcp-inspect is now the
     // agentgateway (mcp ns) — all agent traffic is fronted by it. The deeper
     // chain (copilot / specialist) is validated downstream by inspect-api's full
