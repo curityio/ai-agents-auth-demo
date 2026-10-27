@@ -1,0 +1,68 @@
+# Istio-native L4 caller pinning for the MCP servers (mcp tier).
+#
+# The apis tier pins each backend API to the one MCP server that fronts it
+# (apis-l7-authz.yaml). This file closes the same hole one tier up: without it,
+# any workload that can reach mcp-inspect:8080 / mcp-ops:8080 can replay a
+# stolen aud=mcp-inspect / aud=mcp-ops token. The resource-server middleware
+# can't stop that: the act chain it matches is INSIDE the token, so a replayed
+# token passes it. Pinning the mTLS peer identity (cluster.local SPIFFE,
+# established by ztunnel) makes the token useless from anywhere else.
+#
+# Allowed callers:
+#  - agentgateway: the MCP front door. All MCP traffic, plus the
+#    /{inspect,ops}/last-token walk, goes through it.
+#  - web: the BFF's identities panel fetches GET /spiffe-id directly
+#    (apps/web/src/app/api/spiffe-identities/route.ts). ztunnel can only match
+#    identity, not paths, so web may reach every path. A token the BFF holds is
+#    never aud=mcp-inspect/mcp-ops, so the middleware still refuses it.
+#
+# The public edge is deliberately NOT allowed: istio-ingress used to route
+# mcp-{inspect,ops}.localtest.me straight here, which would have let anything
+# that can reach the edge replay through it. Those routes were removed.
+# The origins' 401 challenges now name the agentgateway route's RFC 9728
+# document instead (RESOURCE_METADATA_URL default in apps/mcp-*/src/config.ts).
+#
+# ztunnel-specific rules (Istio ambient, verified against the 1.30 docs):
+#  - `selector`, not `targetRefs`: a Service targetRef attaches the policy to a
+#    waypoint, and the mcp tier has none (agentgateway replaced it).
+#  - L4 attributes only. A rule with methods/paths/request.auth.* is enforced by
+#    ztunnel as DENY (fail-safe), so the pod would refuse everything.
+#  - No probe carve-out needed: kubelet probes are SNATed to 169.254.7.127 and
+#    ztunnel exempts them from policy.
+#  - matchLabels can't express OR, hence one policy per server.
+#
+# Prereq: the mcp, web and agentgateway pods are enrolled in ambient
+# (k8s/namespaces.yaml); a caller outside the mesh has no identity to match.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: mcp-inspect-callers
+  namespace: mcp
+spec:
+  selector:
+    matchLabels:
+      app: mcp-inspect
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/mcp/sa/agentgateway
+              - cluster.local/ns/web/sa/web
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: mcp-ops-callers
+  namespace: mcp
+spec:
+  selector:
+    matchLabels:
+      app: mcp-ops
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/mcp/sa/agentgateway
+              - cluster.local/ns/web/sa/web

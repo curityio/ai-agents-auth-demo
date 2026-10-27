@@ -65,6 +65,24 @@ describe('buildIdentityAttributes', () => {
     expect(attrs['auth.act']).toEqual(['agent-copilot']);
   });
 
+  it('maps the RFC 8693 may_act sub as the full SPIFFE ID', () => {
+    const attrs = buildIdentityAttributes(
+      vj({
+        sub: 'alice',
+        may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect' },
+      } as VerifiedJwt['payload']),
+    );
+    expect(attrs['auth.may_act']).toBe('spiffe://demo.curity.local/ns/mcp/sa/mcp-inspect');
+  });
+
+  it('omits auth.may_act when the claim is absent or has no string sub', () => {
+    expect('auth.may_act' in buildIdentityAttributes(vj({ sub: 'alice' }))).toBe(false);
+    const malformed = buildIdentityAttributes(
+      vj({ sub: 'alice', may_act: { client_id: 'x' } } as VerifiedJwt['payload']),
+    );
+    expect('auth.may_act' in malformed).toBe(false);
+  });
+
   it('maps auth.scope from an scp array (no scope string)', () => {
     const attrs = buildIdentityAttributes({
       payload: { sub: 'alice', scp: ['inspect:read', 'ops:write'] },

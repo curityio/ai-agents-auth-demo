@@ -42,6 +42,11 @@ export function buildIdentityAttributes(verified: VerifiedJwt): Attributes {
 
   const act = flattenActChain(payload.act);
   if (act.length > 0) attrs['auth.act'] = act;
+
+  // RFC 8693 §4.4: who this token permits to act NEXT (act = who did act).
+  // Flat, single-level; absent on terminal audiences, which nothing exchanges onward.
+  const mayAct = (payload as Record<string, unknown>).may_act as { sub?: unknown } | undefined;
+  if (mayAct && typeof mayAct.sub === 'string') attrs['auth.may_act'] = mayAct.sub;
   return attrs;
 }
 

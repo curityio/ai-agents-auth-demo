@@ -917,6 +917,16 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   it — so `make apply` runs `scripts/jwks-guard.sh wait` before applying this
   file, and `make jwks-check` / `make jwks-heal` detect and repair the pinned
   state (`CLAUDE.md` fact #38).
+- **mcp-tier L4 caller pinning.** `k8s/istio/mcp-l4-authz.yaml` (applied by
+  `make apply`) lets only `cluster.local/ns/mcp/sa/agentgateway` and
+  `cluster.local/ns/web/sa/web` (the BFF's `GET /spiffe-id`) connect to
+  `mcp-inspect`/`mcp-ops`. Without it, any workload could replay a stolen
+  `aud=mcp-inspect`/`aud=mcp-ops` token, since the `act` chain the middleware
+  matches travels inside the token. ztunnel enforces it, so there is no waypoint:
+  the policies use a workload `selector` and L4 fields only (an L7 field makes
+  ztunnel treat the rule as DENY), and kubelet probes are exempt by design. The
+  MCP servers have no edge host for the same reason; their 401 challenges name the
+  gateway route's RFC 9728 document.
 - **Platform via Helm.** SPIRE (hardened chart, three namespaces), Istio Ambient
   (base/istiod/cni/ztunnel + gateway), Tempo, and Grafana — all driven
   by `make platform`.
@@ -925,8 +935,8 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   mounts the mkcert root CA (pods can't reach the public `localtest.me` loopback,
   and must trust the gateway cert to fetch JWKS). It also gives the **Curity** pod
   a hostAlias for `copilot`/`specialist.localtest.me` so Curity can dereference the
-  agents' CIMD documents, the **web** pod aliases for
-  `mcp-gateway`/`mcp-ops`/`mcp-inspect.localtest.me` — on a step-up challenge
+  agents' CIMD documents, the **web** pod an alias for
+  `mcp-gateway.localtest.me` — on a step-up challenge
   the BFF fetches the RFC 9728 document the challenge names (the gateway's
   ops-route PRM) at its *public* identifier to learn the authorization server — and
   **both agent** pods an alias for `mcp-gateway.localtest.me`, the name they run MCP

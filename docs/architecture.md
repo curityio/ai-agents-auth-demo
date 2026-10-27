@@ -154,10 +154,11 @@ flowchart TB
 ```
 
 The arrows above are the request/OBO flow. The edge gateway also terminates TLS
-for the `curity`, `copilot`/`specialist` (CIMD), `mcp-ops`/`mcp-inspect` and
-`mcp-gateway` hosts. For Curity, the agents and the two origin MCP servers that is
-purely so their discovery/`.well-known` documents are reachable over a trusted TLS
-cert. For `mcp-gateway.localtest.me` it is more: the agents CALL the MCP front door
+for the `curity`, `copilot`/`specialist` (CIMD) and `mcp-gateway` hosts. For
+Curity and the agents that is purely so their discovery/`.well-known` documents are
+reachable over a trusted TLS cert. The origin MCP servers have no edge host at all:
+only agentgateway (and the BFF's `/spiffe-id` fetch) may connect to them
+(`k8s/istio/mcp-l4-authz.yaml`). For `mcp-gateway.localtest.me` it is more: the agents CALL the MCP front door
 by that name, because they are spec-shaped MCP clients that discover the
 authorization server from the gateway's own RFC 9728 document, and RFC 9728 has
 the client check that the document's `resource` equals the URL it uses. The
@@ -367,6 +368,7 @@ guess about who lacked permission.
 | the two agents (as MCP clients) | the authorization server an MCP server names in its RFC 9728 document | only if it equals the Curity issuer the agent already trusts (`allowedAuthorizationServers`), is HTTPS, echoes its issuer in RFC 8414 metadata and advertises CIMD support — otherwise discovery fails closed and no token is sent anywhere |
 | Each resource server | the OBO actor chain | per-position SPIFFE-ID regex over the nested `act` claim |
 | ztunnel (Ambient) | peer workloads | Istio mTLS (istiod-issued certs — a distinct trust domain from SPIRE, but the same shared root) |
+| ztunnel at `mcp-inspect`/`mcp-ops` (Istio ambient L4) | the caller's **mesh** identity | `AuthorizationPolicy` with a workload `selector` allowing only `cluster.local/ns/mcp/sa/agentgateway` and `cluster.local/ns/web/sa/web` (`k8s/istio/mcp-l4-authz.yaml`) — identity only, no token or path conditions, because ztunnel cannot evaluate L7 |
 | `apis-waypoint` (Istio ambient L7, in front of `inspect-api`/`ops-api`) | the calling MCP server's **mesh** identity + the Curity JWT | `RequestAuthentication` (Curity JWKS) + per-Service `AuthorizationPolicy` pinning `source.principals` to `cluster.local/ns/mcp/sa/mcp-inspect` / `mcp-ops` and the token's audience + scope (`k8s/istio/apis-l7-authz.yaml`) — the one place an mTLS identity, not a JWT claim, is an authz input |
 | inspect-api / ops-api | their own right to touch the cluster | Kubernetes RBAC — a Role/RoleBinding in `prod` bound to their `apis`-namespace ServiceAccounts |
 | agentgateway (`/llm`) | the caller is a Curity-authorized human-on-behalf-of request | `aud=llm-gateway` JWT + `llm:invoke` scope — **not** an actor chain, since the request terminates at the LLM provider rather than another workload |
@@ -452,6 +454,13 @@ Boundary properties worth calling out:
   chain and step-up stay in the app middleware for the same reason as at the MCP
   front door. This is why the Kubernetes Gateway API CRDs are still installed:
   this waypoint is their only remaining consumer.
+- **mcp-tier L4 caller pinning.** One tier up, the same idea without a waypoint:
+  ztunnel lets only agentgateway (and the BFF, for `GET /spiffe-id`) connect to
+  `mcp-inspect`/`mcp-ops` (`k8s/istio/mcp-l4-authz.yaml`). A stolen
+  `aud=mcp-inspect` token would otherwise pass the middleware from any pod,
+  because the `act` chain it checks is inside the token. L4 can't tell paths
+  apart, so the BFF may reach every path, but it never holds a token with those
+  audiences.
 - **Authorization-server pinning at the MCP client.** The agents *discover* the
   authorization server from the front door's RFC 9728 document, but will only
   exchange with the Curity issuer they already trust: a document naming any other
@@ -521,7 +530,7 @@ flowchart LR
 
 | Layer | Attribute kind | Attributes | Source |
 |---|---|---|---|
-| **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain |
+| **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]`, `auth.may_act` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain (who DID act), `auth.may_act` names the one workload the token permits to act next (absent on terminal audiences) |
 | **Workload** | resource attribute | `spiffe.id` | `packages/otel-bootstrap`, read from the SVID file at SDK init |
 | **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope`, `…token_endpoint` (plus `server.address` / `url.path`) | `exchangeToken()` in `packages/auth-curity` |
 | **Gateway** | span attributes | `mcp.method.name`, `mcp.target`, `gen_ai.tool.name`, `gen_ai.usage.*`, `route`, `http.path`, `url.full`, `endpoint` (upstream, HTTP backends only) | agentgateway's native OTLP tracing (`config.tracing`) |

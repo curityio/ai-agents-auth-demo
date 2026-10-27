@@ -440,6 +440,15 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       server that fronts it (`cluster.local/ns/mcp/sa/mcp-inspect`/`mcp-ops`) plus
       the token's audience + scope. Don't remove `gateway-api-crds` from `make platform`
       on the strength of "MCP no longer needs it".
+    - **The MCP servers themselves are pinned at L4** (`k8s/istio/mcp-l4-authz.yaml`):
+      ztunnel admits only `cluster.local/ns/mcp/sa/agentgateway` and
+      `cluster.local/ns/web/sa/web` (the BFF's `GET /spiffe-id`). They have NO edge
+      host (the old `mcp-{inspect,ops}.localtest.me` routes would have let anything at
+      the edge replay a stolen `aud=mcp-*` token), and their 401s name the gateway
+      route's PRM. Any new direct caller must be added to that policy or it is
+      refused at connect. Keep it L4-only: methods/paths make ztunnel enforce the
+      rule as DENY, and a Service `targetRef` would attach it to a non-existent
+      waypoint, so it would never be enforced.
 
 22. **The LLM egress is a governed hop through agentgateway, and the upstream
     vendor is pluggable — see `docs/llm-providers.md`.** Both agents exchange the
@@ -1252,7 +1261,7 @@ make status          # pod health across every demo namespace
 make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (fact #38)
 make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
 make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
-make smoke-mcp-discovery # MCP-spec discovery chain at the gateway + origin 401 challenges (no token needed)
+make smoke-mcp-discovery # MCP-spec discovery chain at the gateway (no token needed)
 make curity-truststore     # render .gen/curity-configmap.yaml = tracked configmap + mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch); depends on gen-ca
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
 make test-scripts    # contract tests (gateway-config render, demo-inputs LLM check, theme + truststore embeds, token-exchange procedure policy, user seeding, MCP discovery config, JWKS guard)

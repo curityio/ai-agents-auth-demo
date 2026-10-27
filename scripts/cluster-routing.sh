@@ -60,8 +60,9 @@ CIMD_HOSTS=("copilot.localtest.me" "specialist.localtest.me")
 # rewriting them to cluster-internal names would defeat the point of a stable
 # resource identifier (a spec-shaped client checks PRM.resource == the URL it
 # calls). Inside a pod those hosts resolve to 127.0.0.1 (the pod itself), so each
-# consumer needs the same ingress alias Curity gets.
-RESOURCE_HOSTS=("mcp-ops.localtest.me" "mcp-inspect.localtest.me" "mcp-gateway.localtest.me")
+# consumer needs the same ingress alias Curity gets. Only the gateway has an edge
+# host: the MCP servers are reachable through it alone (k8s/istio/mcp-l4-authz.yaml).
+RESOURCE_HOSTS=("mcp-gateway.localtest.me")
 # The agents call the MCP front door by its public name (MCP_*_URL in
 # k8s/workloads/agent-*.yaml) — see the RFC 9728 note above.
 AGENT_MCP_HOSTS=("mcp-gateway.localtest.me")

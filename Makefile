@@ -33,8 +33,6 @@ HOST_CURITY_ADMIN ?= curity-admin.localtest.me
 HOST_GRAFANA      ?= grafana.localtest.me
 HOST_COPILOT      ?= copilot.localtest.me
 HOST_SPECIALIST   ?= specialist.localtest.me
-HOST_MCP_OPS      ?= mcp-ops.localtest.me
-HOST_MCP_INSPECT      ?= mcp-inspect.localtest.me
 HOST_MCP_GATEWAY  ?= mcp-gateway.localtest.me
 
 CERT_DIR ?= certs
@@ -377,9 +375,14 @@ apply: curity-procedures curity-truststore curity-theme render-gateway-config ##
 	kubectl apply -f k8s/workloads/ops-api.yaml
 	# Edge gateway routes (Gateway + VirtualServices + Curity DestinationRule).
 	kubectl apply -f k8s/istio/gateway-edge.yaml
+	# The edge no longer routes straight to the MCP servers; `apply` doesn't prune,
+	# so drop the old VirtualServices on a cluster that still has them.
+	kubectl -n istio-ingress delete virtualservice mcp-ops mcp-inspect --ignore-not-found
 	# MCP L7 authz now runs at the agentgateway (k8s/workloads/agentgateway*.yaml),
 	# applied above — the Istio MCP waypoint (formerly k8s/istio/mcp-l7-authz.yaml)
-	# was removed in favour of it.
+	# was removed in favour of it. What remains at the mesh is L4: only the
+	# agentgateway (and the BFF's /spiffe-id fetch) may connect to the MCP servers.
+	kubectl apply -f k8s/istio/mcp-l4-authz.yaml
 	# apis L7 authz: pin each backend API's caller to its fronting MCP server's
 	# mTLS identity + the token's audience/scope. Its RequestAuthentication points
 	# istiod at Curity's in-cluster JWKS URL, so no JWKS snapshot step is needed —
@@ -563,7 +566,7 @@ smoke: ## Run all auth/authz smoke tests. Needs SMOKE_TOKEN_ALICE_MFA (alice, ac
 	@bash scripts/run-smoke.sh $(SMOKE_SUITES)
 
 .PHONY: smoke-mcp-discovery
-smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway + origin 401 challenges. Needs no token.
+smoke-mcp-discovery: ## Smoke: MCP-spec discovery chain (401 → RFC 9728 → RFC 8414) at the gateway. Needs no token.
 	bash scripts/smoke-mcp-discovery.sh
 
 .PHONY: smoke-obo
@@ -594,38 +597,40 @@ smoke-gateway-authz: ## Smoke: gateway-side per-tool role split + namespace conf
 # MCP Inspector (tool tour) — see the header of scripts/mint-mcp-token.sh for why
 # Inspector connects to the agentgateway rather than to an MCP server directly.
 # ============================================================================
-MCP_INSPECTOR_READ_PORT ?= 8080
-MCP_INSPECTOR_WRITE_PORT ?= 8081
-
-# Mint a token + port-forward, then print the Inspector connect details.
-# Forwards the AGENTGATEWAY, not the MCP server: the minted token is
-# aud=mcp-gateway, and the MCP servers require an act-chain that only the
-# gateway's exchange-shim can produce. See scripts/mint-mcp-token.sh header.
+# Mint a token, then print the Inspector connect details for the AGENTGATEWAY's
+# public route (the same URL the agents call). Not the MCP server: the minted
+# token is aud=mcp-gateway, the MCP servers have no edge host, and ztunnel admits
+# only the gateway (k8s/istio/mcp-l4-authz.yaml). See scripts/mint-mcp-token.sh.
+#
+# The launch line's two env vars are load-bearing: Inspector's UI goes through a
+# local Node proxy that ignores the macOS keychain (so it needs the mkcert root
+# CA), and the default OS-keychain secret store can silently save the Bearer as
+# "" (→ the gateway's no-bearer 401).
 #
 # Protocol Era is a REQUIRED step, not a nicety: our MCP servers run
 # `legacy: 'reject'` (2026-07-28 only), while Inspector defaults its era to
 # Legacy. Left on the default it sends a 2025 `initialize`, the gateway forwards
 # that upstream verbatim, and the server refuses — the connect just fails.
-# Args: $(1)=target (inspect|ops) $(2)=gateway route path $(3)=local port
+# Args: $(1)=target (inspect|ops) $(2)=gateway route path
 define inspect-tmpl
 	@token=$$(bash scripts/mint-mcp-token.sh $(1)) || exit $$?; \
 	printf '\n\033[36m=== MCP Inspector connect details ===\033[0m\n'; \
-	printf '  Transport: Streamable HTTP\n  URL:       http://localhost:%s%s\n' "$(3)" "$(2)"; \
-	printf '  Bearer:    %s\n\n' "$$token"; \
+	printf '  Transport: Streamable HTTP\n  URL:       https://$(HOST_MCP_GATEWAY)%s\n' "$(2)"; \
+	printf '  Header:    Authorization: Bearer %s\n\n' "$$token"; \
 	printf '\033[33m  Options ▸ Protocol Era: set to "Modern" (or "Auto") — NOT the\n'; \
-	printf '  default "Legacy", which this server refuses.\033[0m\n\n'; \
-	printf 'In another terminal run:  \033[32mnpx @modelcontextprotocol/inspector\033[0m\n'; \
-	printf 'then paste the URL + Bearer above. Port-forward holds this terminal (Ctrl-C to stop).\n\n'; \
-	kubectl -n mcp port-forward svc/agentgateway $(3):8080
+	printf '  default "Legacy", which this server refuses. Use the route URL above,\n'; \
+	printf '  not the .well-known one (that answers JSON, and the connect fails).\033[0m\n\n'; \
+	printf 'Launch Inspector with:\n'; \
+	printf '  \033[32mMCP_INSPECTOR_SECRET_STORE=memory NODE_EXTRA_CA_CERTS="$$(mkcert -CAROOT)/rootCA.pem" npx @modelcontextprotocol/inspector\033[0m\n\n'
 endef
 
 .PHONY: mcp-inspector-read
-mcp-inspector-read: ## Inspect the read tier via the gateway (mint token + port-forward). Needs SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,inspect,/inspect/mcp,$(MCP_INSPECTOR_READ_PORT))
+mcp-inspector-read: ## Inspect the read tier via the gateway's public URL (mints the token). Needs SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,inspect,/inspect/mcp)
 
 .PHONY: mcp-inspector-write
-mcp-inspector-write: ## Inspect the write tier via the gateway. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
-	$(call inspect-tmpl,ops,/ops/mcp,$(MCP_INSPECTOR_WRITE_PORT))
+mcp-inspector-write: ## Inspect the write tier via the gateway's public URL. Needs an MFA (acr=mfa) SMOKE_SUBJECT_TOKEN.
+	$(call inspect-tmpl,ops,/ops/mcp)
 
 # ============================================================================
 # End-to-end orchestration
@@ -667,8 +672,6 @@ urls: ## Print every browser-exposed URL (also shown at the end of `make demo`)
 	@printf '    %-41s https://$(HOST_CURITY)/oauth/v2/oauth-anonymous/.well-known/openid-configuration\n' 'Curity OIDC discovery'
 	@printf '    %-41s https://$(HOST_COPILOT)/.well-known/oauth-client\n'              'Copilot ai-agent client metadata (CIMD)'
 	@printf '    %-41s https://$(HOST_SPECIALIST)/.well-known/oauth-client\n'           'Specialist ai-agent client metadata'
-	@printf '    %-41s https://$(HOST_MCP_OPS)/.well-known/oauth-protected-resource\n'  'mcp-ops resource metadata'
-	@printf '    %-41s https://$(HOST_MCP_INSPECT)/.well-known/oauth-protected-resource\n'  'mcp-inspect resource metadata'
 	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/inspect/mcp\n' 'agentgateway PRM (read tier)'
 	@printf '    %-41s https://$(HOST_MCP_GATEWAY)/.well-known/oauth-protected-resource/ops/mcp\n' 'agentgateway PRM (write tier)'
 	@printf '    %-41s https://$(HOST_CURITY)/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous\n' 'Curity RFC 8414 metadata'
