@@ -530,7 +530,7 @@ flowchart LR
 
 | Layer | Attribute kind | Attributes | Source |
 |---|---|---|---|
-| **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain |
+| **Human** | span attributes | `auth.sub`, `auth.scope`, `auth.acr`, `auth.aud`, `auth.roles`, `auth.act[]`, `auth.may_act` | `decorateSpanWithIdentity()` in `packages/auth-curity`, stamped at JWT validation; `auth.act[]` grows along the chain (who DID act), `auth.may_act` names the one workload the token permits to act next (absent on terminal audiences) |
 | **Workload** | resource attribute | `spiffe.id` | `packages/otel-bootstrap`, read from the SVID file at SDK init |
 | **Exchange** | span (`auth.token_exchange`) | `auth.exchange.audience`, `…scope`, `…client_id`, `…issued_scope`, `…token_endpoint` (plus `server.address` / `url.path`) | `exchangeToken()` in `packages/auth-curity` |
 | **Gateway** | span attributes | `mcp.method.name`, `mcp.target`, `gen_ai.tool.name`, `gen_ai.usage.*`, `route`, `http.path`, `url.full`, `endpoint` (upstream, HTTP backends only) | agentgateway's native OTLP tracing (`config.tracing`) |
