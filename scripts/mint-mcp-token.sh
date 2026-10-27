@@ -8,10 +8,10 @@
 #
 # IMPORTANT — the token is `aud=mcp-gateway`, NOT aud=mcp-inspect/mcp-ops,
 # and Inspector must therefore point at the GATEWAY, not at an MCP server:
-#   inspect -> http://localhost:<port>/inspect/mcp
-#   ops -> http://localhost:<port>/ops/mcp
-# `make mcp-inspector-read` / `make mcp-inspector-write` port-forward svc/agentgateway and print
-# the right URL. Minting aud=mcp-inspect / aud=mcp-ops directly is IMPOSSIBLE
+#   inspect -> https://mcp-gateway.localtest.me/inspect/mcp
+#   ops -> https://mcp-gateway.localtest.me/ops/mcp
+# `make mcp-inspector-read` / `make mcp-inspector-write` print the right URL and
+# launch line (no port-forward: the gateway's public host works from the host). Minting aud=mcp-inspect / aud=mcp-ops directly is IMPOSSIBLE
 # for these clients — Curity refuses it ("audience ... not allowed for client ..."),
 # which smoke-token-exchange [3/5] and smoke-a2a [D3] assert on purpose. Only the
 # gateway's own exchange-shim may mint those, using the gateway's SPIFFE SVID.
