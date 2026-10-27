@@ -1,5 +1,14 @@
 import express from 'express';
-import { exchangeToken, CurityAuthError } from '@ai-agents-demo/auth-curity';
+import { trace } from '@opentelemetry/api';
+import {
+  exchangeToken,
+  CurityAuthError,
+  DpopProofError,
+  DpopReplayCache,
+  oboLog,
+  summarizeJwt,
+  upstreamVerifiedIdentityAttributes,
+} from '@ai-agents-demo/auth-curity';
 import type { JwtSvid } from '@ai-agents-demo/spiffe';
 import { handleExchange } from './exchange-handler.js';
 import { ExchangeCache } from './exchange-cache.js';
@@ -36,6 +45,12 @@ export function createApp(deps: AppDeps): express.Express {
     cfg.cacheTtlSeconds > 0
       ? new ExchangeCache({ ttlSeconds: cfg.cacheTtlSeconds, maxEntries: cfg.cacheMaxEntries })
       : undefined;
+  // DPoP proof jtis seen by this process (RFC 9449 replay protection).
+  const replay = new DpopReplayCache();
+  const header = (req: express.Request, name: string): string | undefined => {
+    const v = req.headers[name];
+    return typeof v === 'string' ? v : undefined;
+  };
 
   // No body parser on purpose: the exchange reads headers only, and the
   // extAuthz callout may arrive as a GET with no body at all.
@@ -87,8 +102,15 @@ export function createApp(deps: AppDeps): express.Express {
       return;
     }
     const callerToken = callerAuth.replace(/^Bearer\s+/i, '');
+    // agentgateway stamps no auth.* attributes of its own, so this span is where
+    // the gateway hop's identity (incl. may_act and cnf_jkt) becomes visible.
+    trace.getActiveSpan()?.setAttributes(upstreamVerifiedIdentityAttributes(callerToken));
     handleExchange(
-      { callerToken, targetAudience },
+      {
+        callerToken,
+        targetAudience,
+        dpop: { proof: header(req, 'x-dpop-proof'), htm: header(req, 'x-dpop-htm'), htu: header(req, 'x-dpop-htu') },
+      },
       {
         getSvidJwt: async () => {
           const svid = await deps.getSvid(cfg.svidAudience);
@@ -103,12 +125,29 @@ export function createApp(deps: AppDeps): express.Express {
         clientSecret: cfg.clientSecret,
         audienceScopes: cfg.audienceScopes,
         cache,
+        replay,
       },
     )
       .then((body) => {
         res.status(200).json(body);
       })
       .catch((e: unknown) => {
+        if (e instanceof DpopProofError) {
+          // The one exit for a DPoP refusal: log it here (fact #31) — exchangeToken
+          // never ran, so nothing else would — and answer as RFC 9449 §7.1 says.
+          const subj = summarizeJwt(callerToken);
+          oboLog({
+            service: cfg.clientId,
+            kind: 'DENY',
+            headline: `→ ${targetAudience} (DPoP proof)`,
+            fields: { 'subject (sub)': subj.sub, 'subject act': subj.act, error: 'invalid_dpop_proof', reason: e.message },
+          });
+          res
+            .status(401)
+            .set('www-authenticate', `DPoP error="invalid_dpop_proof", error_description="${e.message.replace(/"/g, "'")}"`)
+            .json({ error: 'invalid_dpop_proof', error_description: e.message });
+          return;
+        }
         res
           .status(403)
           .json({ error: 'exchange_failed', error_description: (e as Error).message });

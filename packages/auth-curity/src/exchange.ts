@@ -4,6 +4,7 @@ import { importPKCS8, SignJWT } from 'jose';
 import { CurityAuthError, type CurityAuthErrorCode } from './errors.js';
 import { oboLog, summarizeJwt } from './obo-log.js';
 import { buildExchangeAttributes } from './exchange-span.js';
+import { createDpopProof, type DpopKey } from './dpop.js';
 
 /** Friendly caller label for OBO logs: CIMD URL → agent name; else the raw id. */
 function callerLabel(clientId: string): string {
@@ -52,6 +53,13 @@ export interface ExchangeTokenParams {
   actorTokenType?: string;
   /** Defaults to RFC 8693 access_token. */
   requestedTokenType?: string;
+  /**
+   * Bind the issued token to this key (RFC 9449 DPoP): the request carries a proof
+   * and Curity stamps `cnf.jkt` into the token. Curity insists on a server nonce, so
+   * the first exchange costs one `use_dpop_nonce` round trip; the nonce is then
+   * remembered on the key. Note Curity still reports `token_type: bearer`.
+   */
+  dpop?: DpopKey;
 }
 
 export interface ExchangeTokenResult {
@@ -131,47 +139,11 @@ function logDenial(params: ExchangeTokenParams, e: unknown): void {
 }
 
 async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenResult> {
-  const body = new URLSearchParams({
-    grant_type: GRANT_TYPE,
-    subject_token: params.subjectToken,
-    subject_token_type: params.subjectTokenType ?? TT_ACCESS_TOKEN,
-    actor_token: params.actorToken,
-    actor_token_type: params.actorTokenType ?? TT_JWT,
-    requested_token_type: params.requestedTokenType ?? TT_ACCESS_TOKEN,
-    audience: params.audience,
-    scope: params.scope,
-  });
-
-  const headers: Record<string, string> = {
-    'content-type': 'application/x-www-form-urlencoded',
-    accept: 'application/json',
-  };
-
-  const clientAuth = params.clientAuth ?? { method: 'basic' };
-  if (clientAuth.method === 'private_key_jwt') {
-    // CIMD ephemeral client: prove control of the published key with a short-lived
-    // signed assertion (RFC 7523). client_id travels in the body, not a Basic header.
-    body.set('client_id', params.clientId);
-    body.set('client_assertion_type', CLIENT_ASSERTION_TYPE);
-    body.set('client_assertion', await buildClientAssertion(params.clientId, clientAuth));
-  } else {
-    headers.authorization =
-      'Basic ' + Buffer.from(`${params.clientId}:${params.clientSecret}`).toString('base64');
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(params.tokenEndpoint, {
-      method: 'POST',
-      headers,
-      body: body.toString(),
-    });
-  } catch (e) {
-    throw new CurityAuthError(
-      `token-exchange fetch failed: ${(e as Error).message}`,
-      'exchange_failed',
-      e,
-    );
+  let response = await sendExchange(params);
+  // RFC 9449 §8: Curity answers the first DPoP exchange with `use_dpop_nonce` and a
+  // DPoP-Nonce header (sendExchange already stored it on the key). Retry once.
+  if (params.dpop?.nonce && response.status === 400 && (await oauthErrorOf(response)) === 'use_dpop_nonce') {
+    response = await sendExchange(params);
   }
 
   if (response.ok) {
@@ -249,6 +221,71 @@ async function doExchange(params: ExchangeTokenParams): Promise<ExchangeTokenRes
       (parsed.error_description ? ': ' + parsed.error_description : ''),
     'exchange_failed',
   );
+}
+
+/** One token-endpoint request, built afresh each time: a retry needs a new client assertion and a new proof. */
+async function sendExchange(params: ExchangeTokenParams): Promise<Response> {
+  const body = new URLSearchParams({
+    grant_type: GRANT_TYPE,
+    subject_token: params.subjectToken,
+    subject_token_type: params.subjectTokenType ?? TT_ACCESS_TOKEN,
+    actor_token: params.actorToken,
+    actor_token_type: params.actorTokenType ?? TT_JWT,
+    requested_token_type: params.requestedTokenType ?? TT_ACCESS_TOKEN,
+    audience: params.audience,
+    scope: params.scope,
+  });
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json',
+  };
+
+  const clientAuth = params.clientAuth ?? { method: 'basic' };
+  if (clientAuth.method === 'private_key_jwt') {
+    // CIMD ephemeral client: prove control of the published key with a short-lived
+    // signed assertion (RFC 7523). client_id travels in the body, not a Basic header.
+    body.set('client_id', params.clientId);
+    body.set('client_assertion_type', CLIENT_ASSERTION_TYPE);
+    body.set('client_assertion', await buildClientAssertion(params.clientId, clientAuth));
+  } else {
+    headers.authorization =
+      'Basic ' + Buffer.from(`${params.clientId}:${params.clientSecret}`).toString('base64');
+  }
+
+  if (params.dpop) {
+    headers.dpop = await createDpopProof(params.dpop, {
+      htm: 'POST',
+      htu: params.tokenEndpoint,
+      ...(params.dpop.nonce ? { nonce: params.dpop.nonce } : {}),
+    });
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(params.tokenEndpoint, {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+    });
+  } catch (e) {
+    throw new CurityAuthError(
+      `token-exchange fetch failed: ${(e as Error).message}`,
+      'exchange_failed',
+      e,
+    );
+  }
+  const nonce = response.headers.get('dpop-nonce');
+  if (params.dpop && nonce) params.dpop.nonce = nonce;
+  return response;
+}
+
+async function oauthErrorOf(response: Response): Promise<string | undefined> {
+  try {
+    return ((await response.clone().json()) as OauthErrorBody).error;
+  } catch {
+    return undefined;
+  }
 }
 
 async function buildClientAssertion(

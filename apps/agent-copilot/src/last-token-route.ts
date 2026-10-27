@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
+import { withProcessDpop } from '@ai-agents-demo/agent-runtime';
 import type { AuthedRequest } from './auth-middleware.js';
 import { peekLastExchange } from './mcp-client.js';
 import { peekLastSpecialistExchange } from './specialist-client.js';
@@ -131,7 +132,9 @@ export function createDownstreamChainFetcher(
   };
 }
 
-const fetchDownstreamChain = createDownstreamChainFetcher();
+// The gateway walk carries a DPoP-bound token; withProcessDpop presents it with a
+// proof and leaves the specialist's unbound A2A token as plain Bearer.
+const fetchDownstreamChain = createDownstreamChainFetcher(withProcessDpop());
 
 /**
  * Returns the full OBO chain for the calling user, ordered from the USER end

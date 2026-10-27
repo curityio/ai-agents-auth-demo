@@ -47,3 +47,11 @@ describe('buildExchangeAttributes', () => {
     expect(attrs['url.path']).toBeUndefined();
   });
 });
+
+describe('buildExchangeAttributes DPoP', () => {
+  it('records the binding key thumbprint only when the exchange binds the token', () => {
+    const base = { tokenEndpoint: 'https://curity.localtest.me/oauth/v2/oauth-token', clientId: 'c', audience: 'a', scope: 's' };
+    expect(buildExchangeAttributes({ ...base, dpop: { jkt: 'thumb' } })['auth.exchange.dpop_jkt']).toBe('thumb');
+    expect('auth.exchange.dpop_jkt' in buildExchangeAttributes(base)).toBe(false);
+  });
+});

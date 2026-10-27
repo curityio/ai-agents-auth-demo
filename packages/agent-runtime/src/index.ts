@@ -31,3 +31,4 @@ export {
   type ProtectedResourceMetadata,
   type UnauthorizedContext,
 } from './mcp-oauth-client.js';
+export { withDpop, withProcessDpop, processDpopKey } from './dpop-fetch.js';

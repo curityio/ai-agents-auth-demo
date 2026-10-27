@@ -1,5 +1,7 @@
 import { type Attributes, trace } from '@opentelemetry/api';
-import type { VerifiedJwt } from './verify.js';
+import { decodeJwt } from 'jose';
+import { parseScopes, type VerifiedJwt } from './verify.js';
+import { cnfJkt } from './dpop.js';
 
 interface ActNode {
   sub?: string;
@@ -47,6 +49,10 @@ export function buildIdentityAttributes(verified: VerifiedJwt): Attributes {
   // Flat, single-level; absent on terminal audiences, which nothing exchanges onward.
   const mayAct = (payload as Record<string, unknown>).may_act as { sub?: unknown } | undefined;
   if (mayAct && typeof mayAct.sub === 'string') attrs['auth.may_act'] = mayAct.sub;
+
+  // RFC 9449: present only on a DPoP-bound (sender-constrained) token.
+  const jkt = cnfJkt(payload);
+  if (jkt) attrs['auth.cnf_jkt'] = jkt;
   return attrs;
 }
 
@@ -57,4 +63,22 @@ export function buildIdentityAttributes(verified: VerifiedJwt): Attributes {
  */
 export function decorateSpanWithIdentity(verified: VerifiedJwt): void {
   trace.getActiveSpan()?.setAttributes(buildIdentityAttributes(verified));
+}
+
+/**
+ * Identity attributes for a token that a trusted component in front of this one
+ * has ALREADY verified, read without re-verifying. Only the exchange-shim uses
+ * it: it is reachable solely from agentgateway in the same pod, after the
+ * gateway's JWT policy has checked the caller token. This is what makes the
+ * agentgateway hop's `auth.*` (incl. `may_act`, `cnf_jkt`) visible in traces —
+ * agentgateway itself is a Rust binary that stamps none. Never use it on a token
+ * straight off the wire.
+ */
+export function upstreamVerifiedIdentityAttributes(token: string): Attributes {
+  try {
+    const payload = decodeJwt(token) as VerifiedJwt['payload'];
+    return buildIdentityAttributes({ payload, protectedHeader: { alg: 'unverified' }, scopes: parseScopes(payload) });
+  } catch {
+    return {};
+  }
 }

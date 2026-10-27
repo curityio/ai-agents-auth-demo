@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { decodeJwt, exportPKCS8, generateKeyPair } from 'jose';
 import { exchangeToken } from './exchange.js';
 import { CurityAuthError } from './errors.js';
+import { createDpopKey } from './dpop.js';
 
 const fetchMock = vi.fn();
 
@@ -344,5 +345,77 @@ describe('exchangeToken with private_key_jwt', () => {
     expect(body.get('grant_type')).toBe('urn:ietf:params:oauth:grant-type:token-exchange');
     expect(body.get('actor_token')).toBe(baseParams.actorToken);
     expect(body.get('audience')).toBe('mcp-inspect');
+  });
+});
+
+describe('exchangeToken with a DPoP key (RFC 9449)', () => {
+  const ok = (headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ access_token: 'bound.jwt', token_type: 'bearer', expires_in: 300, scope: 'inspect:read' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+  const nonceChallenge = (nonce: string) =>
+    new Response(JSON.stringify({ error: 'use_dpop_nonce', error_description: 'nonce required' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json', 'dpop-nonce': nonce },
+    });
+  const proofOf = (call: number) => decodeJwt(fetchMock.mock.calls[call]![1].headers.dpop as string);
+
+  it('sends a proof for POST to the token endpoint, with no ath', async () => {
+    const dpop = await createDpopKey();
+    fetchMock.mockResolvedValue(ok());
+    await exchangeToken({ ...baseParams, dpop });
+    const p = proofOf(0);
+    expect(p).toMatchObject({ htm: 'POST', htu: baseParams.tokenEndpoint });
+    expect(p.ath).toBeUndefined();
+  });
+
+  it('retries ONCE with the server nonce on use_dpop_nonce, with a fresh proof, and remembers the nonce', async () => {
+    const dpop = await createDpopKey();
+    fetchMock.mockResolvedValueOnce(nonceChallenge('n-1')).mockResolvedValueOnce(ok());
+    const r = await exchangeToken({ ...baseParams, dpop });
+    expect(r.accessToken).toBe('bound.jwt');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(proofOf(0).nonce).toBeUndefined();
+    expect(proofOf(1).nonce).toBe('n-1');
+    expect(proofOf(1).jti).not.toBe(proofOf(0).jti);
+    expect(dpop.nonce).toBe('n-1');
+  });
+
+  it('starts the next exchange with the remembered nonce (no extra round trip)', async () => {
+    const dpop = await createDpopKey();
+    fetchMock.mockImplementation(async () => ok({ 'dpop-nonce': 'n-2' })); // a Response body reads once
+    await exchangeToken({ ...baseParams, dpop });
+    await exchangeToken({ ...baseParams, dpop });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(proofOf(1).nonce).toBe('n-2');
+  });
+
+  it('gives up after one nonce retry', async () => {
+    const dpop = await createDpopKey();
+    fetchMock.mockResolvedValueOnce(nonceChallenge('n-1')).mockResolvedValueOnce(nonceChallenge('n-2'));
+    await expect(exchangeToken({ ...baseParams, dpop })).rejects.toBeInstanceOf(CurityAuthError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-signs the client assertion on the retry (a reused assertion jti may be refused)', async () => {
+    const { privateKey } = await generateKeyPair('RS256', { extractable: true });
+    const pem = await exportPKCS8(privateKey);
+    const dpop = await createDpopKey();
+    fetchMock.mockResolvedValueOnce(nonceChallenge('n-1')).mockResolvedValueOnce(ok());
+    await exchangeToken({
+      ...baseParams,
+      clientSecret: undefined,
+      dpop,
+      clientAuth: { method: 'private_key_jwt', privateKeyPkcs8Pem: pem, kid: 'k', assertionAudience: baseParams.tokenEndpoint },
+    });
+    const assertionOf = (i: number) => new URLSearchParams(fetchMock.mock.calls[i]![1].body as string).get('client_assertion')!;
+    expect(decodeJwt(assertionOf(1)).jti).not.toBe(decodeJwt(assertionOf(0)).jti);
+  });
+
+  it('sends no DPoP header without a key', async () => {
+    fetchMock.mockResolvedValue(ok());
+    await exchangeToken(baseParams);
+    expect(fetchMock.mock.calls[0]![1].headers.dpop).toBeUndefined();
   });
 });

@@ -79,7 +79,7 @@ export async function verifyJwt(token: string, opts: VerifyJwtOptions): Promise<
   }
 }
 
-function parseScopes(payload: VerifiedJwt['payload']): Set<string> {
+export function parseScopes(payload: VerifiedJwt['payload']): Set<string> {
   if (Array.isArray(payload.scp)) return new Set(payload.scp);
   if (typeof payload.scope === 'string') {
     return new Set(payload.scope.split(' ').filter(Boolean));

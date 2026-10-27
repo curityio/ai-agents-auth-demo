@@ -129,3 +129,53 @@ describe('handleExchange with a cache', () => {
     expect(d.exchange).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('handleExchange DPoP enforcement (RFC 9449)', () => {
+  const HTU = 'https://mcp-gateway.localtest.me/inspect/mcp';
+  const jwt = (payload: object) =>
+    [{ alg: 'none' }, payload].map((o) => Buffer.from(JSON.stringify(o)).toString('base64url')).join('.') + '.';
+
+  async function setup() {
+    const { createDpopKey, createDpopProof, DpopReplayCache } = await import('@ai-agents-demo/auth-curity');
+    const key = await createDpopKey();
+    const token = jwt({ sub: 'alice', aud: 'mcp-gateway', cnf: { jkt: key.jkt } });
+    const proof = (over: { htu?: string } = {}) =>
+      createDpopProof(key, { htm: 'POST', htu: over.htu ?? HTU, accessToken: token });
+    const exchange = vi.fn(deps.exchange);
+    const d = { ...deps, exchange, replay: new DpopReplayCache(), cache: new ExchangeCache({ ttlSeconds: 60, maxEntries: 10 }) };
+    return { token, proof, exchange, d };
+  }
+
+  it('exchanges a bound token presented with a valid proof', async () => {
+    const { token, proof, exchange, d } = await setup();
+    await handleExchange({ callerToken: token, targetAudience: 'mcp-inspect', dpop: { proof: await proof(), htm: 'POST', htu: HTU } }, d);
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a bound token with no proof, and never reaches Curity', async () => {
+    const { token, exchange, d } = await setup();
+    await expect(handleExchange({ callerToken: token, targetAudience: 'mcp-inspect' }, d)).rejects.toThrow(/proof required/);
+    expect(exchange).not.toHaveBeenCalled();
+  });
+
+  it('checks the proof BEFORE the cache: a stolen bound token cannot collect a cached exchange', async () => {
+    const { token, proof, exchange, d } = await setup();
+    await handleExchange({ callerToken: token, targetAudience: 'mcp-inspect', dpop: { proof: await proof(), htm: 'POST', htu: HTU } }, d);
+    await expect(handleExchange({ callerToken: token, targetAudience: 'mcp-inspect' }, d)).rejects.toThrow(/proof required/);
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a proof made for another route', async () => {
+    const { token, proof, d } = await setup();
+    const p = await proof({ htu: 'https://mcp-gateway.localtest.me/ops/mcp' });
+    await expect(
+      handleExchange({ callerToken: token, targetAudience: 'mcp-inspect', dpop: { proof: p, htm: 'POST', htu: HTU } }, d),
+    ).rejects.toThrow(/htu/);
+  });
+
+  it('still serves an UNBOUND token without a proof (MCP Inspector, smoke tests)', async () => {
+    const { exchange, d } = await setup();
+    await handleExchange({ callerToken: jwt({ sub: 'alice', aud: 'mcp-gateway' }), targetAudience: 'mcp-inspect' }, d);
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
+});

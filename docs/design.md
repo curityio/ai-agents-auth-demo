@@ -927,6 +927,17 @@ folded into `make seed-secrets`; see [`docs/llm-providers.md`](llm-providers.md)
   ztunnel treat the rule as DENY), and kubelet probes are exempt by design. The
   MCP servers have no edge host for the same reason; their 401 challenges name the
   gateway route's RFC 9728 document.
+- **DPoP on the agent → gateway hop.** The agents bind each `aud=mcp-gateway`
+  exchange to a per-process ephemeral key (`processDpopKey`, agent-runtime) and
+  present the token as `Authorization: DPoP` with a fresh proof
+  (`withDpop`, applied inside `openMcpToolset` and on the `/last-token` walks; it
+  rewrites only tokens that carry `cnf.jkt`). The four extAuthz routes accept
+  either scheme through a CEL token location, forward the proof, method and a
+  static per-route `htu` to the shim, and strip `dpop` upstream. The shim
+  (`exchange-handler.ts`) verifies the proof for bound tokens before its exchange
+  cache and answers a failure with `401 DPoP error="invalid_dpop_proof"`. Proof
+  creation and verification live once in `packages/auth-curity/src/dpop.ts`. See
+  `CLAUDE.md` fact #39 for the Curity behaviours this depends on.
 - **Platform via Helm.** SPIRE (hardened chart, three namespaces), Istio Ambient
   (base/istiod/cni/ztunnel + gateway), Tempo, and Grafana — all driven
   by `make platform`.

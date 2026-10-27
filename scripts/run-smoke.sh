@@ -55,6 +55,7 @@ requires() {
     smoke-obo|smoke-llm) echo "node_modules $SUBJECT_VAR" ;;
     smoke-a2a|smoke-mcp-protocol|smoke-gateway-authz) echo "node_modules $SUBJECT_VAR $SUBJECT_VAR@mfa" ;;
     smoke-stepup) echo "node_modules SMOKE_TOKEN_ALICE_MFA" ;;
+    smoke-dpop) echo "$SUBJECT_VAR" ;; # signs in-pod with the copilot's key: no host node_modules
   esac
 }
 # How a requirement reads in a "not run — needs …" line.

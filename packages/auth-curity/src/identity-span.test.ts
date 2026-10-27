@@ -92,3 +92,37 @@ describe('buildIdentityAttributes', () => {
     expect(attrs['auth.scope']).toBe('inspect:read ops:write');
   });
 });
+
+describe('buildIdentityAttributes DPoP binding', () => {
+  it('maps cnf.jkt so a receiver span shows the inbound token is sender-constrained', () => {
+    const attrs = buildIdentityAttributes(vj({ sub: 'alice', cnf: { jkt: 'thumb' } } as VerifiedJwt['payload']));
+    expect(attrs['auth.cnf_jkt']).toBe('thumb');
+    expect('auth.cnf_jkt' in buildIdentityAttributes(vj({ sub: 'alice' }))).toBe(false);
+  });
+});
+
+describe('upstreamVerifiedIdentityAttributes', () => {
+  it('maps a token a trusted upstream already verified (the shim behind the gateway JWT check)', async () => {
+    const { upstreamVerifiedIdentityAttributes } = await import('./identity-span.js');
+    const token =
+      [{ alg: 'RS256' }, {
+        sub: 'alice', aud: 'mcp-gateway', scope: 'inspect:read',
+        act: { sub: 'spiffe://demo.curity.local/ns/agents/sa/agent-copilot' },
+        may_act: { sub: 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway' },
+        cnf: { jkt: 'thumb' },
+      }].map((o) => Buffer.from(JSON.stringify(o)).toString('base64url')).join('.') + '.sig';
+    expect(upstreamVerifiedIdentityAttributes(token)).toMatchObject({
+      'auth.sub': 'alice',
+      'auth.scope': 'inspect:read',
+      'auth.aud': ['mcp-gateway'],
+      'auth.act': ['spiffe://demo.curity.local/ns/agents/sa/agent-copilot'],
+      'auth.may_act': 'spiffe://demo.curity.local/ns/mcp/sa/agentgateway',
+      'auth.cnf_jkt': 'thumb',
+    });
+  });
+
+  it('yields nothing for an undecodable token rather than throwing', async () => {
+    const { upstreamVerifiedIdentityAttributes } = await import('./identity-span.js');
+    expect(upstreamVerifiedIdentityAttributes('garbage')).toEqual({});
+  });
+});

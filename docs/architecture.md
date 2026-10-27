@@ -368,6 +368,7 @@ guess about who lacked permission.
 | the two agents (as MCP clients) | the authorization server an MCP server names in its RFC 9728 document | only if it equals the Curity issuer the agent already trusts (`allowedAuthorizationServers`), is HTTPS, echoes its issuer in RFC 8414 metadata and advertises CIMD support — otherwise discovery fails closed and no token is sent anywhere |
 | Each resource server | the OBO actor chain | per-position SPIFFE-ID regex over the nested `act` claim |
 | ztunnel (Ambient) | peer workloads | Istio mTLS (istiod-issued certs — a distinct trust domain from SPIRE, but the same shared root) |
+| exchange-shim (for agentgateway) | that a DPoP-bound `aud=mcp-gateway` token is presented by the key it is bound to | RFC 9449 proof verified against the token's `cnf.jkt`: method, the route's static public URL, `ath`, `iat` window, `jti` replay — enforced only for bound tokens, before the exchange cache |
 | ztunnel at `mcp-inspect`/`mcp-ops` (Istio ambient L4) | the caller's **mesh** identity | `AuthorizationPolicy` with a workload `selector` allowing only `cluster.local/ns/mcp/sa/agentgateway` and `cluster.local/ns/web/sa/web` (`k8s/istio/mcp-l4-authz.yaml`) — identity only, no token or path conditions, because ztunnel cannot evaluate L7 |
 | `apis-waypoint` (Istio ambient L7, in front of `inspect-api`/`ops-api`) | the calling MCP server's **mesh** identity + the Curity JWT | `RequestAuthentication` (Curity JWKS) + per-Service `AuthorizationPolicy` pinning `source.principals` to `cluster.local/ns/mcp/sa/mcp-inspect` / `mcp-ops` and the token's audience + scope (`k8s/istio/apis-l7-authz.yaml`) — the one place an mTLS identity, not a JWT claim, is an authz input |
 | inspect-api / ops-api | their own right to touch the cluster | Kubernetes RBAC — a Role/RoleBinding in `prod` bound to their `apis`-namespace ServiceAccounts |
@@ -461,6 +462,14 @@ Boundary properties worth calling out:
   because the `act` chain it checks is inside the token. L4 can't tell paths
   apart, so the BFF may reach every path, but it never holds a token with those
   audiences.
+- **Sender-constrained tokens on the agent → gateway hop (DPoP).** That hop
+  enters through the edge, so mesh identity cannot tell the agents apart from
+  anything else that reaches it. Instead each agent binds its `aud=mcp-gateway`
+  token to an ephemeral key (RFC 9449; Curity stamps `cnf.jkt`) and proves
+  possession on every request. agentgateway has no DPoP support, so the
+  co-located exchange-shim verifies the proofs during the extAuthz callout. A
+  bound token leaked from logs, traces or the debug routes is refused without
+  the key. Unbound tokens still pass as Bearer, which keeps MCP Inspector working.
 - **Authorization-server pinning at the MCP client.** The agents *discover* the
   authorization server from the front door's RFC 9728 document, but will only
   exchange with the Curity issuer they already trust: a document naming any other
@@ -654,6 +663,7 @@ produced no output.
 | **RFC 8693** token exchange | every agent/MCP hop, nested `act` per §4.1; also the single-hop LLM egress exchange (`aud=llm-gateway`), which does **not** nest `act` — the LLM provider has no downstream workload identity |
 | **CIMD** (Client ID Metadata Documents draft) + **RFC 7523** `private_key_jwt` | the two agents authenticate as ephemeral clients — `client_id` is a self-hosted metadata URL, auth is an asymmetric signed assertion |
 | **SPIFFE / SPIRE** | per-workload JWT-SVID, presented as `actor_token` |
+| **RFC 9449** DPoP | the agents' `aud=mcp-gateway` tokens are bound to an ephemeral key (`cnf.jkt`, via Curity's `use_dpop_nonce` flow) and presented with per-request proofs; verified by the exchange-shim |
 | **RFC 9470** step-up | `acr=mfa` required for `ops:write`; `WWW-Authenticate: insufficient_user_authentication` |
 | **RFC 8414** authorization-server metadata | the agents read Curity's `token_endpoint` and `client_id_metadata_document_supported` from `/.well-known/oauth-authorization-server/oauth/v2/oauth-anonymous`; nothing about the token endpoint is configured |
 | **RFC 9728** protected-resource metadata | MCP/API `.well-known/oauth-protected-resource`, served by the origin servers AND by agentgateway per route (the gateway's carries `scopes_supported`, plus `acr_values_supported` on the ops route); advertised in every 401 (`resource_metadata`) and in step-up challenges; the agents discover the AS from it and check `resource` against the URL they call |

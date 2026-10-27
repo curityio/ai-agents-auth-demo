@@ -1,6 +1,7 @@
 import { Client, StreamableHTTPClientTransport, type AuthProvider } from '@modelcontextprotocol/client';
 import { jsonSchema, tool, type FlexibleSchema, type ToolSet } from 'ai';
 import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
+import { withProcessDpop } from './dpop-fetch.js';
 
 export interface McpToolset {
   /** AI-SDK-shaped tools, one per discovered MCP tool. */
@@ -69,7 +70,10 @@ export async function openMcpToolset(opts: {
 }): Promise<McpToolset> {
   const transport = new StreamableHTTPClientTransport(new URL(opts.url), {
     authProvider: opts.authProvider,
-    ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+    // A DPoP-bound token (the agents bind every aud=mcp-gateway exchange) goes out
+    // as `DPoP <token>` + a per-request proof; anything else is untouched. The
+    // caller's fetchImpl (the specialist's step-up interceptor) runs inside it.
+    fetch: withProcessDpop(opts.fetchImpl ?? fetch),
   });
   const tok = summarizeJwt((await opts.authProvider.token()) ?? '');
   const client = new Client(

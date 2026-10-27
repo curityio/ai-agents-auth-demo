@@ -1242,6 +1242,54 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       keep the old key. That is why this never surfaced before the 2026-09-23
       init container lengthened Curity's boot past the waypoint's first connect.
 
+39. **The agents' `aud=mcp-gateway` tokens are DPoP-bound (RFC 9449), and the
+    proofs are verified by the exchange-shim — agentgateway has no DPoP support.**
+    Each agent process holds ONE ephemeral ES256 key (`processDpopKey()` in
+    `packages/agent-runtime/src/dpop-fetch.ts`, memory only), binds every
+    `mcp-gateway` exchange to it (`exchangeToken({ dpop })`), and `openMcpToolset`
+    plus both `/last-token` walks present the token as `Authorization: DPoP` with a
+    fresh proof per request (`withDpop`). `/llm` and the A2A hop stay Bearer on
+    purpose: the LLM token is terminal, and the A2A token is exchanged onward
+    under `may_act`. Measured on 11.5.1 (2026-10-27), each one a trap:
+    - **Curity requires a server nonce.** The first DPoP exchange answers
+      `400 use_dpop_nonce` with a `DPoP-Nonce` header; `exchangeToken` retries ONCE
+      with a fresh proof AND a fresh client assertion (a reused assertion `jti`
+      may be refused), and remembers the nonce on the key so later exchanges skip
+      the round trip.
+    - **Curity reports `token_type: bearer` for a bound token.** Judge binding by
+      `cnf.jkt`, never by `token_type`. The token procedure needs no change: the
+      exchange grant stamps `cnf.jkt` into the default token data it starts from.
+    - **A bound token is accepted as a `subject_token` without proof of
+      possession,** so the shim's downstream exchange works unchanged. That is why
+      `may_act` still matters: it is what stops another workload from exchanging
+      a stolen intermediate token.
+    - **agentgateway only parses the scheme.** Both MCP routes'
+      `mcpAuthentication.authorizationLocation` and both `/last-token` routes'
+      `jwtAuth.location` are a CEL expression accepting `DPoP ` or `Bearer `
+      (`stripPrefix`). It verifies no proof — a `prefix: "DPoP "` alone would make
+      the gateway LOOK DPoP-aware while ignoring proofs. Each route's extAuthz
+      forwards `x-dpop-proof`, `x-dpop-htm` (`request.method`) and a STATIC
+      `x-dpop-htu` (the route's public URL, like the static audience), and the
+      route strips `dpop` before the upstream hop.
+    - **The shim enforces only when the caller token carries `cnf.jkt`, and BEFORE
+      its 60 s exchange cache** (`exchange-handler.ts`). The cache is keyed by the
+      caller token alone, so a check after it would hand a stolen bound token the
+      exchange its owner just made. Unbound tokens (MCP Inspector via
+      `mint-mcp-token.sh`, the other smoke suites) keep working as Bearer — and a
+      thief cannot strip `cnf` from a signed token. A refusal is a `401` with
+      `WWW-Authenticate: DPoP error="invalid_dpop_proof"` (agentgateway passes the
+      shim's status and header through) and ONE `DENY … (DPoP proof)` OBO-log line.
+      The `jti` replay cache is per process (one shim replica).
+    - **`withDpop` rewrites only bound tokens.** The copilot's chain-walk fetcher
+      calls the gateway (bound) AND the specialist's `/last-token` (unbound, a
+      Bearer-only middleware); a blanket rewrite breaks the second.
+    - Traces: `auth.exchange.dpop_jkt` on the agent's exchange span equals
+      `auth.cnf_jkt` on the shim's `POST /exchange` span, which also carries the
+      caller token's `auth.*` (incl. `may_act=agentgateway`) — the gateway hop's
+      identity, since agentgateway stamps none. `make smoke-dpop` (in `make smoke`)
+      binds a token in the copilot pod and proves Bearer replay, a wrong-route
+      proof and a replayed proof are all refused.
+
 ## Commands
 
 `make help` prints the canonical list. The ones that matter day-to-day:
@@ -1260,8 +1308,9 @@ make routing         # re-patch hostAliases + mkcert CA into app pods + Curity�
 make status          # pod health across every demo namespace
 make jwks-check      # apis-waypoint validates tokens with Curity's real JWKS, not istiod's placeholder (fact #38)
 make jwks-heal       # restart the apis-waypoint so istiod re-fetches the JWKS (fixes "401 Jwt verification fails")
-make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
+make smoke           # routing-check + jwks-check + MCP-discovery + OBO + A2A + step-up/role-denial + LLM + MCP-revision + gateway-authz + DPoP smoke tests; needs ONE token, SMOKE_TOKEN_ALICE_MFA (acr=mfa; SMOKE_SUBJECT_TOKEN defaults to it), preflights it + host deps, one line per suite, output in .smoke-logs/ (SMOKE_VERBOSE=1 streams it)
 make smoke-mcp-discovery # MCP-spec discovery chain at the gateway (no token needed)
+make smoke-dpop      # DPoP on agent→gateway: bound exchange, proofs accepted; Bearer replay, wrong-route and replayed proofs refused (fact #39)
 make curity-truststore     # render .gen/curity-configmap.yaml = tracked configmap + mkcert root CA (CIMD fetch) + shared root CA (SPIRE JWKS fetch); depends on gen-ca
 make curity-theme    # re-embed k8s/curity/theme/*.css into the Curity configmap (login pages match the web app)
 make test-scripts    # contract tests (gateway-config render, demo-inputs LLM check, theme + truststore embeds, token-exchange procedure policy, user seeding, MCP discovery config, JWKS guard)

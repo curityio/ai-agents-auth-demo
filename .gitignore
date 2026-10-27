@@ -33,6 +33,9 @@ pnpm-debug.log*
 /tmp/
 .gen/
 
+.archify/
+.playwright-mcp/
+
 docs/explainers/
 docs/superpowers/
 
