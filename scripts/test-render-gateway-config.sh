@@ -162,12 +162,12 @@ renders_model "local defaults to qwen2.5:7b" qwen2.5:7b \
 
 # The rendered config keeps the tracing fields that name a DENIED tool call. The
 # HTTP-layer `authorization` rule refuses before the MCP layer runs, so the red
-# gateway span has no `gen_ai.tool.name`; these captured headers are the only
-# record of which tool / namespace was refused (CLAUDE.md fact #29).
+# gateway span gets its MCP attributes only from these fields — the same
+# body-derived values the rules read (CLAUDE.md fact #29).
 render LLM_PROVIDER=anthropic
 for field in \
-  "http.request.header.mcp-name: 'request.headers[\"mcp-name\"]'" \
-  "http.request.header.mcp-param-namespace: 'request.headers[\"mcp-param-namespace\"]'"; do
+  "mcp.tool.name: 'json(request.body).params.name'" \
+  "mcp.tool.arguments.namespace: 'json(request.body).params.arguments.namespace'"; do
   if [ "$RENDER_RC" -eq 0 ] && grep -qF -- "$field" "$WORK/.gen/agentgateway-config.yaml"; then
     green "OK   tracing records ${field%%:*}"
   else

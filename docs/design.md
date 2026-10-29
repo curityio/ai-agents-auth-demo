@@ -784,14 +784,14 @@ connect.
 
 ### 3.7.1 Gateway-side authorization unlocked by the new revision
 
-Two rules run *at the front door*, which is possible only because both key on
-headers that exist on 2026-07-28 alone (hence no 2025 fallback). They live in
-agentgateway's `authorization` policy and are covered by `make smoke-gateway-authz`.
+Two rules run *at the front door*. They live in agentgateway's `authorization`
+policy, key on the tools/call **body** — which the gateway parses before route
+policies run (v1.6.0+) — and are covered by `make smoke-gateway-authz`.
 
 | Rule | Keyed on | Downstream check that remains |
 |---|---|---|
-| `set_deployment_image` requires role `sre` | `Mcp-Name` | mcp-ops `toolRoleDenial` (authoritative) |
-| namespace must be `prod` | `Mcp-Param-Namespace` (SEP-2243) | ops-api/inspect-api Kubernetes RBAC, two hops later |
+| `set_deployment_image` requires role `sre` | `mcp.tool.name` | mcp-ops `toolRoleDenial` (authoritative) |
+| namespace must be `prod` | `mcp.tool.arguments.namespace` | ops-api/inspect-api Kubernetes RBAC, two hops later |
 
 **Why `authorization` and not `mcpAuthorization`.** The MCP-layer policy couples
 call-denial to `tools/list` visibility — a tool the gateway will not let you call
@@ -801,11 +801,12 @@ would loop silently rather than relay a denial. `authorization` is the HTTP-laye
 policy and takes no part in `tools/list`, so the call is refused while the tool
 stays visible — the distinction that made this possible at all.
 
-**`Mcp-Param-Namespace` is opt-in on the server.** The tools declare
-`x-mcp-header: Namespace` on their `namespace` input (zod 4 `.meta()`), which is
-what makes a conforming client mirror the argument into a header. Removing that
-declaration breaks no call — it silently removes the gateway's authorization
-input, so the MCP servers' tests assert it explicitly.
+**The body is the input, not a header.** Until agentgateway v1.5.0 the `mcp`
+CEL context was unavailable to route-level policies, so both rules read the
+client-sent `Mcp-Name` and `Mcp-Param-Namespace` (SEP-2243) headers — values a
+caller could set to disagree with the body. Since the v1.7.0 pin the gateway
+parses the JSON-RPC body itself, the tools no longer declare `x-mcp-header`, and
+the smoke suite sends deliberately lying headers to prove they are ignored.
 
 **Two honest limits.** The role rule cannot evaluate true when the `roles` claim
 is absent, so it *fails open* — mcp-ops's `toolRoleDenial` remains the

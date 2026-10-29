@@ -5,33 +5,38 @@
 #
 # Two rules live in the gateway's `authorization` policy
 # (k8s/workloads/agentgateway-config.yaml). Both are HTTP-layer rules keyed on
-# 2026-07-28 request headers, which is why they only became expressible once the
-# 2025 fallback was removed — on a legacy hop neither header exists:
+# the tools/call BODY, which agentgateway parses before route policies run
+# (v1.6.0+): `mcp.tool.name` and `mcp.tool.arguments.namespace`. Until v1.5.0 they
+# read the client-sent `Mcp-Name` / `Mcp-Param-Namespace` headers instead, which a
+# caller could set to disagree with the body — [4/5] pins that this is no longer so.
 #
-#   1. Per-tool role split — `set_deployment_image` requires the `sre` role,
-#      keyed on `Mcp-Name`. It is expressed here rather than in `mcpAuthorization`
-#      because the MCP-layer policy couples call-denial to tools/list visibility:
-#      gating it there would HIDE the tool from an oncall caller and its LLM would
-#      loop silently instead of surfacing a denial. mcp-ops still enforces the same
+#   1. Per-tool role split — `set_deployment_image` requires the `sre` role.
+#      It is expressed here rather than in `mcpAuthorization` because the
+#      MCP-layer policy couples call-denial to tools/list visibility: gating it
+#      there would HIDE the tool from an oncall caller and its LLM would loop
+#      silently instead of surfacing a denial. mcp-ops still enforces the same
 #      split downstream — the gateway rule is a first line, not the only one.
 #
-#   2. Namespace confinement — any explicit namespace other than `prod` is refused,
-#      keyed on `Mcp-Param-Namespace` (SEP-2243). The tools declare
-#      `x-mcp-header: Namespace` on their `namespace` input so a conforming client
-#      mirrors the argument into that header. Previously this constraint existed
-#      only as ops-api/inspect-api RBAC, i.e. two hops later.
+#   2. Namespace confinement — any explicit namespace other than `prod` is refused.
+#      Previously this constraint existed only as ops-api/inspect-api RBAC, i.e.
+#      two hops later.
 #
 # Assertions:
-#   [1/4] omitting `namespace` is unaffected by the confinement rule (the server
+#   [1/5] omitting `namespace` is unaffected by the confinement rule (the server
 #         defaults it to prod) — guards against the rule over-blocking.
-#   [2/4] an explicit `namespace: prod` is allowed.
-#   [3/4] `namespace: kube-system` is refused at the gateway, on BOTH tiers.
-#   [4/4] `set_deployment_image` is allowed for alice (sre). If SMOKE_TOKEN_CAROL
+#   [2/5] an explicit `namespace: prod` is allowed.
+#   [3/5] `namespace: kube-system` is refused at the gateway, on BOTH tiers.
+#   [4/5] header/body mismatch: the BODY decides. A kube-system body with an
+#         `Mcp-Param-Namespace: prod` header is still refused; a prod-defaulting
+#         body with a `kube-system` header is still allowed. With SMOKE_TOKEN_CAROL,
+#         a `set_deployment_image` body under an `Mcp-Name: restart_deployment`
+#         header is refused too.
+#   [5/5] `set_deployment_image` is allowed for alice (sre). If SMOKE_TOKEN_CAROL
 #         is set (carol = oncall, no sre) the denial is asserted too; otherwise
 #         skipped, since alice (sre) passes the rule and cannot demonstrate it.
 #
 # Required env: SMOKE_SUBJECT_TOKEN — a fresh MFA'd Curity access token for Alice.
-# Optional env: SMOKE_TOKEN_CAROL   — enables the [4/4] negative half.
+# Optional env: SMOKE_TOKEN_CAROL   — enables the carol halves of [4/5] and [5/5].
 #
 # Exit codes: 0 on success, non-zero on any failed assertion.
 
@@ -52,13 +57,13 @@ if [[ -z "${SMOKE_SUBJECT_TOKEN:-}" ]]; then
 fi
 
 # One 2026-07-28 tools/call through the gateway, from inside a cluster pod.
-# Echoes "<status>:<body-slice>". Mirrors what a conforming client sends: the
-# Mcp-Name and Mcp-Param-Namespace headers ARE the rules' inputs, so omitting them
-# would exercise a different policy path than production traffic.
-# Args: $1 url  $2 bearer  $3 tool  $4 arguments-json
+# Echoes "<status>:<body-slice>". Sends the Mcp-Name header a conforming client
+# emits; an optional 5th arg (JSON) overrides headers, which is how [4/5] makes
+# the headers disagree with the body.
+# Args: $1 url  $2 bearer  $3 tool  $4 arguments-json  [$5 header-overrides-json]
 call_tool() {
   kubectl -n agents exec deploy/agent-copilot -c agent -- \
-    env U="$1" B="$2" T="$3" A="$4" node -e '
+    env U="$1" B="$2" T="$3" A="$4" H="${5:-}" node -e '
 (async () => {
   const args = JSON.parse(process.env.A);
   const params = { name: process.env.T, arguments: args, _meta: {
@@ -74,7 +79,7 @@ call_tool() {
     "mcp-method": "tools/call",
     "mcp-name": process.env.T
   };
-  if (args.namespace) headers["mcp-param-namespace"] = args.namespace;
+  if (process.env.H) Object.assign(headers, JSON.parse(process.env.H));
   const r = await fetch(process.env.U, { method: "POST", headers,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params }) });
   process.stdout.write(String(r.status) + ":" + (await r.text()).slice(0, 20000));
@@ -90,7 +95,7 @@ INSPECT_URL="$GATEWAY_BASE/inspect/mcp"
 OPS_URL="$GATEWAY_BASE/ops/mcp"
 
 # ----- [1/4] omitted namespace must NOT trip the confinement rule ----------------
-note "[1/4] namespace omitted → allowed (server defaults to prod)"
+note "[1/5] namespace omitted → allowed (server defaults to prod)"
 OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{}')
 case "$OUT" in
   200*) green "  OK (allowed)" ;;
@@ -98,7 +103,7 @@ case "$OUT" in
 esac
 
 # ----- [2/4] explicit prod is allowed -------------------------------------------
-note "[2/4] namespace=prod → allowed"
+note "[2/5] namespace=prod → allowed"
 OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{"namespace":"prod"}')
 case "$OUT" in
   200*) green "  OK (allowed)" ;;
@@ -106,7 +111,7 @@ case "$OUT" in
 esac
 
 # ----- [3/4] cross-namespace refused at the gateway, on BOTH tiers ---------------
-note "[3/4] namespace=kube-system → refused at the gateway (read tier)"
+note "[3/5] namespace=kube-system → refused at the gateway (read tier)"
 OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{"namespace":"kube-system"}')
 case "$OUT" in
   403*) green "  OK (gateway refused: ${OUT:0:60})" ;;
@@ -122,9 +127,27 @@ case "$OUT" in
   *) red "  expected 403, got: ${OUT:0:200}"; exit 1 ;;
 esac
 
-# ----- [4/4] per-tool role split -------------------------------------------------
+# ----- [4/5] header/body mismatch: the body decides -----------------------------
+# Until v1.5.0 the rules read client headers; a caller could then send a prod
+# header over a kube-system body and walk through. Now the gateway parses the body.
+note "[4/5] namespace=kube-system in the BODY, Mcp-Param-Namespace: prod header → refused"
+OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{"namespace":"kube-system"}' '{"mcp-param-namespace":"prod"}')
+case "$OUT" in
+  403*) green "  OK (body won: ${OUT:0:60})" ;;
+  200*) red "  a lying Mcp-Param-Namespace header BYPASSED namespace confinement"; exit 1 ;;
+  *) red "  expected 403, got: ${OUT:0:200}"; exit 1 ;;
+esac
+
+note "      namespace omitted in the BODY, Mcp-Param-Namespace: kube-system header → allowed (header is not an input)"
+OUT=$(call_tool "$INSPECT_URL" "$INSPECT_TOKEN" list_pods '{}' '{"mcp-param-namespace":"kube-system"}')
+case "$OUT" in
+  200*) green "  OK (header ignored; server defaulted to prod)" ;;
+  *) red "  the rule still reads the header instead of the body: ${OUT:0:200}"; exit 1 ;;
+esac
+
+# ----- [5/5] per-tool role split -------------------------------------------------
 # Re-applies the image the deployment already runs, so a pass is a no-op rollout.
-note "[4/4] set_deployment_image as alice (sre) → allowed"
+note "[5/5] set_deployment_image as alice (sre) → allowed"
 OUT=$(call_tool "$OPS_URL" "$OPS_TOKEN" set_deployment_image '{"name":"order-service","image":"busybox:1.37"}')
 case "$OUT" in
   200*) green "  OK (allowed for an sre caller)" ;;
@@ -133,7 +156,7 @@ case "$OUT" in
 esac
 
 if [[ -z "${SMOKE_TOKEN_CAROL:-}" ]]; then
-  yellow "  SKIP [4/4-carol]: SMOKE_TOKEN_CAROL not set. Alice holds sre,"
+  yellow "  SKIP [5/5-carol]: SMOKE_TOKEN_CAROL not set. Alice holds sre,"
   yellow "    so she cannot demonstrate the denial — sign in as carol (oncall, per"
   yellow "    docs/curity-seed.md) to exercise it."
 else
@@ -149,7 +172,7 @@ p = json.loads(base64.urlsafe_b64decode(s))
 print(p.get('acr', '<none>'), 'ops:write' in str(p.get('scope', '')).split())
 " 2>/dev/null)
   if [[ "$CAROL_ACR" != "mfa True" ]]; then
-    yellow "  SKIP [4/4-carol]: the supplied carol token cannot reach the ops tier"
+    yellow "  SKIP [5/5-carol]: the supplied carol token cannot reach the ops tier"
     yellow "    (acr / has-ops:write = '$CAROL_ACR'; need 'mfa True')."
     yellow "    A plain login gives acr=html-form and no ops:write. Sign in as carol,"
     yellow "    ask the copilot to restart a deployment, complete the MFA step-up, then"
@@ -173,6 +196,13 @@ print(p.get('acr', '<none>'), 'ops:write' in str(p.get('scope', '')).split())
   case "$OUT" in
     200*) green "  OK (restart allowed — the rule targets only set_deployment_image)" ;;
     *) red "  the role rule over-blocks restart_deployment for an oncall caller: ${OUT:0:200}"; exit 1 ;;
+  esac
+  note "[4/5-carol] set_deployment_image in the BODY under an Mcp-Name: restart_deployment header → refused"
+  OUT=$(call_tool "$OPS_URL" "$CAROL_OPS" set_deployment_image '{"name":"order-service","image":"busybox:1.37"}' '{"mcp-name":"restart_deployment"}')
+  case "$OUT" in
+    403*) green "  OK (body won: ${OUT:0:60})" ;;
+    200*) red "  a lying Mcp-Name header BYPASSED the role split"; exit 1 ;;
+    *) red "  expected 403, got: ${OUT:0:200}"; exit 1 ;;
   esac
 fi
 

@@ -5,16 +5,6 @@ import { obtainOpsApiToken, callOpsApiRestart, callOpsApiSetImage, callOpsApiSca
 import type { Config } from './config.js';
 
 /**
- * SEP-2243: declaring `x-mcp-header` on a tool input property makes a conforming
- * 2026-07-28 client mirror that argument into an `Mcp-Param-Namespace` request
- * header. That lifts the namespace out of the JSON-RPC body and into a header
- * agentgateway can authorize on *before* forwarding — see the `authorization`
- * deny rule in k8s/workloads/agentgateway-config.yaml. The server still reads the
- * argument normally; the header is a mirror, not a replacement.
- */
-const X_MCP_HEADER_NAMESPACE = { 'x-mcp-header': 'Namespace' } as const;
-
-/**
  * `_meta` key under which a tool publishes the roles a caller needs to CALL it.
  * agentgateway couples `tools/list` visibility to its own MCP-layer authz, so the
  * per-tool role split is enforced downstream (here, `toolRoleDenial`) and every
@@ -103,8 +93,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
           .describe(
             `Namespace. Defaults to the demo's '${cfg.targetNamespace}' namespace; ` +
               `any other value will be rejected by RBAC.`,
-          )
-          .meta(X_MCP_HEADER_NAMESPACE),
+          ),
         reason: z
           .string()
           .max(512)
@@ -170,8 +159,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         namespace: z
           .string()
           .optional()
-          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`)
-          .meta(X_MCP_HEADER_NAMESPACE),
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
         reason: z.string().max(512).optional().describe('Human-readable reason.'),
       }),
       ...requiredRolesMeta(cfg, 'set_deployment_image'),
@@ -206,8 +194,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         namespace: z
           .string()
           .optional()
-          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`)
-          .meta(X_MCP_HEADER_NAMESPACE),
+          .describe(`Namespace. Defaults to '${cfg.targetNamespace}'.`),
         reason: z.string().max(512).optional().describe('Human-readable reason.'),
       }),
       ...requiredRolesMeta(cfg, 'scale_deployment'),

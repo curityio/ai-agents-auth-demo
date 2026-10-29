@@ -4,16 +4,6 @@ import { oboLog, summarizeJwt } from '@ai-agents-demo/auth-curity';
 import { obtainInspectApiToken, callListPods, callGetPodLogs, callGetDeployment } from './inspect-api-client.js';
 import type { Config } from './config.js';
 
-/**
- * SEP-2243: declaring `x-mcp-header` on a tool input property makes a conforming
- * 2026-07-28 client mirror that argument into an `Mcp-Param-Namespace` request
- * header. That lifts the namespace out of the JSON-RPC body and into a header
- * agentgateway can authorize on *before* forwarding — see the `authorization`
- * deny rule in k8s/workloads/agentgateway-config.yaml. The server still reads the
- * argument normally; the header is a mirror, not a replacement.
- */
-const X_MCP_HEADER_NAMESPACE = { 'x-mcp-header': 'Namespace' } as const;
-
 /** Per-request context: the inbound (validated) Bearer to use as subject_token. */
 export interface ToolContext {
   subjectToken: string;
@@ -35,8 +25,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         namespace: z
           .string()
           .optional()
-          .describe('Kubernetes namespace. Defaults to the demo prod namespace.')
-          .meta(X_MCP_HEADER_NAMESPACE),
+          .describe('Kubernetes namespace. Defaults to the demo prod namespace.'),
       }),
     },
     async ({ namespace }) => {
@@ -72,8 +61,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         namespace: z
           .string()
           .optional()
-          .describe('Namespace. Defaults to the demo prod namespace.')
-          .meta(X_MCP_HEADER_NAMESPACE),
+          .describe('Namespace. Defaults to the demo prod namespace.'),
         tail_lines: z
           .number()
           .int()
@@ -129,8 +117,7 @@ export function buildMcpServer(cfg: Config, ctx: ToolContext): McpServer {
         namespace: z
           .string()
           .optional()
-          .describe('Namespace. Defaults to the demo prod namespace.')
-          .meta(X_MCP_HEADER_NAMESPACE),
+          .describe('Namespace. Defaults to the demo prod namespace.'),
       }),
     },
     async ({ name, namespace }) => {

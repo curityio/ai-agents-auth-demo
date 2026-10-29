@@ -323,35 +323,30 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     (`k8s/istio/mcp-l7-authz.yaml`, now deleted; `mcp-inspect`/`mcp-ops` no
     longer carry `istio.io/use-waypoint`). Hard-won details:
     - **Path-routed, not federated.** ONE listener (`:8080`) with TWO path-scoped
-      routes: `/inspect/mcp` → mcp-inspect, `/ops/mcp` → mcp-ops. It is
-      path-routed (not a single federated `/mcp`) because agentgateway does **not**
-      expose `mcp.tool.target` inside its `extAuthz` CEL scope — so per-backend audience
-      narrowing can't be done on a single federated endpoint. Callers pick the path.
-      **Re-verified on v1.4.1 (2026-08-05) and again in the v1.5.0 source (2026-09-26):
-      still true, and it is structural, not a timing quirk.** In `crates/agentgateway/src/cel/types.rs` the CEL context's `mcp`
-      field is a plain `Option<&MCPInfo>` while its neighbours (`jwt`, `llm`, `extauthz`,
-      `backend`, …) are `ExtensionOrDirect`; `set_request()` wires up all thirteen of
-      those and never touches `mcp`. `ext_authz.rs` builds its context with
-      `Executor::new_request(req)` at every call site, which therefore leaves
-      `mcp: None`. Only `new_mcp`/`new_mcp_request` (the MCP-layer policies, e.g.
-      `mcpAuthorization`) populate it. v1.4.1's `schema/cel.md` calling `mcp.tool.*`
-      "request-time" refers to those policies, NOT to extAuthz — don't be misled into
-      federating on the strength of that doc.
-      Two things DID change, and both are escape hatches if federation is ever wanted:
-      (a) an undefined `mcp.*` reference no longer silently drops the ENTIRE computed
-      header map — as of v1.4 only the undefined value is omitted (it still fails *open*,
-      so any consumer must fail closed on a missing header; `exchange-shim` already does,
-      `server.ts` `typeof targetAudience !== 'string'` → 400);
-      (b) `request.headers["mcp-name"]` (the 2026-07-28 standard header) and
-      `json(request.body).params.name` BOTH resolve inside extAuthz and both yield the
-      tool name — the latter works on today's protocol, including the multiplexed
-      `<target>_<tool>` form needed to derive an audience. The body route costs a ~2 MB
-      CEL buffer ceiling (bodies ≥2 MB evaluate to nothing while our MCP servers accept
-      4 MB), so prefer the header once clients speak 2026-07-28. **Our clients now do**
-      (see #26): the v2 client emits `Mcp-Name: <tool>` on every `tools/call` whenever it
-      negotiates the modern revision — verified in the spike, so the header route is live
-      the moment the gateway offers 2026-07-28. It is NOT unconditional: on a 2025-era
-      fallback there is no `Mcp-Name`, so any CEL keyed on it must still fail closed.
+      routes: `/inspect/mcp` → mcp-inspect, `/ops/mcp` → mcp-ops. Callers pick the
+      path. The reason that still holds: the OBO hop mints ONE audience-scoped token
+      per request and the gateway swaps ONE `authorization` header, but a federated
+      `tools/list` fans out to BOTH backends inside a single request — one request
+      cannot carry two tokens. The reason that used to hold but NO LONGER does: until
+      v1.5.0 the `mcp` CEL context was `None` inside route-level policies (`cel/types.rs`
+      `set_request()` never touched it; `ext_authz.rs` built its context with
+      `Executor::new_request`), so `mcp.tool.target` could not pick an audience in
+      `extAuthz`. **Since v1.6.0 (PR #3301, "Parse MCP context for CEL early") the
+      gateway resolves the backend and parses the tools/call body BEFORE post-routing
+      policies run**, whenever any registered route expression references `mcp`
+      (`cel/mod.rs needs_mcp()`; `store/binds.rs` registers `authorization` + `ext_authz`
+      expressions). `mcp.tool.name` (the RESOLVED upstream name, `list_pods` not
+      `inspect_list_pods`), `mcp.tool.target` and `mcp.tool.arguments.*` therefore
+      resolve in `extAuthz` and `authorization` on the pin (v1.7.0) — the two
+      `authorization` rules of fact #27 now read them. `mcp.params` is guardrails-only.
+      Where `mcp.*` is absent (tools/list, server/discover, the /llm route) an
+      expression referencing it does not evaluate true, so a `deny` keyed on it
+      cannot fire there; any header a CEL computes from it is omitted, not emptied,
+      and a consumer must still fail closed on a missing header (`exchange-shim`
+      `server.ts` `typeof targetAudience !== 'string'` → 400). Measured 2026-10-29:
+      a kube-system body under an `Mcp-Param-Namespace: prod` header is refused,
+      and a prod-defaulting body under a `kube-system` header is allowed
+      (`make smoke-gateway-authz` [4/5]).
     - **JWT validation + coarse per-tier scope authz (NOT per-tool role split).** The
       gateway validates the caller's
       `aud=mcp-gateway` JWT (issuer `https://curity.localtest.me/oauth/v2/oauth-anonymous`;
@@ -614,15 +609,19 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `initialize`, no `mcp-session-id`, and a per-request `_meta` envelope whose
       **three** reserved keys (`protocolVersion`, `clientInfo`, `clientCapabilities`)
       are ALL required — a partial envelope is rejected with `-32602` naming the
-      missing one. They also send `Mcp-Name` and `Mcp-Param-Namespace`, because those
-      headers are the gateway rules' inputs (#27); a helper that omitted them would
-      silently exercise a different policy path than production traffic.
+      missing one. They also send `Mcp-Name`, the header a conforming client emits —
+      for fidelity only: since the rules read the parsed BODY (#27), the headers are
+      no longer a policy input, and `smoke-gateway-authz.sh` [4/5] sends headers that
+      DISAGREE with the body to prove the body wins.
 
 27. **Two authorization rules now run AT the gateway, in the `authorization` policy —
     NOT `mcpAuthorization`.** `set_deployment_image` requires the `sre` role (keyed on
-    `Mcp-Name`), and any explicit namespace other than `prod` is refused (keyed on
-    `Mcp-Param-Namespace`, SEP-2243). Covered by `make smoke-gateway-authz`. Details
-    that are easy to get wrong:
+    `mcp.tool.name`), and any explicit namespace other than `prod` is refused (keyed on
+    `mcp.tool.arguments.namespace`). Both inputs are parsed from the JSON-RPC body by
+    the gateway itself (fact #21, v1.6.0+); until 2026-10-29 they read the client-sent
+    `Mcp-Name` / `Mcp-Param-Namespace` (SEP-2243) headers, which a caller could set to
+    disagree with the body. Covered by `make smoke-gateway-authz`. Details that are
+    easy to get wrong:
     - **`authorization` ≠ `mcpAuthorization`.** The MCP-layer policy couples
       call-denial to `tools/list` visibility (v1.4.x has a test literally named
       *"deny policy … filters only that tool from list_tools"*), so gating a tool
@@ -637,14 +636,16 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       v1.4.1), so a denied tool-call still performs the OBO exchange — the privileged
       token is minted and discarded. Do not conclude otherwise from `httpproxy.rs`:
       it has three policy application sites with *different* orders.
-    - **`Mcp-Param-Namespace` only exists because the tools declare
-      `x-mcp-header`** on their `namespace` input (`z.…meta({'x-mcp-header':
-      'Namespace'})`, zod 4). Deleting that declaration breaks no call — it silently
-      removes the gateway's authz input, so `apps/mcp-*/tests/mcp-http.test.ts`
-      assert it explicitly.
-    - The namespace rule is written **"present AND not prod"** so that *omitting* the
-      argument (the common case — the server defaults it) can never trip it,
-      whichever way a missing header evaluates in CEL.
+    - **The tools no longer declare `x-mcp-header` on `namespace`** (dropped
+      2026-10-29 with the header-keyed rules). While it was declared, the SDK server
+      ALSO rejected a body/header disagreement (`-32020 "the request headers and body
+      disagree"`), which is why the old MCP images refused `namespace: prod` sent
+      without the header during the switch-over — rebuild both MCP images with the
+      gateway config, not after it.
+    - The namespace rule is written **`has(mcp.tool.arguments.namespace) && … != "prod"`**
+      ("present AND not prod") so that *omitting* the argument (the common case — the
+      server defaults it) can never trip it. CEL `has()` is supported by the gateway's
+      cel fork and parses under `Expression::new_strict`.
     - **mcp-ops remains authoritative** for the role split: the gateway rule cannot
       evaluate true if the `roles` claim is missing, so it fails open. The downstream
       `toolRoleDenial` check is what makes the split unconditional.
@@ -765,11 +766,15 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       `authorization` policy refuses it before the MCP layer runs; its `ExtAuthz` →
       `exchange-shim` child makes fact #27's "extAuthz runs before authorization"
       ordering visible in the trace. What was refused is therefore recorded from the
-      rules' own inputs: `tracing.fields.add` captures `Mcp-Name` and
-      `Mcp-Param-Namespace` as `http.request.header.mcp-name` /
-      `…mcp-param-namespace` (semconv captured-header keys; omitted when the header is
-      absent), so the red span reads `list_pods` + `kube-system` or
-      `set_deployment_image`. Pinned by `scripts/test-render-gateway-config.sh`. Not configurable; don't hide it by caching discovery — the
+      rules' own inputs: `tracing.fields.add` emits `mcp.tool.name` and
+      `mcp.tool.arguments.namespace` from `json(request.body)…` (omitted when absent),
+      so the red span reads `list_pods` + `kube-system` or `set_deployment_image` —
+      the same values the rules evaluated, not what a client header claimed. They
+      deliberately do NOT use the `mcp.tool.*` CEL fields: at log time the gateway
+      takes `mcp` from `log.mcp_status`, which only the MCP handler fills, and an
+      HTTP-layer denial never reaches it — measured 2026-10-29, the refused span had
+      no `mcp.*` at all until the fields were switched to the body. Pinned by
+      `scripts/test-render-gateway-config.sh`. Not configurable; don't hide it by caching discovery — the
       manifests' `MCP_DISCOVERY_TTL_SECONDS=0` exists so the handshake is visible.
     - **Validate offline** with `docker run …/agentgateway:v1.5.0 -f cfg.yaml
       --validate-only` (set `$AZURE_*` to dummies; it then fails only on the JWKS
@@ -856,7 +861,7 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       trade-off:** `jsonSchema()` does no validation without a `validate` function, so
       the model's args are no longer checked client-side. That was never the security
       boundary — `mcp-ops`/`mcp-inspect` validate every call with zod 4, and the
-      gateway's `Mcp-Param-Namespace` rule fails closed on anything unreadable; only
+      gateway's namespace rule reads the parsed body and fails closed on anything unreadable; only
       *where* a malformed call is caught moves. Don't "restore" a converter here: it
       recreates a second, drifting copy of a contract the server already publishes.
       (Unrelated to the zod-3/zod-4 split — the client no longer builds zod at all,

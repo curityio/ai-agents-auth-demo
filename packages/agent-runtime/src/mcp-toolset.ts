@@ -185,8 +185,8 @@ const EMPTY_OBJECT_SCHEMA = { type: 'object', properties: {} } as const;
  * `validate` function, so the model's arguments are no longer checked
  * client-side. That check was never the security boundary — `mcp-inspect`
  * and `mcp-ops` validate their own inputs with zod 4 on every call, and the
- * gateway's `Mcp-Param-Namespace` authz rule fails closed on anything it cannot
- * read. What changes is where a malformed call is caught: the server returns an
+ * gateway's namespace rule reads the parsed body and fails closed on anything it
+ * cannot read. What changes is where a malformed call is caught: the server returns an
  * error result the model can act on, instead of the SDK rejecting locally. Since
  * the model now sees the real constraints, it should produce fewer such calls.
  *
