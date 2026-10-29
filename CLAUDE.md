@@ -913,6 +913,14 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       means a log *collector* splits each `│` line into its own record. Fine today
       (nothing ships these off-cluster); if that changes, add an opt-in `OBO_LOG=json`
       single-line mode rather than flattening the pretty default. `OBO_LOG=off` silences it.
+    - **The raw HTTP is a separate switch, `HTTP_WIRE_LOG`** — `on` in every Node
+      workload manifest (unset = off in code, `full` = raw). `otel-bootstrap` wraps the
+      global `fetch` (`src/wire-log.ts`) and prints each outbound request + response,
+      headed by what it is (token exchange, MCP method, LLM chat, A2A), JWT claims
+      listed once per trace (then `same token as #n`), noise headers and big bodies
+      summarised. It is a separate switch from the OBO log for the same reason as
+      fact #32: either can be silenced without losing the other. Not covered: the
+      `web` BFF and `@kubernetes/client-node` (it uses `node:http`).
 
 32. **`AUTH_DEBUG` gates demo *features*, not verbose logging — don't re-merge them.**
     `AUTH_DEBUG=true` (set in `k8s/workloads/web.yaml`) enables the `/tokens` token

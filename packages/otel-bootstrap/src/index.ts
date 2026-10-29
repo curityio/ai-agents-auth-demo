@@ -1,8 +1,11 @@
 import { startTelemetry } from './telemetry.js';
+import { installWireLog } from './wire-log.js';
 
 // Side-effect entry: loaded via `node --import @ai-agents-demo/otel-bootstrap`
 // BEFORE the app, so auto-instrumentation can patch modules as they load.
 const sdk = startTelemetry();
+// HTTP_WIRE_LOG=on|full: print every outbound fetch (demo aid; off when unset).
+installWireLog();
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
