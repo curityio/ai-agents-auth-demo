@@ -487,7 +487,10 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
     exactly ONE path — no direct-to-vendor mode exists; reintroducing one would put
     a static vendor key back in the agent's environment and bypass the `llm:invoke`
     scope check, which is the property this demo argues against. Two traps, both
-    measured against `agentgateway:v1.4.1` (the pin is now v1.5.0: its `llm/mod.rs`
+    measured against `agentgateway:v1.4.1` (the pin is now v1.7.0 — bumped 2026-10-29 after
+    `make validate-llm` + `make smoke` + one real question whose `/llm` span carried
+    `gen_ai.usage.*` from Foundry/Claude; the other fragments are still config-validated
+    only. At v1.5.0 its `llm/mod.rs`
     was heavily reworked, and on 2026-09-26 only the Foundry/Claude path was
     re-measured live — it still works with the key location left implicit; the
     other fragments are config-validated only, so re-measure before trusting them): **Anthropic breaks if
@@ -723,7 +726,12 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
 29. **agentgateway tracing: `config.tracing` works, extAuthz needs an explicit
     `traceparent` (on v1.4.x), and MCP origin spans nest only if W3C is the sole
     propagation format.** Separate things,
-    verified on v1.4.1 and re-measured on v1.5.0 (2026-09-26) where noted:
+    verified on v1.4.1 and re-measured on v1.5.0 (2026-09-26) where noted; the v1.7.0 bump
+    (2026-10-29) re-read one real question's trace and found the SAME span shape and
+    attributes. **`config.tracing` is DEPRECATED since v1.7.0** (boot logs five
+    `migrate to frontendPolicies.tracing` warnings; `types/local.rs` still maps the old
+    block onto the new one, and setting both is a boot error) — migrate before the next
+    bump, not during one:
     - **Enable it.** `config.tracing.otlpEndpoint` + `otlpProtocol: grpc|http` (also
       `headers`, `fields`, `randomSampling`, `clientSampling`, `path`). Without it the
       gateway generates a span per request (it logs `trace.id`/`span.id`) and
@@ -746,6 +754,9 @@ Browser ─https─▶ web (Next.js BFF) ─user token─▶ agent-copilot ─�
       #3068. So the deliberate unauthenticated discovery probe (fact #37) now opens
       EVERY question's trace with a red `POST /inspect/mcp/*` span reading `mcp
       authentication failure: … no bearer token found` — the handshake, not a fault.
+      (v1.7.0 sanitises HTTP error BODIES to `authentication failed` / `authorization
+      failed`, but the span status message still carries the full text — verified
+      2026-10-29.)
       Genuine gateway refusals (authorization denied) turn red too, which is the
       useful half — verified 2026-09-26: alice's `kube-system` read and carol's
       `set_deployment_image` each show a red `403 authorization failed` span with no

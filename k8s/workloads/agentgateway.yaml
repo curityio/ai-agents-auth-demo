@@ -159,8 +159,11 @@ spec:
           # still CANNOT replace apps/exchange-shim at v1.5.0: `actorToken.source`
           # only reads from the request — there is no file or Workload API source for
           # the rotating SPIFFE JWT-SVID (v1.5.0's new SPIFFE support covers the
-          # gateway's mTLS identity only). See experiments/agentgateway-cel-probe/README.md.
-          image: ghcr.io/agentgateway/agentgateway:v1.5.0
+          # gateway's mTLS identity only). v1.5.0 → v1.7.0 (2026-10-29) passed the same
+          # drill unchanged (config validates as-is; one new boot warning: `config.tracing`
+          # is deprecated in favour of `frontendPolicies.tracing`, still honoured).
+          # actorToken.source is unchanged at v1.7.0 (agentgateway#2905).
+          image: ghcr.io/agentgateway/agentgateway:v1.7.0
           imagePullPolicy: IfNotPresent
           args: ["-f", "/etc/agentgateway/config.yaml"]
           env:
