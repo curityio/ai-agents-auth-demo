@@ -64,7 +64,7 @@ export interface Suggestion {
 // get_deployment. Write tier (privileged path → agent-specialist → mcp-ops):
 // restart_deployment, scale_deployment, set_deployment_image.
 // The kube-system prompt is the one deliberate refusal on the read tier: the
-// gateway's namespace-confinement rule (SEP-2243 `Mcp-Param-Namespace`) denies
+// gateway's namespace-confinement rule (`mcp.tool.arguments.namespace`) denies
 // any namespace but `prod` before the call reaches mcp-inspect. It is the
 // only denial in the demo that agentgateway itself decides, and it works for
 // every persona — no role or MFA involved.

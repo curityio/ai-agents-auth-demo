@@ -1,16 +1,19 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
 # agentgateway config — path-routed MCP front door for mcp-inspect +
-# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.5.0.
+# mcp-ops, plus the governed /llm egress. Validated against agentgateway v1.7.0.
 #
-# Why path-routed instead of one federated /mcp endpoint: the `mcp` CEL context
-# (`mcp.tool.target` / `mcp.tool.name`) is NOT available inside `extAuthz` — it
-# runs at the HTTP layer before MCP tool multiplexing, and any `mcp.*` reference
-# in extAuthz `addRequestHeaders` evaluates to undefined and silently drops the
-# ENTIRE computed header map. Per-backend audience narrowing therefore needs one
-# route per backend, each with a STATIC x-target-audience; callers pick the path.
-# (`mcpAuthorization`, by contrast, runs at the MCP layer where `mcp.tool.name`
-# IS available.)
+# Why path-routed instead of one federated /mcp endpoint: the OBO hop (extAuthz →
+# exchange-shim) mints ONE audience-scoped token and the gateway swaps ONE
+# `authorization` header per request, but a federated `tools/list` fans out to
+# BOTH backends inside a single request — one request cannot carry two tokens.
+# So each backend gets its own route with a STATIC x-target-audience; callers
+# pick the path. (Until v1.5.0 there was a second reason: the `mcp` CEL context
+# was `None` inside route-level policies. Since v1.6.0 — PR #3301 — the gateway
+# parses the tools/call body BEFORE route policies run, so `mcp.tool.name`,
+# `mcp.tool.target` and `mcp.tool.arguments.*` DO resolve in `extAuthz` and
+# `authorization`; the rules below rely on it. The one-token-per-request
+# constraint still stands.)
 #
 # YAML foot-gun: an unquoted CEL ternary `A ? B : C` parses as a YAML complex
 # mapping key and fails as "expected a string" — keep all CEL single-quoted.
@@ -56,18 +59,22 @@ config:
     # --validate-only does not check CEL, so an unknown root silently yields
     # nothing rather than erroring.)
     #
-    # The two MCP headers the `authorization` rules key on are recorded under the
-    # semconv captured-header keys. That is what names the tool on a DENIED call:
-    # the HTTP-layer `authorization` policy refuses it before the MCP layer runs,
-    # so that span is a generic `POST /ops/mcp/*` with no `gen_ai.tool.name` — the
-    # header is the only record of what was refused, and of the namespace that
-    # tripped the prod-only rule. Absent header (the /llm route, `tools/list`) →
-    # the field is omitted, not emptied.
+    # The two inputs the `authorization` rules read are recorded on every span that
+    # has them. That is what names the tool on a DENIED call: the HTTP-layer
+    # `authorization` policy refuses it before the MCP layer runs, so that span is
+    # a generic `POST /ops/mcp/*` — these fields are the record of what was refused
+    # and of the namespace that tripped the prod-only rule. They read the buffered
+    # JSON-RPC body (the same source the rules evaluate), not client headers, so
+    # they state what was actually asked for. NOT `mcp.tool.name`: log-time CEL
+    # gets `mcp` from the MCP handler (`log.mcp_status`), which never runs on an
+    # HTTP-layer denial, so that path is empty on exactly the span that matters
+    # (measured 2026-10-29). Absent (the /llm route, `tools/list`) → the field is
+    # omitted, not emptied.
     fields:
       add:
         url.full: 'request.uri'
-        http.request.header.mcp-name: 'request.headers["mcp-name"]'
-        http.request.header.mcp-param-namespace: 'request.headers["mcp-param-namespace"]'
+        mcp.tool.name: 'json(request.body).params.name'
+        mcp.tool.arguments.namespace: 'json(request.body).params.arguments.namespace'
 
 binds:
 - port: 8080
@@ -128,15 +135,17 @@ binds:
         mcpAuthorization:
           rules:
           - '"inspect:read" in (jwt.scope.split(" ")) && mcp.tool.name in ["list_pods", "get_pod_logs", "get_deployment"]'
-        # Namespace confinement (SEP-2243), same construction as the ops route: the
-        # read tools declare `x-mcp-header: Namespace`, so the client mirrors that
-        # argument into `Mcp-Param-Namespace` and a cross-namespace read (e.g. pod
-        # logs from kube-system) is refused here rather than relying solely on
-        # inspect-api's RBAC. "Present AND not prod" so omitting the argument — the
-        # common case, since the server defaults it — never trips the rule.
+        # Namespace confinement, same construction as the ops route: the gateway
+        # parses the tools/call body before route policies run (v1.6.0+, PR #3301),
+        # so the rule reads the ACTUAL `namespace` argument — not a client-sent
+        # header a caller could set to disagree with the body. A cross-namespace
+        # read (e.g. pod logs from kube-system) is refused here rather than relying
+        # solely on inspect-api's RBAC. `has()` makes it "present AND not prod", so
+        # omitting the argument — the common case, since the server defaults it —
+        # never trips the rule.
         authorization:
           rules:
-          - deny: 'request.headers["mcp-param-namespace"] != "" && request.headers["mcp-param-namespace"] != "prod"'
+          - deny: 'has(mcp.tool.arguments.namespace) && mcp.tool.arguments.namespace != "prod"'
         extAuthz:
           host: localhost:8090
           failureMode: deny
@@ -266,15 +275,16 @@ binds:
         # connect-only = 1, connect + denied call = 2. Consequence: the deny stops the
         # request reaching mcp-ops, but it is not a way to avoid minting the token.
         #
-        # Keyed on `Mcp-Name`, the 2026-07-28 tools/call header. This is only sound
-        # because the MCP servers run `legacy: 'reject'` and the agents pin the
-        # revision — on a 2025 hop the header would not exist and this rule would
-        # silently never fire. See CLAUDE.md fact #26.
+        # Keyed on `mcp.tool.name`, which the gateway parses from the JSON-RPC body
+        # BEFORE route policies run (v1.6.0+, PR #3301). Until v1.5.0 `mcp` was None
+        # here and the rule read the client-sent `Mcp-Name` header instead — which a
+        # caller could set to disagree with the body. `mcp.tool.name` is the resolved
+        # upstream name (`set_deployment_image`, never the multiplexed `ops_…` form).
         #
         # Deny-only ⇒ denylist semantics: with no `allow` rules present, every other
         # request is unaffected (agentgateway defaults to allow unless an allow rule
-        # exists but does not match). tools/list and server/discover carry no
-        # Mcp-Name, so they never match this rule.
+        # exists but does not match). tools/list and server/discover carry no tool,
+        # so `mcp.tool.name` does not resolve and this rule never matches.
         #
         # mcp-ops REMAINS AUTHORITATIVE — this is a first line, not the only one. If
         # the `roles` claim were ever absent the expression cannot evaluate true and
@@ -286,18 +296,16 @@ binds:
         # ops:write gate) so every ops tool publishes its rule in tools/list _meta;
         # there is deliberately NO gateway rule for those — Curity already decided.
         #
-        # The second rule is namespace confinement (SEP-2243). The ops tools declare
-        # `x-mcp-header: Namespace` on their `namespace` input, so a conforming client
-        # mirrors that argument into `Mcp-Param-Namespace` — which lets the gateway
-        # reject a cross-namespace write at the front door instead of relying solely
-        # on ops-api's RBAC. Written as "present AND not prod" so that OMITTING the
-        # argument (the common case — the server defaults it) never trips the rule,
-        # whichever way a missing header evaluates. Keep 'prod' in step with
-        # TARGET_NAMESPACE on mcp-ops/ops-api.
+        # The second rule is namespace confinement. It reads the ACTUAL `namespace`
+        # argument (`mcp.tool.arguments.namespace`), so the gateway rejects a
+        # cross-namespace write at the front door instead of relying solely on
+        # ops-api's RBAC. `has()` makes it "present AND not prod", so OMITTING the
+        # argument (the common case — the server defaults it) never trips the rule.
+        # Keep 'prod' in step with TARGET_NAMESPACE on mcp-ops/ops-api.
         authorization:
           rules:
-          - deny: 'request.headers["mcp-name"] == "set_deployment_image" && !("sre" in jwt.roles)'
-          - deny: 'request.headers["mcp-param-namespace"] != "" && request.headers["mcp-param-namespace"] != "prod"'
+          - deny: 'mcp.tool.name == "set_deployment_image" && !("sre" in jwt.roles)'
+          - deny: 'has(mcp.tool.arguments.namespace) && mcp.tool.arguments.namespace != "prod"'
         extAuthz:
           host: localhost:8090
           failureMode: deny

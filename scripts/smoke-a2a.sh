@@ -104,12 +104,11 @@ mcp_call() {
     "mcp-protocol-version": "2026-07-28",
     "mcp-method": method
   };
-  // Mcp-Name is what the gateway per-tool authz rules key on, and Mcp-Param-Namespace
-  // is the SEP-2243 mirror its namespace-confinement rule reads. A real client emits
-  // both, so this helper must too or it would exercise a different policy path.
+  // Mcp-Name is the 2026-07-28 tools/call header a real client emits, so this
+  // helper sends it too. The gateway authz rules no longer read it (they parse
+  // the body — `mcp.tool.name` / `mcp.tool.arguments.namespace`, fact #27), so it
+  // is mirrored for fidelity, not as a policy input.
   if (method === "tools/call" && params.name) headers["mcp-name"] = params.name;
-  const ns = params.arguments && params.arguments.namespace;
-  if (ns) headers["mcp-param-namespace"] = ns;
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
   // Correctness constraint, not display — see the note in smoke-stepup.sh: callers
   // pattern-match this string, so a truncated body reads as a missing value.
