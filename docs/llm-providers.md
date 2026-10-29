@@ -241,7 +241,7 @@ fragment does and why:
 The other two — OpenAI and Gemini — are **schema-validated only**.
 `make validate-llm` renders each fragment and runs it through agentgateway's
 own `--validate-only` config check against the exact pinned image
-(`ghcr.io/agentgateway/agentgateway:v1.5.0`), proving each fragment parses as a
+(`ghcr.io/agentgateway/agentgateway:v1.7.0`), proving each fragment parses as a
 well-formed provider block. Neither has been exercised against its
 live vendor. Say so plainly rather than implying otherwise: a fragment that
 loads cleanly can still have the wrong path prefix or the wrong auth header and
@@ -256,7 +256,7 @@ mitigation short of driving all five live — see [§4](#4-why-only-four).
 
 agentgateway's published documentation lists 19 first-class providers. That
 page tracks `latest`, not the image this demo pins. At **v1.4.1**, and still at
-**v1.5.0** (re-checked in source on the 2026-09-26 bump), standalone YAML config
+**v1.7.0** (re-checked in source on the 2026-10-29 bump; unchanged since v1.4.1), standalone YAML config
 accepts exactly eight provider keys:
 
 ```
