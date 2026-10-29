@@ -82,6 +82,10 @@ spec:
               value: http://otel-collector.telemetry.svc.cluster.local:4318
             - name: OTEL_SERVICE_NAME
               value: mcp-ops
+            # Wire log: every outbound fetch printed readably ("full" = raw,
+            # unset = off). See packages/otel-bootstrap/src/wire-log.ts.
+            - name: HTTP_WIRE_LOG
+              value: "on"
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: service.namespace=mcp
             - name: SPIFFE_SVID_PATH
